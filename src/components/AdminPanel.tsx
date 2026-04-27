@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
-import { collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, getDoc } from 'firebase/firestore';
+import axios from 'axios';
 import { Customer } from '../types';
 import { Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle, XCircle, Brain, Save, Key, QrCode } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -31,13 +30,13 @@ export default function AdminPanel() {
     };
     checkDb();
 
-    // Load initial settings from Firebase
+    // Load initial settings from DB
     const loadSettings = async () => {
       try {
-        const docRef = doc(db, 'settings', 'global');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setGeminiKey(docSnap.data().geminiApiKey || '');
+        const response = await fetch('/api/settings/gemini_api_key');
+        const data = await response.json();
+        if (data.value) {
+          setGeminiKey(data.value);
         }
       } catch (error) {
         console.error('Error loading settings:', error);
@@ -74,10 +73,14 @@ export default function AdminPanel() {
   const handleSaveSettings = async () => {
     setIsSavingKey(true);
     try {
-      await setDoc(doc(db, 'settings', 'global'), {
-        geminiApiKey: geminiKey,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'gemini_api_key',
+          value: geminiKey
+        })
+      });
       alert('Configurações salvas com sucesso!');
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -150,12 +153,11 @@ export default function AdminPanel() {
       }
 
       // Add message to chat
-      await addDoc(collection(db, 'messages'), {
+      await axios.post('/api/messages', {
         text: `Cobrança de renovação gerada para ${customer.username}:`,
         sender: 'ai',
         type: 'pix_qr',
-        metadata: data,
-        createdAt: serverTimestamp()
+        metadata: data
       });
 
       alert(`Pix de R$ ${price} gerado para ${customer.username}!`);

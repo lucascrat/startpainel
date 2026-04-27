@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.env
+.gemini_key_internal
+*.docx
+*.bak
+temp_cert.p12
+homologacao-*.p12
+producao-*.p12

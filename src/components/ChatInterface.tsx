@@ -4,8 +4,6 @@ import { Send, User, Bot, Check, CheckCheck, Paperclip, MoreVertical, Search, Sm
 import { format } from 'date-fns';
 import { ChatMessage, PixData } from '../types';
 import axios from 'axios';
-import { db } from '../lib/firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
 function PixStatusIndicator({ txid }: { txid: string }) {
   const [status, setStatus] = useState<string>('ATIVA');
@@ -94,7 +92,6 @@ function PixCopyButton({ code }: { code: string }) {
   );
 }
 
-import { chatWithAI } from '../services/geminiService';
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -103,18 +100,18 @@ export default function ChatInterface() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // In a real app, we'd use a specific chatId
-    const q = query(
-      collection(db, 'messages'),
-      orderBy('createdAt', 'asc')
-    );
+    const fetchMessages = async () => {
+      try {
+        const res = await axios.get('/api/messages');
+        setMessages(res.data);
+      } catch (e) {
+        console.error('Failed to fetch messages', e);
+      }
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage));
-      setMessages(msgs);
-    });
-
-    return () => unsubscribe();
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 3000); // Polling every 3s
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -126,61 +123,62 @@ export default function ChatInterface() {
   const handleSend = async () => {
     if (!inputText.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = {
+    const userMessage = {
       text: inputText,
       sender: 'user',
-      type: 'text',
-      createdAt: serverTimestamp()
+      type: 'text'
     };
 
     setInputText('');
     setIsLoading(true);
 
     try {
-      // 1. Add user message to Firestore
-      await addDoc(collection(db, 'messages'), userMessage);
+      // 1. Add user message to DB
+      await axios.post('/api/messages', userMessage);
 
-      // 2. Call AI Support (Frontend with Gemini)
+      // 2. Call AI Support (Backend)
       const chatHistory = messages.slice(-5).map(m => ({ 
         role: m.sender === 'user' ? 'user' : 'model', 
         parts: [{ text: m.text }] 
       }));
       
-      const response = await chatWithAI(chatHistory, { name: 'Cliente' });
+      const response = await axios.post('/api/chat', { 
+        messages: chatHistory, 
+        userInfo: { name: 'Cliente' } 
+      });
 
+      const aiResponse = response.data;
       let aiText = '';
       
       // Check for function calls
-      if (response.functionCalls && response.functionCalls.length > 0) {
-        const call = response.functionCalls[0];
+      if (aiResponse.functionCalls && aiResponse.functionCalls.length > 0) {
+        const call = aiResponse.functionCalls[0];
         if (call.name === 'generate_pix') {
           const { username, amount } = call.args as any;
           aiText = `Gerando seu Pix no valor de R$ ${amount}...`;
           generatePix(username, amount);
         }
       } else {
-        aiText = response.text || 'Ocorreu um erro.';
+        aiText = aiResponse.text || 'Ocorreu um erro.';
       }
 
-      const aiMessage: ChatMessage = {
+      const aiMessage = {
         text: aiText,
         sender: 'ai',
-        type: 'text',
-        createdAt: serverTimestamp()
+        type: 'text'
       };
 
-      await addDoc(collection(db, 'messages'), aiMessage);
+      await axios.post('/api/messages', aiMessage);
 
     } catch (error: any) {
       console.error('Error sending message:', error);
-      const errorMessageText = error.message || 'Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.';
-      const errorMessage: ChatMessage = {
+      const errorMessageText = error.response?.data?.error || error.message || 'Desculpe, ocorreu um erro ao processar sua mensagem.';
+      
+      await axios.post('/api/messages', {
         text: `⚠️ ${errorMessageText}`,
         sender: 'ai',
-        type: 'text',
-        createdAt: serverTimestamp()
-      };
-      await addDoc(collection(db, 'messages'), errorMessage);
+        type: 'text'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -191,27 +189,22 @@ export default function ChatInterface() {
       const resp = await axios.post('/api/pix/create', { amount, username });
       const pixData = resp.data;
       
-      const pixMessage: ChatMessage = {
+      await axios.post('/api/messages', {
         text: 'Aqui está seu QR Code para pagamento Pix:',
         sender: 'ai',
         type: 'pix_qr',
-        metadata: pixData,
-        createdAt: serverTimestamp()
-      };
-      
-      await addDoc(collection(db, 'messages'), pixMessage);
+        metadata: pixData
+      });
     } catch (error: any) {
       console.error('Pix error:', error);
       const errorData = error.response?.data;
       const errorMessageText = `⚠️ Erro ao gerar Pix: ${errorData?.error || error.message}${errorData?.details ? ` (${errorData.details})` : ''}`;
       
-      const errorMessage: ChatMessage = {
+      await axios.post('/api/messages', {
         text: errorMessageText,
         sender: 'ai',
-        type: 'text',
-        createdAt: serverTimestamp()
-      };
-      await addDoc(collection(db, 'messages'), errorMessage);
+        type: 'text'
+      });
     }
   };
 
@@ -283,8 +276,8 @@ export default function ChatInterface() {
                 
                 <div className="flex items-center justify-end space-x-1 mt-1">
                   <span className={`text-[9px] ${msg.sender === 'user' ? 'text-slate-500' : 'text-slate-400'}`}>
-                    {msg.createdAt && typeof msg.createdAt.toDate === 'function' 
-                      ? format(msg.createdAt.toDate(), 'HH:mm') 
+                    {msg.created_at 
+                      ? format(new Date(msg.created_at), 'HH:mm') 
                       : format(new Date(), 'HH:mm')}
                   </span>
                   {msg.sender === 'user' && (

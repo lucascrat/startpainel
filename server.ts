@@ -11,6 +11,7 @@ import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import pkg from 'pg';
 const { Pool } = pkg;
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize Postgres Pool
 const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
@@ -45,27 +46,25 @@ async function initDB() {
     console.log('PG: Successfully connected to PostgreSQL server');
     
     await client.query(`
-      CREATE TABLE IF NOT EXISTS customers (
+      CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        whatsapp VARCHAR(100),
-        renewal_price DECIMAL(10, 2) DEFAULT 49.90,
-        status VARCHAR(20) DEFAULT 'active',
+        text TEXT NOT NULL,
+        sender VARCHAR(20) NOT NULL,
+        type VARCHAR(50) DEFAULT 'text',
+        metadata JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
+
     await client.query(`
-      CREATE TABLE IF NOT EXISTS pix_charges (
-        txid VARCHAR(255) PRIMARY KEY,
-        username VARCHAR(255) NOT NULL,
-        amount DECIMAL(10, 2) NOT NULL,
-        status VARCHAR(50) DEFAULT 'ATIVA',
-        processed BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS settings (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log('PostgreSQL: Tables "customers" and "pix_charges" checked/created successfully');
+
+    console.log('PostgreSQL: Tables "customers", "pix_charges", "messages" and "settings" checked/created successfully');
     client.release();
     dbStatus = 'connected';
   } catch (err: any) {
@@ -76,21 +75,13 @@ async function initDB() {
 }
 initDB();
 
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
-
-// Initialize Firebase for Backend
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
-const fbApp = initializeApp(firebaseConfig);
-const db = getFirestore(fbApp, firebaseConfig.firestoreDatabaseId);
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Initialize Efibank Certificate if provided as raw content
 if (process.env.EFIBANK_CERT_PATH && (process.env.EFIBANK_CERT_PATH.length > 500 || process.env.EFIBANK_CERT_PATH.includes('MII'))) {
@@ -322,6 +313,135 @@ app.delete('/api/customers/:id', async (req, res) => {
   }
 });
 
+// --- MESSAGES ROUTES ---
+app.get('/api/messages', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM messages ORDER BY created_at ASC');
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao buscar mensagens', details: err.message });
+  }
+});
+
+app.post('/api/messages', async (req, res) => {
+  const { text, sender, type, metadata } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO messages (text, sender, type, metadata) VALUES ($1, $2, $3, $4) RETURNING *',
+      [text, sender, type || 'text', metadata ? JSON.stringify(metadata) : null]
+    );
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao salvar mensagem', details: err.message });
+  }
+});
+
+// --- SETTINGS ROUTES ---
+app.get('/api/settings/:key', async (req, res) => {
+  const { key } = req.params;
+  try {
+    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+    if (result.rows.length > 0) {
+      res.json({ value: result.rows[0].value });
+    } else {
+      res.json({ value: null });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao buscar configuração', details: err.message });
+  }
+});
+
+app.post('/api/settings', async (req, res) => {
+  const { key, value } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP',
+      [key, value]
+    );
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao salvar configuração', details: err.message });
+  }
+});
+
+// --- GEMINI CHAT ROUTE ---
+app.post('/api/chat', async (req, res) => {
+  const { messages: chatHistory, userInfo } = req.body;
+  
+  try {
+    // 1. Get API Key from settings or ENV
+    const settingsResult = await pool.query('SELECT value FROM settings WHERE key = $1', ['gemini_api_key']);
+    let apiKey = settingsResult.rows[0]?.value || process.env.GEMINI_API_KEY;
+
+    if (!apiKey || !apiKey.startsWith('AIza')) {
+      return res.status(400).json({ error: "Configuração da IA Pendente: A chave GEMINI_API_KEY não foi encontrada ou é inválida." });
+    }
+
+    apiKey = apiKey.trim().replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/^["']|["']$/g, '');
+
+    // 2. Get client context for prices
+    const customersResult = await pool.query('SELECT username, renewal_price FROM customers');
+    let clientPricesContext = "";
+    if (customersResult.rows.length > 0) {
+      clientPricesContext = "\nLista de preços específicos por cliente (se o usuário for um destes, use o valor exato):\n";
+      customersResult.rows.forEach((c: any) => {
+        clientPricesContext += `- ${c.username}: R$ ${parseFloat(c.renewal_price).toFixed(2)}\n`;
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    
+    const generatePixDeclaration = {
+      name: 'generate_pix',
+      description: 'Gera uma cobrança Pix (QR Code e Copia/Cola) para o cliente efetuar o pagamento. Sempre use essa ferramenta quando o cliente concordar com a renovação e precisar pagar. Não crie o pix sem saber o nome de usuário do cliente.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          username: { type: Type.STRING, description: 'O nome de usuário do painel StartPainel que será renovado.' },
+          amount: { type: Type.NUMBER, description: 'O valor da renovação em reais.' },
+        },
+        required: ['username', 'amount'],
+      },
+    };
+
+    const model = ai.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      tools: [{ functionDeclarations: [generatePixDeclaration] }]
+    });
+
+    const prompt = `Você é um suporte humano atencioso para o sistema StartPainel. 
+                  Mantenha o estilo de chat de WhatsApp, sendo breve, usando emojis.
+                  O cliente se chama ${userInfo?.name || 'Cliente'}.
+                  O objetivo é ajudar ele a renovar o serviço dele no StartPainel.
+                  1. Pergunte o nome de usuário dele no painel, caso não saiba.
+                  2. Quando ele confirmar o usuário, use a ferramenta "generate_pix" informando o username e o valor de renovação.
+                  
+                  ${clientPricesContext}
+                  
+                  Se o usuário não estiver na lista acima, o valor padrão é 49.90.
+                  Não invente códigos PIX falsos, use SEMPRE a ferramenta.`;
+
+    const result = await model.generateContent({
+      contents: [
+        { role: 'user', parts: [{ text: prompt }] },
+        ...chatHistory.map((m: any) => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.parts[0].text }]
+        }))
+      ]
+    });
+
+    const response = result.response;
+    const text = response.text();
+    const functionCalls = response.functionCalls();
+
+    res.json({ text, functionCalls });
+  } catch (error: any) {
+    console.error("Gemini Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Efibank Pix Generation
 app.get('/api/pix/status/:txid', async (req, res) => {
   const { txid } = req.params;
@@ -349,7 +469,7 @@ app.get('/api/pix/status/:txid', async (req, res) => {
                 console.log(`PG: Renewal successful for ${charge.username}`);
                 await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', [status, txid]);
                 
-                // Add a message to chat via Firebase if possible (but we don't have the context here easily without a taskId/chatId)
+                // Add a message to chat via DB if possible
                 // For now, the user's polling will see the status change to CONCLUIDA.
               } else {
                 console.error(`PG: Panel extension failed for ${charge.username}`);
