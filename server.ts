@@ -57,6 +57,16 @@ async function initDB() {
       );
     `);
 
+    try {
+      await client.query(`ALTER TABLE messages ADD COLUMN image_data TEXT;`);
+      console.log('PostgreSQL: Added image_data column to messages table');
+    } catch (e: any) {
+      // Column might already exist, which is fine
+      if (e.code !== '42701') { // 42701 is duplicate_column error
+        console.error('PostgreSQL: Error adding image_data column:', e.message);
+      }
+    }
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS settings (
         key VARCHAR(255) PRIMARY KEY,

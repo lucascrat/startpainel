@@ -148,6 +148,9 @@ export default function ChatInterface() {
       });
     }
 
+    // Optimistic UI Update
+    setMessages(prev => [...prev, { ...userMessage, id: 'temp-' + Date.now() }]);
+
     setInputText('');
     setIsLoading(true);
 
