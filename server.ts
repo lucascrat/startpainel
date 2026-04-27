@@ -150,13 +150,43 @@ class StartPainelService {
 
   async login() {
     try {
-      const response = await this.client.post('/login', {
-        username: process.env.STARTPAINEL_ADMIN_USER,
-        password: process.env.STARTPAINEL_ADMIN_PASS,
+      // 1. Obter a página de login para extrair o token CSRF
+      const getRes = await this.client.get('/login');
+      const html = getRes.data.toString();
+      
+      const tokenMatch = html.match(/name="_token"\s+value="(.*?)"/i) || 
+                         html.match(/<meta name="csrf-token" content="(.*?)"/i);
+      
+      let csrfToken = '';
+      if (tokenMatch && tokenMatch[1]) {
+        csrfToken = tokenMatch[1];
+        // Configurar o token globalmente para as próximas requisições
+        this.client.defaults.headers.common['X-CSRF-TOKEN'] = csrfToken;
+        this.client.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+        console.log('StartPainel: CSRF Token encontrado.');
+      } else {
+        console.log('StartPainel: CSRF Token não encontrado (pode não ser necessário).');
+      }
+
+      // 2. Enviar a requisição de login (simulando um form submit)
+      const formData = new URLSearchParams();
+      if (csrfToken) formData.append('_token', csrfToken);
+      formData.append('username', process.env.STARTPAINEL_ADMIN_USER || '');
+      formData.append('password', process.env.STARTPAINEL_ADMIN_PASS || '');
+
+      const response = await this.client.post('/login', formData.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Referer': `${this.client.defaults.baseURL}/login`
+        },
+        maxRedirects: 0,
+        validateStatus: (status) => status >= 200 && status <= 302
       });
-      return response.status === 200;
-    } catch (error) {
-      console.error('StartPainel Login Error:', error);
+
+      console.log('StartPainel Login Status:', response.status);
+      return response.status === 200 || response.status === 302 || response.status === 204;
+    } catch (error: any) {
+      console.error('StartPainel Login Error:', error.message);
       return false;
     }
   }
@@ -211,12 +241,22 @@ class StartPainelService {
       for (const endpoint of endpoints) {
         try {
           console.log(`StartPainel: Trying endpoint ${endpoint}`);
-          const response = await this.client.post(endpoint, {
-            duration: '1',
-            connections: '1'
+          
+          const formData = new URLSearchParams();
+          const csrfToken = this.client.defaults.headers.common['X-CSRF-TOKEN'];
+          if (csrfToken) {
+            formData.append('_token', csrfToken as string);
+          }
+          formData.append('duration', '1');
+          formData.append('connections', '1');
+
+          const response = await this.client.post(endpoint, formData.toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            maxRedirects: 0,
+            validateStatus: (status) => status >= 200 && status <= 302
           });
           
-          if (response.status === 200 || response.status === 302) {
+          if (response.status === 200 || response.status === 302 || response.status === 204) {
             console.log(`StartPainel: Success at ${endpoint} (Status: ${response.status})`);
             return true;
           }
