@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-whatsapp-teal: #075e54;
+  --color-whatsapp-light: #dcf8c6;
+  --color-whatsapp-bg: #e5ddd5;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-100 text-slate-800;
+  }
+}
+
+@layer utilities {
+  .chat-bg-pattern {
+    background-image: url("https://www.transparenttextures.com/patterns/cubes.png");
+  }
+}

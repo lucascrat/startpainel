@@ -1,0 +1,6 @@
+{
+  "name": "StartPainel",
+  "description": "Suporte automatizado via IA com integração Pix Efibank para renovação de clientes no painel StartPainel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
