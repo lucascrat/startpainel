@@ -98,6 +98,7 @@ export default function ChatInterface() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const fetchMessages = async () => {
@@ -120,14 +121,32 @@ export default function ChatInterface() {
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!inputText.trim() || isLoading) return;
+  const handleSend = async (imageFile?: File) => {
+    if ((!inputText.trim() && !imageFile) || isLoading) return;
 
-    const userMessage = {
+    let userMessage: any = {
       text: inputText,
       sender: 'user',
       type: 'text'
     };
+
+    let parts: any[] = [];
+    if (inputText.trim()) {
+      parts.push({ text: inputText });
+    }
+
+    if (imageFile) {
+      const base64 = await fileToBase64(imageFile);
+      const mimeType = imageFile.type;
+      userMessage.type = 'image';
+      userMessage.imageData = base64;
+      parts.push({
+        inlineData: {
+          data: base64.split(',')[1],
+          mimeType: mimeType
+        }
+      });
+    }
 
     setInputText('');
     setIsLoading(true);
@@ -137,13 +156,31 @@ export default function ChatInterface() {
       await axios.post('/api/messages', userMessage);
 
       // 2. Call AI Support (Backend)
-      const chatHistory = messages.slice(-5).map(m => ({ 
-        role: m.sender === 'user' ? 'user' : 'model', 
-        parts: [{ text: m.text }] 
-      }));
+      // Prepare history including the current message if it has an image
+      const recentMessages = messages.slice(-5).map(m => {
+        const mParts: any[] = [{ text: m.text }];
+        if (m.type === 'image' && m.imageData) {
+          mParts.push({
+            inlineData: {
+              data: m.imageData.split(',')[1],
+              mimeType: 'image/jpeg' // Fallback or detect
+            }
+          });
+        }
+        return {
+          role: m.sender === 'user' ? 'user' : 'model',
+          parts: mParts
+        };
+      });
+
+      // Add the current message's parts to history for the call
+      recentMessages.push({
+        role: 'user',
+        parts: parts
+      });
       
       const response = await axios.post('/api/chat', { 
-        messages: chatHistory, 
+        messages: recentMessages, 
         userInfo: { name: 'Cliente' } 
       });
 
@@ -181,6 +218,22 @@ export default function ChatInterface() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleSend(file);
     }
   };
 
@@ -266,6 +319,11 @@ export default function ChatInterface() {
                     <p className="text-[9px] text-slate-400 italic text-center">ID: {msg.metadata.txid}</p>
                     <PixStatusIndicator txid={msg.metadata.txid} />
                   </div>
+                ) : msg.type === 'image' ? (
+                  <div className="space-y-2">
+                    <img src={msg.imageData} alt="Uploaded" className="rounded-lg max-w-full h-auto shadow-sm" />
+                    {msg.text && <p className="text-xs text-slate-800 leading-snug">{msg.text}</p>}
+                  </div>
                 ) : (
                   <p className={`text-xs leading-snug whitespace-pre-wrap ${
                     msg.text.includes('[SISTEMA]') ? 'text-emerald-700 font-bold italic' : 'text-slate-800'
@@ -307,9 +365,16 @@ export default function ChatInterface() {
         <button className="p-1.5 text-slate-500 hover:text-slate-700 transition-colors">
           <Smile size={22} />
         </button>
-        <button className="p-1.5 text-slate-500 hover:text-slate-700 transition-colors transform -rotate-45">
+        <button className="p-1.5 text-slate-500 hover:text-slate-700 transition-colors transform -rotate-45" onClick={() => fileInputRef.current?.click()}>
           <Paperclip size={22} />
         </button>
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          className="hidden" 
+          accept="image/*" 
+          onChange={handleImageUpload} 
+        />
         <div className="flex-1">
           <input
             type="text"

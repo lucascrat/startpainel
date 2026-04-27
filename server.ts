@@ -52,6 +52,7 @@ async function initDB() {
         sender VARCHAR(20) NOT NULL,
         type VARCHAR(50) DEFAULT 'text',
         metadata JSONB,
+        image_data TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -316,7 +317,7 @@ app.delete('/api/customers/:id', async (req, res) => {
 // --- MESSAGES ROUTES ---
 app.get('/api/messages', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM messages ORDER BY created_at ASC');
+    const result = await pool.query('SELECT id, text, sender, type, metadata, image_data as "imageData", created_at FROM messages ORDER BY created_at ASC');
     res.json(result.rows);
   } catch (err: any) {
     res.status(500).json({ error: 'Erro ao buscar mensagens', details: err.message });
@@ -324,12 +325,12 @@ app.get('/api/messages', async (req, res) => {
 });
 
 app.post('/api/messages', async (req, res) => {
-  const { text, sender, type, metadata } = req.body;
-  try {
-    const result = await pool.query(
-      'INSERT INTO messages (text, sender, type, metadata) VALUES ($1, $2, $3, $4) RETURNING *',
-      [text, sender, type || 'text', metadata ? JSON.stringify(metadata) : null]
-    );
+    const { text, sender, type, metadata, imageData } = req.body;
+    try {
+      const result = await pool.query(
+        'INSERT INTO messages (text, sender, type, metadata, image_data) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [text, sender, type || 'text', metadata ? JSON.stringify(metadata) : null, imageData]
+      );
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: 'Erro ao salvar mensagem', details: err.message });
@@ -409,24 +410,37 @@ app.post('/api/chat', async (req, res) => {
       tools: [{ functionDeclarations: [generatePixDeclaration] }]
     });
 
-    const prompt = `Você é um suporte humano atencioso para o sistema StartPainel. 
-                  Mantenha o estilo de chat de WhatsApp, sendo breve, usando emojis.
-                  O cliente se chama ${userInfo?.name || 'Cliente'}.
-                  O objetivo é ajudar ele a renovar o serviço dele no StartPainel.
-                  1. Pergunte o nome de usuário dele no painel, caso não saiba.
-                  2. Quando ele confirmar o usuário, use a ferramenta "generate_pix" informando o username e o valor de renovação.
+    const prompt = `Você é um assistente multi-modal para o StartPainel.
                   
-                  ${clientPricesContext}
+                  Regras de Atuação:
+                  1. SUPORTE STARTPAINEL: Se o usuário quiser renovar ou tiver dúvidas do painel, aja como suporte humano, breve, estilo WhatsApp.
+                     - Pergunte o username se não souber.
+                     - Use "generate_pix" para cobranças.
+                     - Contexto de Preços: ${clientPricesContext}
+                     - Preço padrão: 49.90.
                   
-                  Se o usuário não estiver na lista acima, o valor padrão é 49.90.
-                  Não invente códigos PIX falsos, use SEMPRE a ferramenta.`;
+                  2. NUTRICIONISTA: Se o usuário enviar uma FOTO DE COMIDA ou falar sobre o que COMEU/VAI COMER:
+                     - Aja como um nutricionista atencioso.
+                     - Analise os alimentos (se for foto, identifique o que tem no prato).
+                     - Estime calorias e macronutrientes de forma aproximada.
+                     - Dê dicas de saúde ou substituições saudáveis.
+                     - Seja motivador.
+
+                  3. Se o usuário mandar algo que não se encaixa em nenhum dos dois, responda de forma geral e amigável.
+                  
+                  Mantenha sempre o estilo breve e com emojis.
+                  O cliente se chama ${userInfo?.name || 'Cliente'}.`;
 
     const result = await model.generateContent({
       contents: [
         { role: 'user', parts: [{ text: prompt }] },
         ...chatHistory.map((m: any) => ({
           role: m.role === 'user' ? 'user' : 'model',
-          parts: [{ text: m.parts[0].text }]
+          parts: m.parts.map((p: any) => {
+            if (p.text) return { text: p.text };
+            if (p.inlineData) return { inlineData: p.inlineData };
+            return p;
+          })
         }))
       ]
     });

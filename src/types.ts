@@ -13,8 +13,9 @@ export interface ChatMessage {
   id?: string;
   text: string;
   sender: 'user' | 'ai' | 'admin';
-  type: 'text' | 'pix_qr' | 'pix_copy_paste';
+  type: 'text' | 'pix_qr' | 'pix_copy_paste' | 'image';
   metadata?: any;
+  imageData?: string; // Base64 image data
   createdAt: any;
 }
 
