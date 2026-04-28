@@ -34,6 +34,10 @@ async function launchBrowser(headless = true): Promise<Browser> {
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
       '--window-size=1280,900',
+      '--disable-infobars',
+      '--window-position=0,0',
+      '--ignore-certifcate-errors',
+      '--ignore-certifcate-errors-spki-list',
     ],
     defaultViewport: { width: 1280, height: 900 },
   }) as unknown as Browser;
@@ -41,15 +45,37 @@ async function launchBrowser(headless = true): Promise<Browser> {
 
 async function loginToPanel(page: Page): Promise<boolean> {
   const loginUrl = `${BASE_URL.replace(/\/$/, '')}/login`;
-  console.log(`[Puppeteer] Navegando para: ${loginUrl}`);
+  console.log(`[Puppeteer] Tentando acessar: ${loginUrl}`);
   
+  // Configura headers extremamente realistas para evitar o redirecionamento M3U.app
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+    'sec-fetch-user': '?1',
+    'upgrade-insecure-requests': '1',
+  });
+
+  // Remove vestígios de automação via JavaScript injetado
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  });
+
+  // Aguarda um tempo aleatório antes de navegar (parecer humano)
+  await new Promise(r => setTimeout(r, Math.random() * 3000 + 1000));
+
   try {
     await page.goto(loginUrl, { 
       waitUntil: 'networkidle2', 
-      timeout: 45000 
+      timeout: 60000 
     });
   } catch (e: any) {
-    console.error(`[Puppeteer] Erro ao carregar página de login: ${e.message}`);
+    console.error(`[Puppeteer] Erro no carregamento: ${e.message}`);
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   }
 
