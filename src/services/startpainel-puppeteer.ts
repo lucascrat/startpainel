@@ -35,45 +35,66 @@ async function launchBrowser(headless = true): Promise<Browser> {
 }
 
 async function loginToPanel(page: Page): Promise<boolean> {
-  console.log('[Puppeteer] Navegando para página de login...');
-  await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle2', timeout: 30000 });
+  const loginUrl = `${BASE_URL.replace(/\/$/, '')}/login`;
+  console.log(`[Puppeteer] Navegando para: ${loginUrl}`);
+  
+  try {
+    await page.goto(loginUrl, { 
+      waitUntil: 'networkidle2', 
+      timeout: 45000 
+    });
+  } catch (e: any) {
+    console.error(`[Puppeteer] Erro ao carregar página de login: ${e.message}`);
+    await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  }
 
-  // Aguarda os campos do formulário
-  await page.waitForSelector('input[name="username"], input#username', { timeout: 10000 });
+  const title = await page.title();
+  console.log(`[Puppeteer] Título da página: ${title}`);
+
+  // Verifica se caímos em algum bloqueio
+  const content = await page.content();
+  if (content.includes('Cloudflare') || content.includes('Verify you are human')) {
+    console.error('[Puppeteer] Possível bloqueio detectado (Cloudflare/Human verification).');
+  }
+
+  console.log('[Puppeteer] Aguardando campos de login...');
+  // Seletores baseados na inspeção real
+  const userSelector = 'input#username';
+  const passSelector = 'input#password';
+  const loginBtnSelector = 'button#loginbtn, button[type="submit"], .btn-primary';
+
+  try {
+    await page.waitForSelector(userSelector, { timeout: 20000 });
+  } catch (e) {
+    console.error(`[Puppeteer] Seletor "${userSelector}" não encontrado.`);
+    const inputs = await page.$$eval('input', el => el.map(i => ({ id: i.id, name: i.name, type: i.type })));
+    console.log('[Puppeteer] Inputs na página:', JSON.stringify(inputs));
+    throw new Error(`Campo de login não apareceu. Título: ${title}`);
+  }
 
   console.log('[Puppeteer] Preenchendo credenciais...');
-  
-  // Limpa e preenche usuário
-  const userSelector = 'input[name="username"], input#username';
   await page.click(userSelector, { clickCount: 3 });
   await page.type(userSelector, ADMIN_USER, { delay: 50 });
-
-  // Limpa e preenche senha
-  const passSelector = 'input[name="password"], input#password';
+  
   await page.click(passSelector, { clickCount: 3 });
   await page.type(passSelector, ADMIN_PASS, { delay: 50 });
 
   console.log('[Puppeteer] Clicando em Entrar...');
-  
-  // Clica no botão de login e aguarda navegação
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }),
-    page.click('button[type="submit"], input[type="submit"], button:has-text("Entrar")')
-      .catch(() => page.keyboard.press('Enter'))
+    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
+    page.click(loginBtnSelector).catch(() => page.keyboard.press('Enter'))
   ]);
 
   const currentUrl = page.url();
   console.log(`[Puppeteer] Pós-login URL: ${currentUrl}`);
   
-  // Verifica se saiu da página de login (= login bem-sucedido)
   const isLoggedIn = !currentUrl.includes('/login');
   if (!isLoggedIn) {
-    // Captura mensagem de erro se existir
     const errMsg = await page.$eval(
-      '.alert-danger, .alert.alert-error, [class*="error"], [class*="invalid"]',
+      '.alert-danger, .alert.alert-error, [class*="error"]',
       (el) => el.textContent?.trim() || ''
     ).catch(() => '');
-    console.error('[Puppeteer] Login falhou. Mensagem:', errMsg || 'URL ainda é /login');
+    console.error(`[Puppeteer] Login falhou. Erro no painel: ${errMsg}`);
   } else {
     console.log('[Puppeteer] Login bem-sucedido!');
   }
