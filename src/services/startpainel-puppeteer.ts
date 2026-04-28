@@ -1,6 +1,13 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
+import os from 'os';
 
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+// Detect OS and set default Chrome path
+const isWindows = os.platform() === 'win32';
+const DEFAULT_CHROME_PATH = isWindows 
+  ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+  : '/usr/bin/chromium'; // Default for many Linux distros
+
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 const BASE_URL = process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc';
 const ADMIN_USER = process.env.STARTPAINEL_ADMIN_USER || '';
 const ADMIN_PASS = process.env.STARTPAINEL_ADMIN_PASS || '';
@@ -13,6 +20,7 @@ export interface RenewalResult {
 }
 
 async function launchBrowser(headless = true): Promise<Browser> {
+  console.log(`[Puppeteer] Launching browser with path: ${CHROME_PATH}`);
   return puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
