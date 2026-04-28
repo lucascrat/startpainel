@@ -1,14 +1,19 @@
-import puppeteer, { Browser, Page } from 'puppeteer-core';
+import { Browser, Page } from 'puppeteer-core';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import os from 'os';
+
+// Configura o plugin stealth
+puppeteer.use(StealthPlugin());
 
 // Detect OS and set default Chrome path
 const isWindows = os.platform() === 'win32';
 const DEFAULT_CHROME_PATH = isWindows 
   ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-  : '/usr/bin/chromium'; // Default for many Linux distros
+  : '/usr/bin/chromium';
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
-const BASE_URL = process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc';
+const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').replace(/\/$/, '');
 const ADMIN_USER = process.env.STARTPAINEL_ADMIN_USER || '';
 const ADMIN_PASS = process.env.STARTPAINEL_ADMIN_PASS || '';
 
@@ -20,7 +25,7 @@ export interface RenewalResult {
 }
 
 async function launchBrowser(headless = true): Promise<Browser> {
-  console.log(`[Puppeteer] Launching browser with path: ${CHROME_PATH}`);
+  console.log(`[Puppeteer Stealth] Launching with: ${CHROME_PATH}`);
   return puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
@@ -31,7 +36,7 @@ async function launchBrowser(headless = true): Promise<Browser> {
       '--window-size=1280,900',
     ],
     defaultViewport: { width: 1280, height: 900 },
-  });
+  }) as unknown as Browser;
 }
 
 async function loginToPanel(page: Page): Promise<boolean> {
@@ -73,13 +78,27 @@ async function loginToPanel(page: Page): Promise<boolean> {
   }
 
   console.log('[Puppeteer] Preenchendo credenciais...');
-  await page.click(userSelector, { clickCount: 3 });
-  await page.type(userSelector, ADMIN_USER, { delay: 50 });
+  // Simula movimentos humanos de mouse antes de digitar
+  await page.mouse.move(100, 100);
+  await page.mouse.move(200, 300, { steps: 10 });
   
+  await page.click(userSelector, { clickCount: 3 });
+  await page.type(userSelector, ADMIN_USER, { delay: Math.floor(Math.random() * 100) + 50 });
+  
+  await page.mouse.move(300, 400, { steps: 5 });
   await page.click(passSelector, { clickCount: 3 });
-  await page.type(passSelector, ADMIN_PASS, { delay: 50 });
+  await page.type(passSelector, ADMIN_PASS, { delay: Math.floor(Math.random() * 100) + 50 });
 
   console.log('[Puppeteer] Clicando em Entrar...');
+  // Move o mouse até o botão antes de clicar
+  const btn = await page.$(loginBtnSelector);
+  if (btn) {
+    const box = await btn.boundingBox();
+    if (box) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 10 });
+    }
+  }
+
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
     page.click(loginBtnSelector).catch(() => page.keyboard.press('Enter'))
