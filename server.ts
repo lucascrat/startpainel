@@ -145,49 +145,69 @@ function getEfibankClient() {
 
 // --- API ROUTES ---
 
-// StartPainel Status/Diagnostic Route
+// --- StartPainel Renewal Logic (Hybrid Support) ---
+const WORKER_URL = process.env.RENEWAL_WORKER_URL; // Ex: https://seu-link.trycloudflare.com
+const WORKER_SECRET = process.env.WORKER_SECRET || 'startpainel_secret_key_2024';
+
+// Rota que o Notebook usa para receber ordens do Coolify
+app.post('/api/worker/renew', async (req, res) => {
+  const { username, secret } = req.body;
+  
+  if (secret !== WORKER_SECRET) {
+    return res.status(401).json({ error: 'Não autorizado' });
+  }
+
+  console.log(`[Worker Mode] Recebida ordem de renovação para: ${username}`);
+  try {
+    const result = await renewClientPuppeteer(username);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Função que decide se renova aqui ou no notebook
+async function processRenewal(username: string) {
+  if (WORKER_URL) {
+    console.log(`[Main] Encaminhando renovação de "${username}" para o Notebook: ${WORKER_URL}`);
+    try {
+      const response = await axios.post(`${WORKER_URL.replace(/\/$/, '')}/api/worker/renew`, {
+        username,
+        secret: WORKER_SECRET
+      }, { timeout: 120000 });
+      return response.data;
+    } catch (err: any) {
+      console.error(`[Main] Erro ao chamar notebook: ${err.message}`);
+      return { success: false, message: `O Notebook parece estar offline: ${err.message}` };
+    }
+  } else {
+    console.log(`[Local] Executando renovação local para: ${username}`);
+    return await renewClientPuppeteer(username);
+  }
+}
+
 app.get('/api/panel/status', async (req, res) => {
   const user = process.env.STARTPAINEL_ADMIN_USER || '';
-  const pass = process.env.STARTPAINEL_ADMIN_PASS || '';
   const url  = process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc';
   
-  if (!user || !pass) {
-    return res.json({ 
-      connected: false, 
-      error: 'STARTPAINEL_ADMIN_USER ou STARTPAINEL_ADMIN_PASS não configurados no .env',
-      url
-    });
-  }
   res.json({ 
-    connected: null, 
-    url,
-    message: 'Credenciais configuradas. Clique em \'Renovar\' para testar a conexão real.'
+    configured: !!user,
+    mode: WORKER_URL ? 'Híbrido (Notebook)' : 'Direto (Servidor)',
+    workerUrl: WORKER_URL || 'Nenhum',
+    url
   });
 });
 
-// Manual Renewal Route for Admin (Puppeteer / browser automation)
 app.post('/api/panel/renew/:username', async (req, res) => {
   const { username } = req.params;
-  
-  const user = process.env.STARTPAINEL_ADMIN_USER || '';
-  const pass = process.env.STARTPAINEL_ADMIN_PASS || '';
-  if (!user || !pass) {
-    return res.status(400).json({ 
-      error: 'STARTPAINEL_ADMIN_USER e STARTPAINEL_ADMIN_PASS não configurados no .env do servidor.' 
-    });
-  }
-
   try {
-    console.log(`Admin: Iniciando renovação via Puppeteer para "${username}"`);
-    const result = await renewClientPuppeteer(username);
-    
+    const result = await processRenewal(username);
     if (result.success) {
       res.json({ success: true, message: result.message, clientId: result.clientId });
     } else {
       res.status(500).json({ error: result.message });
     }
   } catch (err: any) {
-    console.error('Puppeteer Renewal Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -534,12 +554,12 @@ app.post('/api/pix/webhook', async (req, res) => {
       console.log(`PG: Webhook processing payment for ${charge.username}...`);
       
       try {
-        const renewResult = await renewClientPuppeteer(charge.username);
+        const renewResult = await processRenewal(charge.username);
         if (renewResult.success) {
-          console.log(`PG: Renewal successful via Webhook for ${charge.username}`);
+          console.log(`PG: Renewal successful for ${charge.username}`);
           await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
         } else {
-          console.error(`PG: Webhook renewal failed for ${charge.username}: ${renewResult.message}`);
+          console.error(`PG: Renewal failed for ${charge.username}: ${renewResult.message}`);
         }
       } catch (err) {
         console.error('PG: Webhook renewal error:', err);
@@ -563,7 +583,7 @@ app.post('/api/test/force-renew/:txid', async (req, res) => {
 
     console.log(`TEST: Forcing renewal for ${charge.username} (TXID: ${txid})`);
     
-    const renewResult = await renewClientPuppeteer(charge.username);
+    const renewResult = await processRenewal(charge.username);
     if (renewResult.success) {
       await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
       res.json({ success: true, message: `Renovação forçada com sucesso para ${charge.username}` });
