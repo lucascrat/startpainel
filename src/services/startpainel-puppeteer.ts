@@ -1,9 +1,13 @@
 import 'dotenv/config';
+import dotenv from 'dotenv';
 import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import os from 'os';
 import path from 'path';
+
+// Força o carregamento do .env do diretório atual
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 // Configura o plugin stealth
 puppeteer.use(StealthPlugin());
@@ -16,8 +20,10 @@ const DEFAULT_CHROME_PATH = isWindows
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').replace(/\/$/, '');
-const ADMIN_USER = process.env.STARTPAINEL_ADMIN_USER || '';
-const ADMIN_PASS = process.env.STARTPAINEL_ADMIN_PASS || '';
+const ADMIN_USER = (process.env.STARTPAINEL_ADMIN_USER || '').trim();
+const ADMIN_PASS = (process.env.STARTPAINEL_ADMIN_PASS || '').trim();
+
+console.log(`[Config] Carregando credenciais para: ${ADMIN_USER ? 'OK (' + ADMIN_USER + ')' : 'VAZIO'}`);
 
 export interface RenewalResult {
   success: boolean;
