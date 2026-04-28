@@ -372,7 +372,7 @@ app.post('/api/chat', async (req, res) => {
     ];
 
     const result = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.0-flash-lite',
       contents,
       config: {
         tools: [{ functionDeclarations: [generatePixDeclaration] }],
