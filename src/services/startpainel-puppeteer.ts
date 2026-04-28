@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
