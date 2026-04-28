@@ -7,11 +7,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 import axios from 'axios';
 import Gerencianet from 'gn-api-sdk-node';
-import { wrapper } from 'axios-cookiejar-support';
-import { CookieJar } from 'tough-cookie';
 import pkg from 'pg';
 const { Pool } = pkg;
 import { GoogleGenAI, Type } from "@google/genai";
+import { renewClientPuppeteer } from './src/services/startpainel-puppeteer.js';
 
 // Initialize Postgres Pool
 const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
@@ -144,168 +143,51 @@ function getEfibankClient() {
   return new Gerencianet(efibankOptions);
 }
 
-// StartPainel Automation Class
-class StartPainelService {
-  private client;
-  private jar: CookieJar;
-
-  constructor() {
-    this.jar = new CookieJar();
-    this.client = wrapper(axios.create({ 
-      jar: this.jar, 
-      withCredentials: true,
-      baseURL: process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc'
-    }));
-  }
-
-  async login() {
-    try {
-      // 1. Obter a página de login para extrair o token CSRF
-      const getRes = await this.client.get('/login');
-      const html = getRes.data.toString();
-      
-      const tokenMatch = html.match(/name="_token"\s+value="(.*?)"/i) || 
-                         html.match(/<meta name="csrf-token" content="(.*?)"/i);
-      
-      let csrfToken = '';
-      if (tokenMatch && tokenMatch[1]) {
-        csrfToken = tokenMatch[1];
-        // Configurar o token globalmente para as próximas requisições
-        this.client.defaults.headers.common['X-CSRF-TOKEN'] = csrfToken;
-        this.client.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
-        console.log('StartPainel: CSRF Token encontrado.');
-      } else {
-        console.log('StartPainel: CSRF Token não encontrado (pode não ser necessário).');
-      }
-
-      // 2. Enviar a requisição de login (simulando um form submit)
-      const formData = new URLSearchParams();
-      if (csrfToken) formData.append('_token', csrfToken);
-      formData.append('username', process.env.STARTPAINEL_ADMIN_USER || '');
-      formData.append('password', process.env.STARTPAINEL_ADMIN_PASS || '');
-
-      const response = await this.client.post('/login', formData.toString(), {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': `${this.client.defaults.baseURL}/login`
-        },
-        maxRedirects: 0,
-        validateStatus: (status) => status >= 200 && status <= 302
-      });
-
-      console.log('StartPainel Login Status:', response.status);
-      return response.status === 200 || response.status === 302 || response.status === 204;
-    } catch (error: any) {
-      console.error('StartPainel Login Error:', error.message);
-      return false;
-    }
-  }
-
-  async findClient(username: string) {
-    try {
-      console.log(`StartPainel: Searching for client "${username}"...`);
-      const response = await this.client.get(`/clients?search=${username}`);
-      const html = response.data.toString();
-      
-      // More flexible regex for different HTML styles
-      const match = html.match(/\/clients\/(\d+)\/(edit|show|renew|duplicate|info)/i);
-      
-      if (match && match[1]) {
-        console.log(`StartPainel: Found client ID ${match[1]} for username ${username}`);
-        return { id: match[1] };
-      }
-
-      // Try searching for the username followed by an ID in the table
-      const tableMatch = html.match(new RegExp(`${username}.*?data-id=["'](\\d+)["']`, 'i')) || 
-                         html.match(new RegExp(`${username}.*?id=["'](\\d+)["']`, 'i'));
-      
-      if (tableMatch && tableMatch[1]) {
-        console.log(`StartPainel: Found client ID ${tableMatch[1]} via table attribute for ${username}`);
-        return { id: tableMatch[1] };
-      }
-
-      // Final fallback: Look for ANY ID near the username text
-      const textMatch = html.match(new RegExp(`>${username}<.*?/clients/(\\d+)/`, 'i')) ||
-                        html.match(new RegExp(`${username}.*?/clients/(\\d+)/`, 'i'));
-      
-      if (textMatch && textMatch[1]) {
-        console.log(`StartPainel: Found client ID ${textMatch[1]} via text proximity for ${username}`);
-        return { id: textMatch[1] };
-      }
-
-      console.log('StartPainel: Could not find client ID in HTML response.');
-      return null;
-    } catch (error: any) {
-      console.error('StartPainel Search Error:', error.message);
-      return null;
-    }
-  }
-
-  async extendClient(clientId: string) {
-    try {
-      console.log(`StartPainel: Attempting to extend client ${clientId}...`);
-      
-      // Try common endpoints for renewal/extension
-      const endpoints = [`/clients/${clientId}/extend`, `/clients/${clientId}/renew`, `/clients/${clientId}/duplicate` ];
-      
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`StartPainel: Trying endpoint ${endpoint}`);
-          
-          const formData = new URLSearchParams();
-          const csrfToken = this.client.defaults.headers.common['X-CSRF-TOKEN'];
-          if (csrfToken) {
-            formData.append('_token', csrfToken as string);
-          }
-          formData.append('duration', '1');
-          formData.append('connections', '1');
-
-          const response = await this.client.post(endpoint, formData.toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            maxRedirects: 0,
-            validateStatus: (status) => status >= 200 && status <= 302
-          });
-          
-          if (response.status === 200 || response.status === 302 || response.status === 204) {
-            console.log(`StartPainel: Success at ${endpoint} (Status: ${response.status})`);
-            return true;
-          }
-        } catch (e: any) {
-          console.log(`StartPainel: Failed at ${endpoint}: ${e.message}`);
-        }
-      }
-      
-      return false;
-    } catch (error: any) {
-      console.error('StartPainel Extend Error:', error.message);
-      return false;
-    }
-  }
-}
-
-const panelService = new StartPainelService();
-
 // --- API ROUTES ---
 
-// Manual Renewal Route for Admin
+// StartPainel Status/Diagnostic Route
+app.get('/api/panel/status', async (req, res) => {
+  const user = process.env.STARTPAINEL_ADMIN_USER || '';
+  const pass = process.env.STARTPAINEL_ADMIN_PASS || '';
+  const url  = process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc';
+  
+  if (!user || !pass) {
+    return res.json({ 
+      connected: false, 
+      error: 'STARTPAINEL_ADMIN_USER ou STARTPAINEL_ADMIN_PASS não configurados no .env',
+      url
+    });
+  }
+  res.json({ 
+    connected: null, 
+    url,
+    message: 'Credenciais configuradas. Clique em \'Renovar\' para testar a conexão real.'
+  });
+});
+
+// Manual Renewal Route for Admin (Puppeteer / browser automation)
 app.post('/api/panel/renew/:username', async (req, res) => {
   const { username } = req.params;
+  
+  const user = process.env.STARTPAINEL_ADMIN_USER || '';
+  const pass = process.env.STARTPAINEL_ADMIN_PASS || '';
+  if (!user || !pass) {
+    return res.status(400).json({ 
+      error: 'STARTPAINEL_ADMIN_USER e STARTPAINEL_ADMIN_PASS não configurados no .env do servidor.' 
+    });
+  }
+
   try {
-    console.log(`Admin: Manual renewal requested for ${username}`);
-    const loggedIn = await panelService.login();
-    if (!loggedIn) throw new Error('Falha no login do Painel');
-
-    const client = await panelService.findClient(username);
-    if (!client) throw new Error(`Cliente ${username} não encontrado no Painel`);
-
-    const success = await panelService.extendClient(client.id);
-    if (success) {
-      res.json({ success: true, message: `Cliente ${username} renovado com sucesso (ID: ${client.id})` });
+    console.log(`Admin: Iniciando renovação via Puppeteer para "${username}"`);
+    const result = await renewClientPuppeteer(username);
+    
+    if (result.success) {
+      res.json({ success: true, message: result.message, clientId: result.clientId });
     } else {
-      res.status(500).json({ error: `Falha ao estender cliente ${username} no Painel` });
+      res.status(500).json({ error: result.message });
     }
   } catch (err: any) {
-    console.error('Manual Renewal Error:', err.message);
+    console.error('Puppeteer Renewal Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -523,26 +405,12 @@ app.get('/api/pix/status/:txid', async (req, res) => {
         console.log(`PG: Payment confirmed for TXID ${txid}. Triggering renewal for ${charge.username}...`);
         
         try {
-          // Trigger renewal
-          const loggedIn = await panelService.login();
-          if (loggedIn) {
-            const client = await panelService.findClient(charge.username);
-            if (client) {
-              const success = await panelService.extendClient(client.id);
-              if (success) {
-                console.log(`PG: Renewal successful for ${charge.username}`);
-                await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', [status, txid]);
-                
-                // Add a message to chat via DB if possible
-                // For now, the user's polling will see the status change to CONCLUIDA.
-              } else {
-                console.error(`PG: Panel extension failed for ${charge.username}`);
-              }
-            } else {
-              console.error(`PG: Client ${charge.username} not found in panel`);
-            }
+          const renewResult = await renewClientPuppeteer(charge.username);
+          if (renewResult.success) {
+            console.log(`PG: Renewal successful for ${charge.username}`);
+            await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', [status, txid]);
           } else {
-            console.error('PG: Panel login failed during automatic renewal');
+            console.error(`PG: Panel renewal failed for ${charge.username}: ${renewResult.message}`);
           }
         } catch (renewError) {
           console.error('PG: Error during automatic renewal:', renewError);
@@ -665,16 +533,12 @@ app.post('/api/pix/webhook', async (req, res) => {
       console.log(`PG: Webhook processing payment for ${charge.username}...`);
       
       try {
-        const loggedIn = await panelService.login();
-        if (loggedIn) {
-          const client = await panelService.findClient(charge.username);
-          if (client) {
-            const success = await panelService.extendClient(client.id);
-            if (success) {
-              console.log(`PG: Renewal successful via Webhook for ${charge.username}`);
-              await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
-            }
-          }
+        const renewResult = await renewClientPuppeteer(charge.username);
+        if (renewResult.success) {
+          console.log(`PG: Renewal successful via Webhook for ${charge.username}`);
+          await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
+        } else {
+          console.error(`PG: Webhook renewal failed for ${charge.username}: ${renewResult.message}`);
         }
       } catch (err) {
         console.error('PG: Webhook renewal error:', err);
@@ -698,18 +562,12 @@ app.post('/api/test/force-renew/:txid', async (req, res) => {
 
     console.log(`TEST: Forcing renewal for ${charge.username} (TXID: ${txid})`);
     
-    const loggedIn = await panelService.login();
-    if (!loggedIn) throw new Error('Login no Painel falhou');
-
-    const client = await panelService.findClient(charge.username);
-    if (!client) throw new Error(`Cliente ${charge.username} não encontrado no painel`);
-
-    const success = await panelService.extendClient(client.id);
-    if (success) {
+    const renewResult = await renewClientPuppeteer(charge.username);
+    if (renewResult.success) {
       await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
-      res.json({ success: true, message: `Renovação forçada com sucesso para ${charge.username}` });
+      res.json({ success: true, message: `Renovação forçada com sucesso para ${charge.username}` });
     } else {
-      res.status(500).json({ error: 'Falha ao estender cliente no painel' });
+      res.status(500).json({ error: renewResult.message || 'Falha ao renovar cliente no painel' });
     }
   } catch (err: any) {
     console.error('Test Force Renew Error:', err.message);
@@ -721,16 +579,9 @@ app.post('/api/test/force-renew/:txid', async (req, res) => {
 app.post('/api/panel/extend', async (req, res) => {
   const { username } = req.body;
   try {
-    const loggedIn = await panelService.login();
-    if (!loggedIn) throw new Error('Falha no login do painel');
-
-    const client = await panelService.findClient(username);
-    if (!client) throw new Error('Cliente não encontrado');
-
-    const success = await panelService.extendClient(client.id);
-    if (!success) throw new Error('Falha ao extender cliente');
-
-    res.json({ success: true, message: `Usuário ${username} renovado com sucesso.` });
+    const result = await renewClientPuppeteer(username);
+    if (!result.success) throw new Error(result.message);
+    res.json({ success: true, message: result.message });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

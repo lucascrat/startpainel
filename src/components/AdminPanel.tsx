@@ -16,6 +16,8 @@ export default function AdminPanel() {
   const [isSavingKey, setIsSavingKey] = useState(false);
 
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
+  const [panelStatus, setPanelStatus] = useState<{connected?: boolean, error?: string, message?: string, url?: string, total_clients?: number} | null>(null);
+  const [isTestingPanel, setIsTestingPanel] = useState(false);
 
   useEffect(() => {
     // Check DB status
@@ -67,6 +69,19 @@ export default function AdminPanel() {
     } catch (error) {
       console.error('Error loading customers:', error);
       setCustomers([]);
+    }
+  };
+
+  const checkPanelStatus = async () => {
+    setIsTestingPanel(true);
+    try {
+      const response = await fetch('/api/panel/status');
+      const data = await response.json();
+      setPanelStatus(data);
+    } catch (error) {
+      setPanelStatus({ connected: false, error: 'Servidor inacessível' });
+    } finally {
+      setIsTestingPanel(false);
     }
   };
 
@@ -410,15 +425,45 @@ export default function AdminPanel() {
         </div>
 
         {/* CMS Info Footer */}
-        <div className="bg-slate-900 rounded-lg p-3 flex items-center justify-between text-white">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Conectado ao CMS:</span>
-            <span className="text-[11px] text-emerald-400 font-mono">cms.startpainel.cc</span>
+        <div className="bg-slate-900 rounded-lg p-3 flex flex-col gap-2 text-white">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full ${
+                panelStatus === null ? 'bg-yellow-400 animate-pulse' :
+                panelStatus.connected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+              }`} />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">StartPainel API:</span>
+              <span className="text-[11px] font-mono text-emerald-400">
+                {panelStatus === null ? 'cms.startpainel.cc' : (panelStatus.url || 'cms.startpainel.cc')}
+              </span>
+            </div>
+            <button 
+              onClick={checkPanelStatus}
+              disabled={isTestingPanel}
+              className="text-[10px] font-bold uppercase p-1.5 bg-white/10 hover:bg-white/20 rounded transition flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isTestingPanel ? <RefreshCw size={11} className="animate-spin" /> : <CheckCircle size={11} />}
+              Testar Conexão
+            </button>
           </div>
-          <button className="text-[10px] font-bold uppercase p-1.5 bg-white/10 hover:bg-white/20 rounded transition">
-            Testar Conexão
-          </button>
+
+          {panelStatus && (
+            <div className={`text-[10px] font-medium px-2 py-1 rounded ${
+              panelStatus.connected 
+                ? 'bg-emerald-900/50 text-emerald-300' 
+                : 'bg-rose-900/50 text-rose-300'
+            }`}>
+              {panelStatus.connected 
+                ? `✅ ${panelStatus.message} — ${panelStatus.total_clients ?? 0} cliente(s) no painel` 
+                : `❌ ${panelStatus.error}`
+              }
+              {!panelStatus.connected && (
+                <span className="block mt-0.5 text-rose-400/70">
+                  Configure STARTPAINEL_API_TOKEN no .env do servidor
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
