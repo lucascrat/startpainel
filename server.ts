@@ -323,7 +323,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    
+
     const generatePixDeclaration = {
       name: 'generate_pix',
       description: 'Gera uma cobrança Pix (QR Code e Copia/Cola) para o cliente efetuar o pagamento. Sempre use essa ferramenta quando o cliente concordar com a renovação e precisar pagar. Não crie o pix sem saber o nome de usuário do cliente.',
@@ -337,12 +337,7 @@ app.post('/api/chat', async (req, res) => {
       },
     };
 
-    const model = ai.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      tools: [{ functionDeclarations: [generatePixDeclaration] }]
-    });
-
-    const prompt = `Você é um assistente multi-modal para o StartPainel.
+    const systemPrompt = `Você é um assistente multi-modal para o StartPainel.
                   
                   Regras de Atuação:
                   1. SUPORTE STARTPAINEL: Se o usuário quiser renovar ou tiver dúvidas do painel, aja como suporte humano, breve, estilo WhatsApp.
@@ -363,23 +358,29 @@ app.post('/api/chat', async (req, res) => {
                   Mantenha sempre o estilo breve e com emojis.
                   O cliente se chama ${userInfo?.name || 'Cliente'}.`;
 
-    const result = await model.generateContent({
-      contents: [
-        { role: 'user', parts: [{ text: prompt }] },
-        ...chatHistory.map((m: any) => ({
-          role: m.role === 'user' ? 'user' : 'model',
-          parts: m.parts.map((p: any) => {
-            if (p.text) return { text: p.text };
-            if (p.inlineData) return { inlineData: p.inlineData };
-            return p;
-          })
-        }))
-      ]
+    const contents = [
+      { role: 'user' as const, parts: [{ text: systemPrompt }] },
+      { role: 'model' as const, parts: [{ text: 'Entendido! Estou pronto para ajudar. 😊' }] },
+      ...chatHistory.map((m: any) => ({
+        role: m.role === 'user' ? 'user' as const : 'model' as const,
+        parts: m.parts.map((p: any) => {
+          if (p.text) return { text: p.text };
+          if (p.inlineData) return { inlineData: p.inlineData };
+          return p;
+        })
+      }))
+    ];
+
+    const result = await ai.models.generateContent({
+      model: 'gemini-1.5-flash',
+      contents,
+      config: {
+        tools: [{ functionDeclarations: [generatePixDeclaration] }],
+      }
     });
 
-    const response = result.response;
-    const text = response.text();
-    const functionCalls = response.functionCalls();
+    const text = result.text ?? '';
+    const functionCalls = result.functionCalls ?? [];
 
     res.json({ text, functionCalls });
   } catch (error: any) {
