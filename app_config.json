@@ -1,0 +1,13 @@
+{
+  "project_uuid": "kjwd9jfu5kpcdvtjdvu0ce5y",
+  "environment_name": "production",
+  "server_uuid": "zum1r0vt4dl4x0ceplwwlcnj",
+  "destination_uuid": "v1344stmsxbhpk3q4u1w7hpy",
+  "name": "startpainel-app",
+  "git_repository": "https://github.com/lucascrat/startpainel.git",
+  "git_branch": "main",
+  "build_pack": "dockerfile",
+  "ports_exposes": "3000",
+  "domains": "http://startpainel.84-247-138-242.sslip.io",
+  "instant_deploy": true
+}

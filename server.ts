@@ -1097,6 +1097,7 @@ app.post('/api/automations/startpainel/activate-ultra', async (req, res) => {
 
 // --- EVOLUTION WEBHOOK ---
 app.post('/api/webhooks/evolution', async (req, res) => {
+  console.log(`[Webhook] Received event: ${req.body?.event} from instance: ${req.body?.instance}`);
   const { event, data, instance } = req.body;
   
   // Respond immediately to Evolution API

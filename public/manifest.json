@@ -1,0 +1,22 @@
+{
+  "name": "StartPainel Support",
+  "short_name": "StartPainel",
+  "description": "Painel de Gerenciamento e Suporte StartPainel",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e5ddd5",
+  "theme_color": "#075e54",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://api.dicebear.com/7.x/avataaars/svg?seed=Support",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "https://api.dicebear.com/7.x/avataaars/svg?seed=Support",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
