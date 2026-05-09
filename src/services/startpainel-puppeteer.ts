@@ -30,6 +30,7 @@ export interface RenewalResult {
   message: string;
   clientId?: string;
   screenshotBase64?: string;
+  playlistUrl?: string;
 }
 
 async function launchBrowser(headless = true): Promise<Browser> {
@@ -202,5 +203,332 @@ export async function renewClientPuppeteerVisible(username: string): Promise<Ren
     return { success: false, message: error.message };
   } finally {
     if (browser) await browser.close();
+  }
+}
+
+export async function createClientAndGetPlaylist(username: string): Promise<RenewalResult> {
+  let browser: Browser | null = null;
+  try {
+    console.log(`\n[Puppeteer] === Iniciando criação de cliente: ${username} ===`);
+    browser = await launchBrowser(false); // Visible to handle any unexpected popups or captchas
+    const page = await browser.newPage();
+    
+    const loggedIn = await loginToPanel(page);
+    if (!loggedIn) {
+      return { success: false, message: 'Não foi possível acessar o painel (Login/Captcha).' };
+    }
+
+    // 1. Navigate to New Client
+    console.log(`[Puppeteer] Indo para Novo Cliente...`);
+    await page.goto(`${BASE_URL}/clients/new`, { waitUntil: 'networkidle2' });
+
+    // 2. Step 1: Login Info
+    console.log(`[Puppeteer] Preenchendo nome de usuário...`);
+    await page.waitForSelector('input[name="username"], input[type="text"]', { timeout: 10000 });
+    
+    // Find the right input (usually the first text input that isn't search)
+    const inputs = await page.$$('input[type="text"]');
+    if (inputs.length > 0) {
+      // Clear and type
+      await inputs[0].click({ clickCount: 3 });
+      await inputs[0].type(username, { delay: 100 });
+    }
+
+    // Click "Proximo"
+    console.log(`[Puppeteer] Clicando em Próximo (Passo 1)...`);
+    const nextBtns = await page.$$('button');
+    for (const btn of nextBtns) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('proximo') || text?.toLowerCase().includes('próximo')) {
+        await btn.click();
+        break;
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 3. Step 2: Plans
+    console.log(`[Puppeteer] Selecionando o plano...`);
+    // Assuming it's a select2 or similar dropdown
+    // Try to find the dropdown container and click it
+    const dropdowns = await page.$$('.select2-selection, select');
+    if (dropdowns.length > 0) {
+      await dropdowns[0].click();
+      await new Promise(r => setTimeout(r, 1000));
+      // Type the plan name in the search box if it appears
+      const searchInputs = await page.$$('.select2-search__field, input[type="search"]');
+      if (searchInputs.length > 0) {
+        // Find the visible one
+        for (const input of searchInputs) {
+          const isVisible = await input.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            return style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          });
+          if (isVisible) {
+            await input.type('COMPLETO - 1 MÊS - 1 CRÉDITO', { delay: 50 });
+            await page.keyboard.press('Enter');
+            break;
+          }
+        }
+      } else {
+        // Fallback: if it's a native select
+        await page.evaluate(() => {
+          const select = document.querySelector('select');
+          if (select) {
+            for (let i = 0; i < select.options.length; i++) {
+              if (select.options[i].text.includes('COMPLETO - 1 MÊS - 1 CRÉDITO')) {
+                select.selectedIndex = i;
+                select.dispatchEvent(new Event('change'));
+                break;
+              }
+            }
+          }
+        });
+      }
+    }
+
+    // Click "Proximo" again
+    console.log(`[Puppeteer] Clicando em Próximo (Passo 2)...`);
+    const nextBtns2 = await page.$$('button');
+    for (const btn of nextBtns2) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('proximo') || text?.toLowerCase().includes('próximo')) {
+        await btn.click();
+        break;
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 4. Step 3: Confirm and Create
+    console.log(`[Puppeteer] Clicando em Criar Cliente...`);
+    const createBtns = await page.$$('button');
+    for (const btn of createBtns) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('criar') || text?.toLowerCase().includes('confirmar') || text?.toLowerCase().includes('finalizar')) {
+        await btn.click();
+        break;
+      }
+    }
+
+    // Wait for redirect or success message
+    console.log(`[Puppeteer] Aguardando criação...`);
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 3000)); // Extra wait just in case
+
+    // 5. Navigate to Clients List to find the new client and view details
+    console.log(`[Puppeteer] Indo para a lista de clientes para extrair a M3U...`);
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+
+    // Search the client
+    const searchSelector = 'input[type="search"]';
+    await page.waitForSelector(searchSelector, { timeout: 15000 });
+    await page.click(searchSelector, { clickCount: 3 });
+    await page.type(searchSelector, username, { delay: 150 });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Click "Visualizar"
+    console.log('[Puppeteer] Clicando em Visualizar...');
+    const viewBtnSelector = 'a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"], .fa-eye';
+    const viewBtn = await page.$(viewBtnSelector);
+    if (!viewBtn) {
+       throw new Error('Botão Visualizar não encontrado após criação.');
+    }
+    
+    // If it's an icon inside a link, we click the parent or the element itself
+    await page.evaluate((selector) => {
+      const el = document.querySelector(selector) as HTMLElement;
+      if (el) el.click();
+    }, viewBtnSelector);
+
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 6. Extract M3U URL
+    console.log('[Puppeteer] Procurando a URL M3U na página...');
+    // M3U URLs typically contain "get.php" and "username=" and end with type=m3u or similar, or just are in an input box
+    const m3uUrl = await page.evaluate(() => {
+      // Look at all inputs and textareas
+      const elements = Array.from(document.querySelectorAll('input, textarea')) as HTMLInputElement[];
+      for (const el of elements) {
+        if (el.value && el.value.includes('get.php') && (el.value.includes('m3u') || el.value.includes('type=m3u_plus'))) {
+          return el.value;
+        }
+      }
+      
+      // Look at all text nodes and links
+      const links = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
+      for (const link of links) {
+        if (link.href && link.href.includes('get.php') && link.href.includes('m3u')) {
+          return link.href;
+        }
+      }
+
+      // Brute force text search in body
+      const bodyText = document.body.innerText;
+      const match = bodyText.match(/https?:\/\/[^\s"']+(?:get\.php)[^\s"']+/);
+      return match ? match[0] : null;
+    });
+
+    if (!m3uUrl) {
+      throw new Error('Lista M3U não encontrada na página de visualização.');
+    }
+
+    console.log(`[Puppeteer] M3U encontrada: ${m3uUrl}`);
+
+    return {
+      success: true,
+      message: `Cliente ${username} criado com sucesso!`,
+      playlistUrl: m3uUrl
+    };
+
+  } catch (error: any) {
+    console.error('[Puppeteer] Erro na criação de cliente:', error.message);
+    return { 
+      success: false, 
+      message: `Erro: ${error.message}`
+    };
+  } finally {
+    if (browser) {
+      // Commented out to keep browser open for debugging if needed, but normally should close
+      // await browser.close();
+    }
+  }
+}
+
+export async function activateUltraPlayer(username: string, mac: string): Promise<RenewalResult> {
+  let browser: Browser | null = null;
+  try {
+    console.log(`\n[Puppeteer] === Iniciando ativação do Ultra Player para: ${username} ===`);
+    browser = await launchBrowser(false); // Visible for monitoring
+    const page = await browser.newPage();
+    
+    const loggedIn = await loginToPanel(page);
+    if (!loggedIn) {
+      return { success: false, message: 'Não foi possível acessar o painel (Login/Captcha).' };
+    }
+
+    // 1. Go to clients list
+    console.log(`[Puppeteer] Indo para a lista de clientes...`);
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+
+    // 2. Search the client
+    console.log(`[Puppeteer] Pesquisando: ${username}`);
+    const searchSelector = 'input[type="search"]';
+    await page.waitForSelector(searchSelector, { timeout: 15000 });
+    await page.click(searchSelector, { clickCount: 3 });
+    await page.type(searchSelector, username, { delay: 150 });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 3. Click "Visualizar" / "Detalhes"
+    console.log('[Puppeteer] Clicando em Detalhes/Visualizar...');
+    const viewBtnSelector = 'a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"], .fa-eye';
+    const viewBtn = await page.$(viewBtnSelector);
+    if (!viewBtn) {
+       throw new Error('Botão Detalhes/Visualizar não encontrado.');
+    }
+    
+    await page.evaluate((selector) => {
+      const el = document.querySelector(selector) as HTMLElement;
+      if (el) el.click();
+    }, viewBtnSelector);
+
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 4. Click "Ativar Player"
+    console.log('[Puppeteer] Clicando em Ativar Player...');
+    const activateBtnSelector = 'button, a';
+    const buttons = await page.$$(activateBtnSelector);
+    let foundActivateBtn = false;
+    for (const btn of buttons) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('ativar player')) {
+        await btn.click();
+        foundActivateBtn = true;
+        break;
+      }
+    }
+
+    if (!foundActivateBtn) {
+      throw new Error('Botão "Ativar Player" não encontrado na página de detalhes.');
+    }
+
+    await new Promise(r => setTimeout(r, 2000)); // wait for modal
+
+    // 5. Select Ultra Player
+    console.log('[Puppeteer] Selecionando Ultra Player e preenchendo MAC...');
+    
+    // Select dropdown
+    const selectSelectors = ['select[name="player"]', 'select[name="app"]', 'select'];
+    let selected = false;
+    for (const sel of selectSelectors) {
+      try {
+        const selectEl = await page.$(sel);
+        if (selectEl) {
+          await page.evaluate((selector) => {
+            const select = document.querySelector(selector) as HTMLSelectElement;
+            for (let i = 0; i < select.options.length; i++) {
+              if (select.options[i].text.toLowerCase().includes('ultra player')) {
+                select.selectedIndex = i;
+                select.dispatchEvent(new Event('change'));
+                break;
+              }
+            }
+          }, sel);
+          selected = true;
+          break;
+        }
+      } catch(e) {}
+    }
+
+    // Input MAC
+    const macSelectors = ['input[name="mac"]', 'input[name="mac_address"]', 'input[placeholder*="MAC"]', 'input[placeholder*="00:1A:2B"]'];
+    for (const mSel of macSelectors) {
+      try {
+        const macInput = await page.$(mSel);
+        if (macInput) {
+          // Check visibility
+          const isVisible = await page.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+          }, macInput);
+          if (isVisible) {
+            await page.type(mSel, mac, { delay: 100 });
+            break;
+          }
+        }
+      } catch(e) {}
+    }
+
+    // Click "Ativar Player" submit
+    console.log('[Puppeteer] Confirmando ativação no modal...');
+    const modalButtons = await page.$$('.modal button');
+    for (const btn of modalButtons) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('ativar player') || text?.toLowerCase().includes('salvar') || text?.toLowerCase().includes('confirmar')) {
+        await btn.click();
+        break;
+      }
+    }
+
+    console.log('[Puppeteer] Aguardando processamento...');
+    await new Promise(r => setTimeout(r, 5000));
+
+    return {
+      success: true,
+      message: `Ultra Player ativado com sucesso para ${username} (MAC: ${mac})!`
+    };
+
+  } catch (error: any) {
+    console.error('[Puppeteer] Erro na ativação do Ultra Player:', error.message);
+    return { 
+      success: false, 
+      message: `Erro: ${error.message}`
+    };
+  } finally {
+    if (browser) {
+      // await browser.close();
+    }
   }
 }

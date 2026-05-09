@@ -1,12 +1,36 @@
+export interface CustomerApp {
+  id?: number;
+  customer_id: number;
+  app_name: string;
+  app_model?: string;
+  access_type: 'mac_key' | 'user_pass';
+  mac_address?: string;
+  device_key?: string;
+  username?: string;
+  password?: string;
+  provider_url?: string;
+  android_link?: string;
+  ios_link?: string;
+  icon_url?: string;
+  app_site_url?: string;
+  is_tv: boolean;
+}
+
 export interface Customer {
   id?: string | number;
   username: string;
   whatsapp?: string;
   renewalPrice?: number;
   renewal_price?: number | string; // For Postgres compat
+  cost_per_credit?: number;
+  lines_count?: number;
+  amount_paid?: number;
   status: 'active' | 'expired';
+  expiration_date?: string;
+  last_renewal?: string;
   created_at?: any; // For Postgres compat
   createdAt: any;
+  apps?: CustomerApp[];
 }
 
 export interface ChatMessage {
