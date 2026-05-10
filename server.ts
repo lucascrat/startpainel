@@ -346,7 +346,11 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       stack: error.stack,
       model: 'gemini-2.5-flash'
     });
-    return { text: `⚠️ IA: ${error.message || 'Erro inesperado'}.`, functionCalls: [] };
+    return { 
+      text: `⚠️ IA: ${error.message || 'Erro inesperado'}.`, 
+      functionCalls: [],
+      model: 'gemini-2.5-flash'
+    };
   }
 }
 
@@ -1505,13 +1509,17 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         const aiResult = await handleAIChat(remoteJid, chatHistory, identifiedCustomer || { name: pushName }, mediaData);
         
         // 3.4 Log AI Usage
-        if (aiResult.usage) {
-          const { promptTokenCount, candidatesTokenCount } = aiResult.usage as any;
-          const cost = (promptTokenCount * 0.000000075) + (candidatesTokenCount * 0.00000030);
-          await pool.query(
-            'INSERT INTO ai_usage_logs (model, type, prompt_tokens, candidates_tokens, estimated_cost) VALUES ($1, $2, $3, $4, $5)',
-            [aiResult.model, 'chat_webhook', promptTokenCount, candidatesTokenCount, cost]
-          );
+        try {
+          if (aiResult.usage) {
+            const { promptTokenCount, candidatesTokenCount } = aiResult.usage as any;
+            const cost = (promptTokenCount * 0.000000075) + (candidatesTokenCount * 0.00000030);
+            await pool.query(
+              'INSERT INTO ai_usage_logs (model, type, prompt_tokens, candidates_tokens, estimated_cost) VALUES ($1, $2, $3, $4, $5)',
+              [aiResult.model || 'gemini-2.5-flash', 'chat_webhook', promptTokenCount, candidatesTokenCount, cost]
+            );
+          }
+        } catch (logErr) {
+          console.error('[Webhook] Error logging AI usage:', logErr);
         }
         
         // 3.5 Process Text and Audio Response
