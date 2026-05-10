@@ -13,6 +13,7 @@ import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer }
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,6 +139,18 @@ app.get('/api/health', (req, res) => {
     db: dbStatus, 
     details: dbError || 'No errors reported'
   });
+});
+
+// Auth Login
+app.post('/api/login', (req, res) => {
+  const { password } = req.body;
+  const adminPass = process.env.ADMIN_PASSWORD || 'admin2026';
+
+  if (password === adminPass) {
+    const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET || 'secret_key', { expiresIn: '24h' });
+    return res.json({ success: true, token });
+  }
+  res.status(401).json({ error: 'Senha incorreta' });
 });
 
 // Customers
