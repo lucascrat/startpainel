@@ -92,7 +92,7 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY is not defined");
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
     const contents: any[] = [
       { role: 'user', parts: [{ text: "Você é o assistente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps." }] },
@@ -116,10 +116,10 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
     });
 
     const response = result.response;
-    return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: 'gemini-1.5-flash' };
+    return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: 'gemini-2.0-flash' };
   } catch (error: any) {
     console.error('[AI Error]', error.message);
-    return { text: `⚠️ IA Erro: ${error.message}`, functionCalls: [], model: 'gemini-1.5-flash' };
+    return { text: `⚠️ IA Erro: ${error.message}`, functionCalls: [], model: 'gemini-2.0-flash' };
   }
 }
 
