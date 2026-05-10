@@ -17,42 +17,59 @@ import { EdgeTTS } from '@andresaya/edge-tts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Postgres Pool
-const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:startpainel_db_pass_2024@84.247.138.242:5432/postgres';
+// Database Connection Logic
+const INTERNAL_DB = 'postgres://postgres:startpainel_db_pass_2024@tqvwnbzn0gdnkkhl211aaal5:5432/postgres';
+const PUBLIC_DB = 'postgres://postgres:startpainel_db_pass_2024@84.247.138.242:5432/postgres';
+const DB_URL = process.env.DATABASE_URL || INTERNAL_DB;
 
+console.log('PG: Initializing connection pool...');
 const pool = new Pool({
   connectionString: DB_URL,
   ssl: false,
-  connectionTimeoutMillis: 10000
+  connectionTimeoutMillis: 5000,
+  max: 20
+});
+
+pool.on('error', (err) => {
+  console.error('PG: Unexpected database error:', err.message);
 });
 
 let dbStatus = 'connecting';
 let dbError = '';
 
-async function initDB() {
+async function initDB(retries = 5) {
   let client;
-  try {
-    client = await pool.connect();
-    console.log('PG: Successfully connected to PostgreSQL server');
-    
-    // Tables Creation
-    await client.query(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, text TEXT, sender VARCHAR(20), type VARCHAR(50) DEFAULT 'text', remote_jid TEXT, contact_name TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, remote_jid TEXT UNIQUE NOT NULL, name TEXT, last_message TEXT, last_message_time TIMESTAMP, unread_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS automations (id SERIAL PRIMARY KEY, name TEXT NOT NULL, site_url TEXT NOT NULL, username TEXT, password TEXT, type TEXT DEFAULT 'ibo_player', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS ai_usage_logs (id SERIAL PRIMARY KEY, model TEXT NOT NULL, type TEXT NOT NULL, prompt_tokens INTEGER, candidates_tokens INTEGER, estimated_cost DECIMAL(15,8), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS customer_apps (id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE, app_name TEXT NOT NULL, app_model TEXT, access_type TEXT, mac_address TEXT, device_key TEXT, username TEXT, password TEXT, provider_url TEXT, is_tv BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS pix_charges (txid TEXT PRIMARY KEY, customer_username TEXT, amount DECIMAL(10,2), status TEXT DEFAULT 'ATIVA', processed BOOLEAN DEFAULT false, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS settings (key VARCHAR(255) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  while (retries > 0) {
+    try {
+      client = await pool.connect();
+      console.log('PG: Successfully connected to PostgreSQL');
+      
+      // Tables Creation (simplified for stability)
+      const tables = [
+        `CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, text TEXT, sender VARCHAR(20), type VARCHAR(50) DEFAULT 'text', remote_jid TEXT, contact_name TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, remote_jid TEXT UNIQUE NOT NULL, name TEXT, last_message TEXT, last_message_time TIMESTAMP, unread_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS ai_usage_logs (id SERIAL PRIMARY KEY, model TEXT NOT NULL, type TEXT NOT NULL, prompt_tokens INTEGER, candidates_tokens INTEGER, estimated_cost DECIMAL(15,8), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS customer_apps (id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE, app_name TEXT NOT NULL, app_model TEXT, access_type TEXT, mac_address TEXT, device_key TEXT, username TEXT, password TEXT, provider_url TEXT, is_tv BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS pix_charges (txid TEXT PRIMARY KEY, customer_username TEXT, amount DECIMAL(10,2), status TEXT DEFAULT 'ATIVA', processed BOOLEAN DEFAULT false, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS settings (key VARCHAR(255) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+      ];
 
-    dbStatus = 'connected';
-  } catch (err: any) {
-    console.error('PG: Initialization error', err);
-    dbStatus = 'error';
-    dbError = err.message;
-  } finally {
-    if (client) client.release();
+      for (const sql of tables) await client.query(sql);
+      
+      dbStatus = 'connected';
+      return;
+    } catch (err: any) {
+      console.error(`PG: Connection attempt failed. Retries left: ${retries - 1}`, err.message);
+      dbError = err.message;
+      retries--;
+      if (retries > 0) await new Promise(r => setTimeout(r, 2000));
+    } finally {
+      if (client) client.release();
+    }
   }
+  dbStatus = 'error';
+  console.error('PG: Could not connect to database after multiple attempts.');
 }
 
 initDB();
