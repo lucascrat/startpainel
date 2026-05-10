@@ -69,6 +69,7 @@ export default function AdminPanel() {
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
   const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[]}>({summary: {}, recent: []});
+  const [queueStatus, setQueueStatus] = useState<{pending: string[], processing: string | null, isBusy: boolean}>({pending: [], processing: null, isBusy: false});
 
   useEffect(() => {
     loadAll();
@@ -140,6 +141,19 @@ export default function AdminPanel() {
       if (dataPrompt.value) setAiSystemPrompt(dataPrompt.value);
     } catch (error) {}
   };
+
+  const loadQueueStatus = async () => {
+    try {
+      const response = await fetch('/api/panel/queue');
+      const data = await response.json();
+      setQueueStatus(data);
+    } catch (error) {}
+  };
+
+  useEffect(() => {
+    const interval = setInterval(loadQueueStatus, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadAutomations = async () => {
     try {
@@ -462,9 +476,19 @@ export default function AdminPanel() {
               </div>
               <div>
                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">StartPainel Admin</h2>
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${dbStatus.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{dbStatus.status}</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${dbStatus.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{dbStatus.status}</span>
+                  </div>
+                  {queueStatus.isBusy && (
+                    <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                      <RefreshCw size={10} className="text-amber-500 animate-spin" />
+                      <span className="text-[8px] text-amber-600 font-black uppercase tracking-widest">
+                        Processando: {queueStatus.processing} {queueStatus.pending.length > 0 ? `(+${queueStatus.pending.length})` : ''}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

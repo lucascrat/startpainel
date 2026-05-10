@@ -368,6 +368,49 @@ app.post('/api/worker/renew', async (req, res) => {
   }
 });
 
+// --- TASK QUEUE SYSTEM ---
+let renewalQueue: string[] = [];
+let isProcessingQueue = false;
+let currentTask: string | null = null;
+
+async function addToRenewalQueue(username: string) {
+  if (!renewalQueue.includes(username) && currentTask !== username) {
+    renewalQueue.push(username);
+    console.log(`[Queue] Adicionado: ${username}. Posição: ${renewalQueue.length}`);
+  }
+  processNextInQueue();
+}
+
+async function processNextInQueue() {
+  if (isProcessingQueue || renewalQueue.length === 0) return;
+
+  isProcessingQueue = true;
+  currentTask = renewalQueue.shift() || null;
+  
+  if (currentTask) {
+    console.log(`[Queue] Processando agora: ${currentTask}`);
+    try {
+      await processRenewal(currentTask);
+    } catch (err: any) {
+      console.error(`[Queue] Erro ao processar ${currentTask}:`, err.message);
+    }
+  }
+
+  currentTask = null;
+  isProcessingQueue = false;
+  
+  // Wait 5 seconds between tasks to let the system breathe
+  setTimeout(processNextInQueue, 5000);
+}
+
+app.get('/api/panel/queue', (req, res) => {
+  res.json({
+    pending: renewalQueue,
+    processing: currentTask,
+    isBusy: isProcessingQueue
+  });
+});
+
 // Função que decide se renova aqui ou no notebook
 async function processRenewal(username: string) {
   if (WORKER_URL) {
@@ -402,16 +445,8 @@ app.get('/api/panel/status', async (req, res) => {
 
 app.post('/api/panel/renew/:username', async (req, res) => {
   const { username } = req.params;
-  try {
-    const result = await processRenewal(username);
-    if (result.success) {
-      res.json({ success: true, message: result.message, clientId: result.clientId });
-    } else {
-      res.status(500).json({ error: result.message });
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  addToRenewalQueue(username);
+  res.json({ success: true, message: 'Adicionado à fila de processamento.' });
 });
 
 // --- PG DATABASE ROUTES ---
@@ -888,24 +923,16 @@ app.post('/api/pix/webhook', express.json(), async (req, res) => {
     const charge = chargeResult.rows[0];
     
     if (charge && !charge.processed) {
-      console.log(`PG: Webhook processing payment for ${charge.customer_username}...`);
+      console.log(`PG: Webhook queuing payment for ${charge.customer_username}...`);
+      addToRenewalQueue(charge.customer_username);
+      // We mark as processed here or later? 
+      // Better to mark as processed when queue finishes, but for now we mark it to avoid double triggers
+      await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
       
-      try {
-        const renewResult = await processRenewal(charge.customer_username);
-        if (renewResult.success) {
-          console.log(`PG: Renewal successful for ${charge.customer_username}`);
-          await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
-          
-          await pool.query(
-            'INSERT INTO messages (text, sender, type) VALUES ($1, $2, $3)',
-            [`[SISTEMA] Pagamento confirmado via Webhook! A conta de ${charge.customer_username} foi renovada.`, 'ai', 'text']
-          );
-        } else {
-          console.error(`PG: Renewal failed for ${charge.customer_username}: ${renewResult.message}`);
-        }
-      } catch (err) {
-        console.error('PG: Webhook renewal error:', err);
-      }
+      await pool.query(
+        'INSERT INTO messages (text, sender, type) VALUES ($1, $2, $3)',
+        [`[SISTEMA] Pagamento confirmado! A renovação de ${charge.customer_username} foi para a fila.`, 'ai', 'text']
+      );
     }
   }
   res.sendStatus(200);
@@ -922,15 +949,9 @@ app.post('/api/test/force-renew/:txid', async (req, res) => {
       return res.status(404).json({ error: 'Cobrança não encontrada no banco local' });
     }
 
-    console.log(`TEST: Forcing renewal for ${charge.username} (TXID: ${txid})`);
-    
-    const renewResult = await processRenewal(charge.username);
-    if (renewResult.success) {
-      await pool.query('UPDATE pix_charges SET processed = true, status = $1 WHERE txid = $2', ['CONCLUIDA', txid]);
-      res.json({ success: true, message: `Renovação forçada com sucesso para ${charge.username}` });
-    } else {
-      res.status(500).json({ error: renewResult.message || 'Falha ao renovar cliente no painel' });
-    }
+    console.log(`TEST: Queuing renewal for ${charge.customer_username} (TXID: ${txid})`);
+    addToRenewalQueue(charge.customer_username);
+    res.json({ success: true, message: `Adicionado à fila para ${charge.customer_username}` });
   } catch (err: any) {
     console.error('Test Force Renew Error:', err.message);
     res.status(500).json({ error: err.message });
