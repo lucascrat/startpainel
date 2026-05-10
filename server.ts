@@ -232,7 +232,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
                   O cliente se chama ${userInfo?.name || 'Cliente'}.`;
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
     });
 
     // Prepare contents with explicit roles and alternating turns
