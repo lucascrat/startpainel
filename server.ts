@@ -1053,6 +1053,57 @@ app.post('/api/automations/startpainel/activate-ultra', async (req, res) => {
 });
 
 // --- EVOLUTION WEBHOOK ---
+// --- BROADCAST ROUTE ---
+app.post('/api/broadcast', express.json(), async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'Mensagem é obrigatória' });
+
+  try {
+    const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+    const config: any = {};
+    settings.rows.forEach(r => config[r.key] = r.value);
+    
+    if (!config.evolution_api_url || !config.evolution_token || !config.evolution_instance) {
+      return res.status(400).json({ error: 'Evolution API não configurada' });
+    }
+
+    const evo = new EvolutionService({
+      apiUrl: config.evolution_api_url,
+      token: config.evolution_token,
+      instance: config.evolution_instance
+    });
+
+    const customers = await pool.query('SELECT name, whatsapp FROM customers WHERE whatsapp IS NOT NULL AND whatsapp != \'\'');
+    
+    console.log(`[Broadcast] Iniciando envio para ${customers.rows.length} clientes...`);
+
+    // We process in background and return immediate success OR process and wait? 
+    // Let's do it in background to avoid timeout
+    res.json({ success: true, total: customers.rows.length });
+
+    (async () => {
+      for (const customer of customers.rows) {
+        try {
+          const jid = customer.whatsapp.includes('@') ? customer.whatsapp : `${customer.whatsapp.replace(/\D/g, '')}@s.whatsapp.net`;
+          const personalizedMessage = message.replace(/{{name}}/g, customer.name || 'Cliente');
+          
+          await evo.sendMessage(jid, personalizedMessage);
+          console.log(`[Broadcast] Enviado para ${customer.name} (${jid})`);
+          
+          // Delay to avoid ban (3 seconds)
+          await new Promise(r => setTimeout(r, 3000));
+        } catch (err: any) {
+          console.error(`[Broadcast] Erro ao enviar para ${customer.name}:`, err.message);
+        }
+      }
+      console.log('[Broadcast] Finalizado!');
+    })();
+
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/webhooks/evolution', async (req, res) => {
   console.log(`[Webhook] Received event: ${req.body?.event} from instance: ${req.body?.instance}`);
   const { event, data, instance } = req.body;

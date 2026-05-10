@@ -64,6 +64,8 @@ export default function AdminPanel() {
   const [attendantName, setAttendantName] = useState('Suporte StartPainel');
   const [attendantImage, setAttendantImage] = useState('https://cdn-icons-png.flaticon.com/512/4712/4712027.png');
   const [aiSystemPrompt, setAiSystemPrompt] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
   const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[]}>({summary: {}, recent: []});
@@ -345,6 +347,26 @@ export default function AdminPanel() {
     } catch (error) {} finally { setIsSavingKey(false); }
   };
 
+  const handleBroadcast = async () => {
+    if (!broadcastMessage.trim()) return;
+    if (!confirm(`Deseja enviar este comunicado para TODOS os ${customers.length} clientes?`)) return;
+    
+    setIsBroadcasting(true);
+    try {
+      const response = await fetch('/api/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: broadcastMessage })
+      });
+      if (response.ok) {
+        alert('Disparo iniciado em segundo plano! As mensagens chegarão aos poucos para evitar bloqueios.');
+        setBroadcastMessage('');
+      }
+    } catch (error) {
+      alert('Erro ao iniciar disparo.');
+    } finally { setIsBroadcasting(false); }
+  };
+
   const handleAddAutomation = async () => {
     if (!autoName || !autoSiteUrl) return;
     setIsLoading(true);
@@ -601,6 +623,34 @@ export default function AdminPanel() {
                       <button onClick={handleSaveSettings} disabled={isSavingKey} className="bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20">
                         {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Broadcast Section */}
+                  <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-50 pb-3">
+                      <Smartphone size={18} className="text-blue-500" />
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Comunicado Geral (Massa)</h3>
+                    </div>
+                    <div className="space-y-3">
+                      <textarea 
+                        value={broadcastMessage}
+                        onChange={e => setBroadcastMessage(e.target.value)}
+                        placeholder="Digite aqui o aviso para todos os clientes... Use {{name}} para o nome."
+                        className="w-full h-24 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                      />
+                      <div className="flex justify-between items-center">
+                        <p className="text-[9px] text-slate-400 font-bold italic">
+                          * As mensagens serão enviadas com intervalo de 3s para sua segurança.
+                        </p>
+                        <button 
+                          onClick={handleBroadcast}
+                          disabled={isBroadcasting || !broadcastMessage.trim()}
+                          className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all disabled:opacity-50"
+                        >
+                          {isBroadcasting ? 'Iniciando...' : 'Iniciar Disparo'}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
