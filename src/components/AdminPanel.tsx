@@ -62,6 +62,7 @@ export default function AdminPanel() {
   const [geminiKey, setGeminiKey] = useState('');
   const [attendantName, setAttendantName] = useState('Suporte StartPainel');
   const [attendantImage, setAttendantImage] = useState('https://cdn-icons-png.flaticon.com/512/4712/4712027.png');
+  const [aiSystemPrompt, setAiSystemPrompt] = useState('');
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
   const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[]}>({summary: {}, recent: []});
@@ -130,6 +131,10 @@ export default function AdminPanel() {
       const resImg = await fetch('/api/settings/attendant_image');
       const dataImg = await resImg.json();
       if (dataImg.value) setAttendantImage(dataImg.value);
+
+      const resPrompt = await fetch('/api/settings/ai_system_prompt');
+      const dataPrompt = await resPrompt.json();
+      if (dataPrompt.value) setAiSystemPrompt(dataPrompt.value);
     } catch (error) {}
   };
 
@@ -327,6 +332,11 @@ export default function AdminPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'attendant_image', value: attendantImage })
+      });
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'ai_system_prompt', value: aiSystemPrompt })
       });
       alert('Configurações salvas!');
     } catch (error) {} finally { setIsSavingKey(false); }
@@ -558,6 +568,25 @@ export default function AdminPanel() {
                           <DollarSign size={18} className="text-rose-400" />
                           <input type="number" value={defaultCostPerLine} onChange={e => setDefaultCostPerLine(e.target.value)} className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
                         </div>
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2 lg:col-span-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Instruções do Atendente (Prompt da IA)</label>
+                          <div className="flex gap-2">
+                             <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{userInfo.name}}"}</span>
+                             <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{clientPricesContext}}"}</span>
+                          </div>
+                        </div>
+                        <textarea 
+                          value={aiSystemPrompt} 
+                          onChange={e => setAiSystemPrompt(e.target.value)}
+                          placeholder="Digite aqui as regras de atendimento, valores de planos, etc..."
+                          className="w-full h-48 bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-white text-[11px] leading-relaxed focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                        />
+                        <p className="text-[8px] text-slate-500 font-medium mt-2 italic px-1">
+                          * Use as tags acima para inserir o nome do cliente e a tabela de preços automaticamente.
+                        </p>
                       </div>
                     </div>
 

@@ -210,7 +210,18 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       },
     };
 
-    const systemPrompt = `Você é um assistente multi-modal para o StartPainel.
+    // Fetch dynamic prompt from settings
+    const promptRes = await pool.query('SELECT value FROM settings WHERE key = $1', ['ai_system_prompt']);
+    let systemPrompt = '';
+    
+    if (promptRes.rows.length > 0 && promptRes.rows[0].value) {
+      systemPrompt = promptRes.rows[0].value;
+      // Replace dynamic tags
+      systemPrompt = systemPrompt.replace(/{{clientPricesContext}}/g, clientPricesContext || '')
+                                 .replace(/{{userInfo.name}}/g, userInfo?.name || 'Cliente');
+    } else {
+      // Default Fallback Prompt
+      systemPrompt = `Você é um assistente multi-modal para o StartPainel.
                   
                   Regras de Atuação:
                   1. SUPORTE STARTPAINEL: Se o usuário quiser renovar ou tiver dúvidas do painel, aja como suporte humano, breve, estilo WhatsApp.
@@ -230,6 +241,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
                   
                   Mantenha sempre o estilo breve e com emojis.
                   O cliente se chama ${userInfo?.name || 'Cliente'}.`;
+    }
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
