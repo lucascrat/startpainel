@@ -16,6 +16,7 @@ import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer }
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
 import multer from 'multer';
+import * as googleTTS from 'google-tts-api';
 
 // Initialize Postgres Pool
 const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
@@ -191,7 +192,7 @@ async function initDB() {
 }
 initDB();
 
-async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { name: string }) {
+async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { name: string, username?: string }, media?: { data: string, mimeType: string }) {
   try {
     const settingsResult = await pool.query('SELECT value FROM settings WHERE key = $1', ['gemini_api_key']);
     let apiKey = settingsResult.rows[0]?.value || process.env.GEMINI_API_KEY;
@@ -238,51 +239,66 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       },
     };
 
+    const saveCustomerAppDeclaration = {
+      name: 'save_customer_app',
+      description: 'Salva dados de acesso de um aplicativo (MAC/Key ou User/Pass) no perfil do cliente. Use isso quando o cliente enviar uma FOTO ou ÁUDIO com esses dados ou pedir para cadastrar um novo aparelho.',
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          username: { type: "STRING", description: 'O nome de usuário do cliente no sistema.' },
+          appName: { type: "STRING", description: 'Nome para identificar o aparelho (ex: TV Sala, Celular).' },
+          appModel: { type: "STRING", description: 'Modelo do aplicativo (ex: IBO PLAYER, SMARTERS, ULTRA PLAYER).' },
+          macAddress: { type: "STRING", description: 'Endereço MAC (se disponível).' },
+          deviceKey: { type: "STRING", description: 'Device Key ou Senha do dispositivo (se disponível).' },
+          appUsername: { type: "STRING", description: 'Usuário do aplicativo (se for lista M3U).' },
+          appPassword: { type: "STRING", description: 'Senha do aplicativo (se for lista M3U).' },
+          providerUrl: { type: "STRING", description: 'URL do servidor/host (se disponível).' }
+        },
+        required: ['username', 'appName', 'appModel'],
+      },
+    };
+
     // Fetch dynamic prompt from settings
     const promptRes = await pool.query('SELECT value FROM settings WHERE key = $1', ['ai_system_prompt']);
     let systemPrompt = '';
     
     if (promptRes.rows.length > 0 && promptRes.rows[0].value) {
       systemPrompt = promptRes.rows[0].value;
-      // Replace dynamic tags
       systemPrompt = systemPrompt.replace(/{{clientPricesContext}}/g, clientPricesContext || '')
                                  .replace(/{{userInfo.name}}/g, userInfo?.name || 'Cliente');
     } else {
-      // Default Fallback Prompt
       systemPrompt = `Você é um assistente multi-modal para o StartPainel.
                   
                   Regras de Atuação:
                   1. SUPORTE STARTPAINEL: Se o usuário quiser renovar ou tiver dúvidas do painel, aja como suporte humano, breve, estilo WhatsApp.
                      - Pergunte o username se não souber.
                      - Use "generate_pix" para cobranças.
+                     - Use "get_customer_info" para consultar dados.
                      - Contexto de Preços: ${clientPricesContext}
                      - Preço padrão: 49.90.
                   
-                  2. NUTRICIONISTA: Se o usuário enviar uma FOTO DE COMIDA ou falar sobre o que COMEU/VAI COMER:
-                     - Aja como um nutricionista atencioso.
-                     - Analise os alimentos (se for foto, identifique o que tem no prato).
-                     - Estime calorias e macronutrientes de forma aproximada.
-                     - Dê dicas de saúde ou substituições saudáveis.
-                     - Seja motivador.
+                  2. EXTRAÇÃO DE DADOS: Se o usuário enviar uma FOTO ou ÁUDIO com dados de acesso (MAC, Key, Usuário, Senha):
+                     - Analise a mídia. Identifique MACs, Keys, logins e senhas.
+                     - Use "save_customer_app" para salvar esses dados automaticamente no perfil do cliente.
+                     - Informe ao cliente que você salvou os dados para ele.
 
-                  3. Se o usuário mandar algo que não se encaixa em nenhum dos dois, responda de forma geral e amigável.
-                  
-                  Mantenha sempre o estilo breve e com emojis.
+                  3. NUTRICIONISTA: Se o usuário enviar uma FOTO DE COMIDA ou falar sobre o que COMEU:
+                     - Aja como um nutricionista atencioso. Analise a foto e estime calorias.
+
+                  Seja sempre breve, amigável e use emojis.
                   O cliente se chama ${userInfo?.name || 'Cliente'}.
-                  O username dele no sistema é ${userInfo?.username || 'desconhecido'}.`;
+                  O username dele é ${userInfo?.username || 'desconhecido'}.`;
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
     });
 
-    // Prepare contents with explicit roles and alternating turns
     const contents: any[] = [
       { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Entendido! Estou pronto para ajudar. 😊' }] }
+      { role: 'model', parts: [{ text: 'Entendido! Estou pronto para ajudar com textos, imagens e áudios. 😊' }] }
     ];
 
-    // Add history but omit the very last message (which we will send as the current prompt)
     if (chatHistory.length > 1) {
       chatHistory.slice(0, -1).forEach((m: any) => {
         contents.push({
@@ -292,14 +308,24 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       });
     }
 
-    // Always send the last message as the final user part
-    const lastMessage = chatHistory[chatHistory.length - 1]?.parts[0]?.text || 'Olá';
-    contents.push({ role: 'user', parts: [{ text: lastMessage }] });
+    const lastText = chatHistory[chatHistory.length - 1]?.parts[0]?.text || 'Analisando mídia...';
+    const lastParts: any[] = [{ text: lastText }];
+
+    if (media) {
+      lastParts.push({
+        inlineData: {
+          data: media.data,
+          mimeType: media.mimeType
+        }
+      });
+    }
+
+    contents.push({ role: 'user', parts: lastParts });
 
     const result = await model.generateContent({
       contents,
       tools: [{
-        functionDeclarations: [generatePixDeclaration, getCustomerInfoDeclaration]
+        functionDeclarations: [generatePixDeclaration, getCustomerInfoDeclaration, saveCustomerAppDeclaration]
       }]
     });
 
@@ -310,10 +336,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     return { text, functionCalls };
   } catch (error: any) {
     console.error("Gemini Error:", error);
-    return { 
-      text: `⚠️ Erro na IA (Gemini): ${error.message || 'Erro desconhecido'}. Verifique sua chave API ou o status do Google.`, 
-      functionCalls: [] 
-    };
+    return { text: `⚠️ IA: ${error.message || 'Erro inesperado'}.`, functionCalls: [] };
   }
 }
 
@@ -1423,12 +1446,12 @@ app.post('/api/webhooks/evolution', async (req, res) => {
       // 2. Save message (sender: 'customer' for user, 'attendant' for me)
       await pool.query(
         'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
-        [text, fromMe ? 'attendant' : 'customer', msg?.imageMessage ? 'image' : 'text', remoteJid, pushName]
+        [text || (msg?.imageMessage ? '[Imagem]' : (msg?.audioMessage ? '[Áudio]' : '[Mídia]')), fromMe ? 'attendant' : 'customer', msg?.imageMessage ? 'image' : (msg?.audioMessage ? 'audio' : 'text'), remoteJid, pushName]
       );
 
       // 3. Automated AI Response (if not from me)
       if (!fromMe) {
-        console.log(`[Webhook] Message from ${pushName} (${remoteJid}): ${text}`);
+        console.log(`[Webhook] Message from ${pushName} (${remoteJid}): ${text || '[Mídia]'}`);
         
         // 3.1 Fetch History
         const historyRes = await pool.query(
@@ -1438,13 +1461,38 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         
         const chatHistory = historyRes.rows.reverse().map(m => ({
           role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user',
-          parts: [{ text: m.text }]
+          parts: [{ text: m.text || '[Mídia]' }]
         }));
 
-        // 3.2 Get AI Response
-        const aiResult = await handleAIChat(remoteJid, chatHistory, identifiedCustomer || { name: pushName });
+        // 3.2 Fetch Media if present
+        let mediaData = undefined;
+        if (msg?.imageMessage || msg?.audioMessage) {
+          try {
+             const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+             const config: any = {};
+             settings.rows.forEach(r => config[r.key] = r.value);
+             const evo = new EvolutionService({
+               apiUrl: config.evolution_api_url,
+               token: config.evolution_token,
+               instance: config.evolution_instance
+             });
+             
+             const mediaResult = await evo.loadMedia(key);
+             if (mediaResult && mediaResult.base64) {
+                mediaData = {
+                  data: mediaResult.base64.replace(/^data:.*?;base64,/, ""),
+                  mimeType: msg.imageMessage ? 'image/png' : (msg.audioMessage ? 'audio/ogg' : 'application/octet-stream')
+                };
+             }
+          } catch (mediaErr) {
+             console.error('[Webhook] Failed to load media:', mediaErr);
+          }
+        }
+
+        // 3.3 Get AI Response
+        const aiResult = await handleAIChat(remoteJid, chatHistory, identifiedCustomer || { name: pushName }, mediaData);
         
-        // 3.3 Process Text Response
+        // 3.3 Process Text and Audio Response
         if (aiResult.text) {
           const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
           const config: any = {};
@@ -1457,7 +1505,26 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                instance: config.evolution_instance
              });
              
-             await evo.sendMessage(remoteJid, aiResult.text);
+             // Check if we should reply with Audio (if user sent audio or if we want to be humanized)
+             const shouldSendAudio = msg?.audioMessage || (Math.random() > 0.7); // 30% chance of random audio response
+             
+             if (shouldSendAudio) {
+                try {
+                  const url = googleTTS.getAudioUrl(aiResult.text, {
+                    lang: 'pt-BR',
+                    slow: false,
+                    host: 'https://translate.google.com',
+                  });
+                  const audioResponse = await axios.get(url, { responseType: 'arraybuffer' });
+                  const base64Audio = Buffer.from(audioResponse.data).toString('base64');
+                  await evo.sendAudio(remoteJid, base64Audio);
+                } catch (ttsErr) {
+                  console.error('[TTS] Error generating audio:', ttsErr);
+                  await evo.sendMessage(remoteJid, aiResult.text);
+                }
+             } else {
+                await evo.sendMessage(remoteJid, aiResult.text);
+             }
              
              // Save AI message to DB
              await pool.query(
@@ -1475,6 +1542,8 @@ app.post('/api/webhooks/evolution', async (req, res) => {
           } else if (call.name === 'get_customer_info') {
              const { username } = call.args as any;
              await handleCustomerInfoTool(remoteJid, pushName, username);
+          } else if (call.name === 'save_customer_app') {
+             await handleSaveAppTool(remoteJid, pushName, call.args as any);
           }
         }
         }
@@ -1600,6 +1669,44 @@ async function handleCustomerInfoTool(remoteJid: string, pushName: string, usern
 
   } catch (error: any) {
     console.error('Tool Error (Info):', error.message);
+  }
+}
+
+async function handleSaveAppTool(remoteJid: string, pushName: string, args: any) {
+  try {
+    const { username, appName, appModel, macAddress, deviceKey, appUsername, appPassword, providerUrl } = args;
+    
+    // 1. Find customer ID
+    const customerRes = await pool.query('SELECT id FROM customers WHERE username = $1', [username]);
+    if (customerRes.rows.length === 0) return;
+    const customerId = customerRes.rows[0].id;
+
+    // 2. Insert App
+    await pool.query(
+      `INSERT INTO customer_apps 
+       (customer_id, app_name, app_model, access_type, mac_address, device_key, username, password, provider_url, is_tv) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        customerId, appName, appModel, 
+        macAddress ? 'mac_key' : 'user_pass', 
+        macAddress, deviceKey, appUsername, appPassword, providerUrl, true
+      ]
+    );
+
+    console.log(`[AI Tool] Saved app ${appName} for ${username}`);
+
+    const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+    const config: any = {};
+    settings.rows.forEach(r => config[r.key] = r.value);
+    const evo = new EvolutionService({
+       apiUrl: config.evolution_api_url,
+       token: config.evolution_token,
+       instance: config.evolution_instance
+    });
+    
+    await evo.sendMessage(remoteJid, `✅ Perfeito! Já salvei os dados do seu *${appName}* aqui no sistema.`);
+  } catch (err: any) {
+    console.error('Tool Error (SaveApp):', err.message);
   }
 }
 
