@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import ChatInterface from './components/ChatInterface';
 import AdminPanel from './components/AdminPanel';
 import ActivationTester from './components/ActivationTester';
-import { MessageSquare, ShieldCheck, Github, Activity, LogOut } from 'lucide-react';
+import CustomerMenu from './components/CustomerMenu';
+import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users } from 'lucide-react';
 import { login, getToken, logout } from './lib/auth';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers'>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getToken());
   const [pwInput, setPwInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -59,6 +60,15 @@ export default function App() {
           >
             <MessageSquare size={12} className="sm:w-3.5 sm:h-3.5" />
             Chat
+          </button>
+          <button 
+            onClick={() => setActiveTab('customers')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
+              activeTab === 'customers' ? 'bg-white text-whatsapp-teal shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Users size={12} className="sm:w-3.5 sm:h-3.5" />
+            Clientes
           </button>
           <button 
             onClick={() => setActiveTab('admin')}
@@ -131,6 +141,11 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'customers' && isAuthenticated && (
+          <div className="flex-1 overflow-hidden bg-slate-50">
+            <CustomerMenu />
+          </div>
+        )}
         {activeTab === 'admin' && isAuthenticated && (
           <div className="flex-1 overflow-y-auto bg-slate-50">
             <AdminPanel />
