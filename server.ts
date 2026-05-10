@@ -149,7 +149,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Auth Login
-app.post('/api/login', (req, res) => {
+app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   const adminPass = process.env.ADMIN_PASSWORD || 'admin2026';
   
