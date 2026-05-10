@@ -155,8 +155,16 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
+    const systemPrompt = `Você é a atendente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps.
+
+Você é multimodal: entende texto, áudio e imagens.
+- Quando receber áudio, transcreva mentalmente e responda ao conteúdo falado.
+- Quando receber imagem (print de erro, captura de tela, foto do app), analise o que está mostrando e responda com base no que vê.
+- Sempre responda em português, no estilo WhatsApp: breve, claro, com emojis quando apropriado.`;
+
     const contents: any[] = [
-      { role: 'user', parts: [{ text: "Você é o assistente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps." }] },
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Entendido! Pronta para ajudar. 😊' }] },
       ...history
     ];
 
@@ -403,23 +411,38 @@ app.post('/api/webhooks/evolution/:event?', async (req, res) => {
     console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid})`);
 
     let text = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || msg?.videoMessage?.caption || msg?.message?.conversation || '';
-    if (!text && !msg?.imageMessage && !msg?.audioMessage) return;
+    const isImage = !!msg?.imageMessage;
+    const isAudio = !!msg?.audioMessage;
+    if (!text && !isImage && !isAudio) return;
 
-    await pool.query('INSERT INTO contacts (remote_jid, name, last_message, last_message_time, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (remote_jid) DO UPDATE SET name=EXCLUDED.name, last_message=EXCLUDED.last_message, last_message_time=NOW(), updated_at=NOW()', [remoteJid, pushName, text || '[Mídia]']);
-    await pool.query('INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)', [text || '[Mídia]', 'customer', 'text', remoteJid, pushName]);
+    // Visible placeholder for media-only messages so the AI knows what to expect.
+    const storedText = text || (isImage ? '[Imagem enviada]' : isAudio ? '[Áudio enviado]' : '[Mídia]');
+
+    await pool.query('INSERT INTO contacts (remote_jid, name, last_message, last_message_time, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (remote_jid) DO UPDATE SET name=EXCLUDED.name, last_message=EXCLUDED.last_message, last_message_time=NOW(), updated_at=NOW()', [remoteJid, pushName, storedText]);
+    await pool.query('INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)', [storedText, 'customer', isImage ? 'image' : isAudio ? 'audio' : 'text', remoteJid, pushName]);
 
     const historyRes = await pool.query('SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10', [remoteJid]);
     const chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
 
     let mediaData = undefined;
-    if (msg?.imageMessage || msg?.audioMessage) {
+    if (isImage || isAudio) {
        try {
          const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
          const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
          const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
          const media = await evo.loadMedia(data.data.key);
-         if (media?.base64) mediaData = { data: media.base64.replace(/^data:.*?;base64,/, ""), mimeType: msg.imageMessage ? 'image/png' : 'audio/ogg' };
-       } catch (e) {}
+         if (media?.base64) {
+           // Use real mimetype from WhatsApp payload, fall back to common defaults.
+           const mimeType = (isImage ? msg.imageMessage?.mimetype : msg.audioMessage?.mimetype)
+             || (isImage ? 'image/jpeg' : 'audio/ogg');
+           mediaData = { data: media.base64.replace(/^data:.*?;base64,/, ""), mimeType };
+           console.log(`[Webhook] Mídia carregada (${mimeType}, ${Math.round(mediaData.data.length / 1024)}KB)`);
+         } else {
+           console.warn('[Webhook] Evolution loadMedia retornou vazio');
+         }
+       } catch (e: any) {
+         console.error('[Webhook] Falha ao carregar mídia:', e?.message || e);
+       }
     }
 
     const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName }, mediaData);
