@@ -292,7 +292,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
     });
 
     const contents: any[] = [
