@@ -278,10 +278,10 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
                      - Contexto de Preços: ${clientPricesContext}
                      - Preço padrão: 49.90.
                   
-                  2. EXTRAÇÃO DE DADOS: Se o usuário enviar uma FOTO ou ÁUDIO com dados de acesso (MAC, Key, Usuário, Senha):
-                     - Analise a mídia. Identifique MACs, Keys, logins e senhas.
+                  2. EXTRAÇÃO DE DADOS (VISÃO E AUDIÇÃO): Se o usuário enviar uma FOTO, VÍDEO ou ÁUDIO com dados de acesso (MAC, Key, Usuário, Senha):
+                     - Analise a mídia com atenção. Escute o áudio ou veja a imagem para identificar MACs, Keys, logins e senhas.
                      - Use "save_customer_app" para salvar esses dados automaticamente no perfil do cliente.
-                     - Informe ao cliente que você salvou os dados para ele.
+                     - Informe ao cliente: "Identifiquei os dados no seu [áudio/foto] e já salvei aqui para você!"
 
                   3. NUTRICIONISTA: Se o usuário enviar uma FOTO DE COMIDA ou falar sobre o que COMEU:
                      - Aja como um nutricionista atencioso. Analise a foto e estime calorias.
@@ -1472,8 +1472,9 @@ app.post('/api/webhooks/evolution', async (req, res) => {
 
         // 3.2 Fetch Media if present
         let mediaData = undefined;
-        if (msg?.imageMessage || msg?.audioMessage) {
+        if (msg?.imageMessage || msg?.audioMessage || msg?.videoMessage) {
           try {
+             console.log(`[Webhook] Detectada mídia (${msg.imageMessage ? 'imagem' : (msg.audioMessage ? 'áudio' : 'vídeo')}). Baixando...`);
              const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
              const config: any = {};
              settings.rows.forEach(r => config[r.key] = r.value);
@@ -1485,9 +1486,10 @@ app.post('/api/webhooks/evolution', async (req, res) => {
              
              const mediaResult = await evo.loadMedia(key);
              if (mediaResult && mediaResult.base64) {
+                console.log(`[Webhook] Mídia baixada com sucesso. Tamanho: ${mediaResult.base64.length} bytes`);
                 mediaData = {
                   data: mediaResult.base64.replace(/^data:.*?;base64,/, ""),
-                  mimeType: msg.imageMessage ? 'image/png' : (msg.audioMessage ? 'audio/ogg' : 'application/octet-stream')
+                  mimeType: msg.imageMessage ? 'image/png' : (msg.audioMessage ? 'audio/ogg' : 'video/mp4')
                 };
              }
           } catch (mediaErr) {
