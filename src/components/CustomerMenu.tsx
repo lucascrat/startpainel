@@ -4,7 +4,7 @@ import {
   Users, Search, Phone, Calendar, 
   ChevronRight, Tv, RefreshCw, Smartphone,
   Plus, MessageSquare, ExternalLink, XCircle,
-  Save, Trash2, AlertCircle, Loader2
+  Save, Trash2, AlertCircle, Loader2, Edit3, Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isAfter, parseISO, addMonths } from 'date-fns';
@@ -26,8 +26,13 @@ export default function CustomerMenu() {
     name: '',
     whatsapp: '',
     renewal_price: '30.00',
-    expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd')
+    expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
+    lines_count: 1
   });
+
+  // Edit State
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<any>(null);
 
   useEffect(() => {
     loadCustomers();
@@ -70,7 +75,8 @@ export default function CustomerMenu() {
           name: '',
           whatsapp: '',
           renewal_price: '30.00',
-          expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd')
+          expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
+          lines_count: 1
         });
       } else {
         const err = await response.json();
@@ -81,6 +87,47 @@ export default function CustomerMenu() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleUpdateCustomer = async () => {
+    if (!editForm || !selectedCustomer) return;
+    
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/customers/${selectedCustomer.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+
+      if (response.ok) {
+        const updated = await response.json();
+        setSelectedCustomer(updated);
+        setIsEditing(false);
+        await loadCustomers();
+      } else {
+        const err = await response.json();
+        alert(`Erro ao atualizar: ${err.error}`);
+      }
+    } catch (error) {
+      alert('Erro de conexão com o servidor');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEditing = () => {
+    if (!selectedCustomer) return;
+    setEditForm({
+      name: selectedCustomer.name || '',
+      username: selectedCustomer.username || '',
+      whatsapp: selectedCustomer.whatsapp || '',
+      renewal_price: selectedCustomer.renewal_price || '30.00',
+      expiration_date: selectedCustomer.expiration_date ? format(parseISO(selectedCustomer.expiration_date), 'yyyy-MM-dd') : '',
+      lines_count: selectedCustomer.lines_count || 1,
+      status: selectedCustomer.status || 'active'
+    });
+    setIsEditing(true);
   };
 
   const handleRenew = async (customer: Customer) => {
@@ -225,7 +272,7 @@ export default function CustomerMenu() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  onClick={() => setSelectedCustomer(customer)}
+                  onClick={() => { setSelectedCustomer(customer); setIsEditing(false); }}
                   className={`group relative bg-white p-4 rounded-2xl border transition-all cursor-pointer ${
                     selectedCustomer?.id === customer.id 
                       ? 'border-indigo-600 shadow-md ring-1 ring-indigo-600' 
@@ -294,94 +341,186 @@ export default function CustomerMenu() {
             >
               <div className="p-6 space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest">Informações do Cliente</h2>
-                  <button onClick={() => setSelectedCustomer(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-                    <XCircle size={20} className="text-slate-400" />
-                  </button>
-                </div>
-
-                <div className="flex flex-col items-center text-center space-y-4">
-                  <div className="w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-3xl font-black text-white shadow-xl shadow-indigo-100">
-                    {selectedCustomer.name?.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-slate-800 tracking-tighter">{selectedCustomer.name}</h3>
-                    <p className="text-xs font-bold text-slate-400 mt-1">@{selectedCustomer.username}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => window.open(`https://wa.me/${selectedCustomer.whatsapp?.replace(/\D/g, '')}`, '_blank')}
-                      className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all"
-                    >
-                      <MessageSquare size={14} /> WhatsApp
-                    </button>
-                    <button 
-                      onClick={() => handleRenew(selectedCustomer)}
-                      className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-100"
-                    >
-                      <RefreshCw size={14} /> Renovar
+                  <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    {isEditing ? 'Editando Cliente' : 'Informações do Cliente'}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    {!isEditing && (
+                      <button 
+                        onClick={startEditing}
+                        className="p-2 hover:bg-indigo-50 text-indigo-600 rounded-full transition-colors"
+                        title="Editar dados"
+                      >
+                        <Edit3 size={18} />
+                      </button>
+                    )}
+                    <button onClick={() => { setSelectedCustomer(null); setIsEditing(false); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                      <XCircle size={20} className="text-slate-400" />
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-4 pt-4">
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Vencimento</span>
-                      <span className={`text-[10px] font-black ${selectedCustomer.expiration_date && isAfter(parseISO(selectedCustomer.expiration_date), new Date()) ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {selectedCustomer.expiration_date ? format(parseISO(selectedCustomer.expiration_date), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : 'Não definido'}
-                      </span>
+                {isEditing ? (
+                  /* Edit Form */
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                      <input 
+                        value={editForm.name}
+                        onChange={e => setEditForm({...editForm, name: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preço Renovação</span>
-                      <span className="text-[10px] font-black text-slate-800">R$ {parseFloat(String(selectedCustomer.renewal_price || 0)).toFixed(2)}</span>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Usuário / Login</label>
+                      <input 
+                        value={editForm.username}
+                        onChange={e => setEditForm({...editForm, username: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Linhas Ativas</span>
-                      <span className="text-[10px] font-black text-slate-800">{selectedCustomer.lines_count || 1}</span>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
+                      <input 
+                        value={editForm.whatsapp}
+                        onChange={e => setEditForm({...editForm, whatsapp: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Preço Renov.</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={editForm.renewal_price}
+                          onChange={e => setEditForm({...editForm, renewal_price: e.target.value})}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Linhas</label>
+                        <input 
+                          type="number"
+                          value={editForm.lines_count}
+                          onChange={e => setEditForm({...editForm, lines_count: parseInt(e.target.value)})}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Data Vencimento</label>
+                      <input 
+                        type="date"
+                        value={editForm.expiration_date}
+                        onChange={e => setEditForm({...editForm, expiration_date: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="pt-4 flex gap-3">
+                      <button 
+                        onClick={() => setIsEditing(false)}
+                        className="flex-1 px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        onClick={handleUpdateCustomer}
+                        disabled={saving}
+                        className="flex-[2] bg-indigo-600 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                      >
+                        {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        Salvar Alterações
+                      </button>
                     </div>
                   </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between px-1">
-                      <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dispositivos & Apps</h4>
+                ) : (
+                  /* View Mode */
+                  <>
+                    <div className="flex flex-col items-center text-center space-y-4">
+                      <div className="w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-3xl font-black text-white shadow-xl shadow-indigo-100">
+                        {selectedCustomer.name?.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800 tracking-tighter">{selectedCustomer.name}</h3>
+                        <p className="text-xs font-bold text-slate-400 mt-1">@{selectedCustomer.username}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => window.open(`https://wa.me/${selectedCustomer.whatsapp?.replace(/\D/g, '')}`, '_blank')}
+                          className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all"
+                        >
+                          <MessageSquare size={14} /> WhatsApp
+                        </button>
+                        <button 
+                          onClick={() => handleRenew(selectedCustomer)}
+                          className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-100"
+                        >
+                          <RefreshCw size={14} /> Renovar
+                        </button>
+                      </div>
                     </div>
-                    
-                    <div className="space-y-2">
-                      {selectedCustomer.apps && selectedCustomer.apps.length > 0 ? (
-                        selectedCustomer.apps.map(app => (
-                          <div key={app.id} className="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between group/app">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400">
-                                {app.is_tv ? <Tv size={16} /> : <Smartphone size={16} />}
-                              </div>
-                              <div>
-                                <p className="text-[11px] font-black text-slate-800 leading-none">{app.app_name}</p>
-                                <p className="text-[9px] font-bold text-slate-400 mt-1">{app.app_model || 'Geral'}</p>
-                              </div>
-                            </div>
-                            <button className="p-2 text-slate-300 hover:text-indigo-600 transition-colors opacity-0 group-hover/app:opacity-100">
-                              <ExternalLink size={14} />
-                            </button>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                          <p className="text-[9px] font-black text-slate-400 uppercase">Nenhum app cadastrado</p>
+
+                    <div className="space-y-4 pt-4">
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Vencimento</span>
+                          <span className={`text-[10px] font-black ${selectedCustomer.expiration_date && isAfter(parseISO(selectedCustomer.expiration_date), new Date()) ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {selectedCustomer.expiration_date ? format(parseISO(selectedCustomer.expiration_date), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : 'Não definido'}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preço Renovação</span>
+                          <span className="text-[10px] font-black text-slate-800">R$ {parseFloat(String(selectedCustomer.renewal_price || 0)).toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Linhas Ativas</span>
+                          <span className="text-[10px] font-black text-slate-800">{selectedCustomer.lines_count || 1}</span>
+                        </div>
+                      </div>
 
-                <div className="pt-6">
-                  <button 
-                    onClick={() => handleDelete(selectedCustomer)}
-                    className="w-full bg-rose-50 text-rose-600 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Trash2 size={16} className="text-rose-400" /> Excluir Cliente
-                  </button>
-                </div>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-1">
+                          <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dispositivos & Apps</h4>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          {selectedCustomer.apps && selectedCustomer.apps.length > 0 ? (
+                            selectedCustomer.apps.map(app => (
+                              <div key={app.id} className="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between group/app">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400">
+                                    {app.is_tv ? <Tv size={16} /> : <Smartphone size={16} />}
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] font-black text-slate-800 leading-none">{app.app_name}</p>
+                                    <p className="text-[9px] font-bold text-slate-400 mt-1">{app.app_model || 'Geral'}</p>
+                                  </div>
+                                </div>
+                                <button className="p-2 text-slate-300 hover:text-indigo-600 transition-colors opacity-0 group-hover/app:opacity-100">
+                                  <ExternalLink size={14} />
+                                </button>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                              <p className="text-[9px] font-black text-slate-400 uppercase">Nenhum app cadastrado</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-6">
+                      <button 
+                        onClick={() => handleDelete(selectedCustomer)}
+                        className="w-full bg-rose-50 text-rose-600 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Trash2 size={16} className="text-rose-400" /> Excluir Cliente
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           )}
@@ -461,16 +600,28 @@ export default function CustomerMenu() {
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor da Renovação (R$)</label>
-                  <input 
-                    type="number"
-                    step="0.01"
-                    value={newCust.renewal_price}
-                    onChange={e => setNewCust({...newCust, renewal_price: e.target.value})}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                    placeholder="30.00"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor da Renovação (R$)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      value={newCust.renewal_price}
+                      onChange={e => setNewCust({...newCust, renewal_price: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="30.00"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Qtd Linhas</label>
+                    <input 
+                      type="number"
+                      value={newCust.lines_count}
+                      onChange={e => setNewCust({...newCust, lines_count: parseInt(e.target.value)})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="1"
+                    />
+                  </div>
                 </div>
 
                 <div className="pt-4 flex gap-3">
