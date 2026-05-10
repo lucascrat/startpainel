@@ -39,15 +39,17 @@ let dbError = '';
 
 // Initialize DB tables
 async function initDB() {
+  let client;
   try {
     console.log('PostgreSQL: Attempting to initialize database...');
     if (!DB_URL) throw new Error("DATABASE_URL is not defined");
 
-    const client = await pool.connect();
+    client = await pool.connect();
     console.log('PG: Successfully connected to PostgreSQL server');
     
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS messages (
+    // Create all tables
+    const queries = [
+      `CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
         text TEXT NOT NULL,
         sender VARCHAR(20) NOT NULL,
@@ -57,12 +59,8 @@ async function initDB() {
         metadata JSONB,
         image_data TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 1.5 Contacts Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS contacts (
+      )`,
+      `CREATE TABLE IF NOT EXISTS contacts (
         id SERIAL PRIMARY KEY,
         remote_jid TEXT UNIQUE NOT NULL,
         name TEXT,
@@ -71,12 +69,8 @@ async function initDB() {
         last_message_time TIMESTAMP,
         unread_count INTEGER DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 2. Customers Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS customers (
+      )`,
+      `CREATE TABLE IF NOT EXISTS customers (
         id SERIAL PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
         whatsapp TEXT,
@@ -87,25 +81,17 @@ async function initDB() {
         status TEXT DEFAULT 'active',
         expiration_date DATE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 3. Automations Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS automations (
+      )`,
+      `CREATE TABLE IF NOT EXISTS automations (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         site_url TEXT NOT NULL,
         username TEXT,
         password TEXT,
-        type TEXT DEFAULT 'ibo_player',
+        type TEXT DEFAULT 'generic',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 4. AI Usage Logs Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS ai_usage_logs (
+      )`,
+      `CREATE TABLE IF NOT EXISTS ai_usage_logs (
         id SERIAL PRIMARY KEY,
         model TEXT NOT NULL,
         type TEXT NOT NULL,
@@ -113,50 +99,8 @@ async function initDB() {
         candidates_tokens INTEGER,
         estimated_cost DECIMAL(10,5),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Ensure all columns exist for existing databases
-    const columns = [
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS renewal_price DECIMAL(10,2) DEFAULT 49.90',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0.00',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2) DEFAULT 0.00',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'active\'',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_renewal TIMESTAMP',
-      'ALTER TABLE messages ADD COLUMN IF NOT EXISTS remote_jid TEXT',
-      'ALTER TABLE messages ADD COLUMN IF NOT EXISTS contact_name TEXT'
-    ];
-
-    for (const sql of columns) {
-      try { await client.query(sql); } catch(e) {}
-    }
-
-    // Create trigger for updated_at
-    await client.query(`
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-          NEW.updated_at = now();
-          RETURN NEW;
-      END;
-      $$ language 'plpgsql';
-    `);
-
-    try {
-      await client.query(`
-        CREATE TRIGGER update_customers_updated_at
-        BEFORE UPDATE ON customers
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column();
-      `);
-    } catch (e) {}
-
-    // 3. Customer Apps Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS customer_apps (
+      )`,
+      `CREATE TABLE IF NOT EXISTS customer_apps (
         id SERIAL PRIMARY KEY,
         customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
         app_name TEXT NOT NULL,
@@ -173,53 +117,29 @@ async function initDB() {
         app_site_url TEXT,
         is_tv BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Ensure app_site_url exists for existing databases
-    try { await client.query('ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT'); } catch(e) {}
-
-    // 4. Pix Charges Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS pix_charges (
+      )`,
+      `CREATE TABLE IF NOT EXISTS pix_charges (
         txid TEXT PRIMARY KEY,
         customer_username TEXT,
         amount DECIMAL(10,2) NOT NULL,
         status TEXT DEFAULT 'ATIVA',
         processed BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 5. Automations Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS automations (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        site_url TEXT NOT NULL,
-        username TEXT,
-        password TEXT,
-        type TEXT DEFAULT 'generic',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Ensure type column exists for existing databases
-    try { await client.query('ALTER TABLE automations ADD COLUMN IF NOT EXISTS type TEXT DEFAULT \'generic\''); } catch(e) {}
-
-    // 5. Settings Table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS settings (
+      )`,
+      `CREATE TABLE IF NOT EXISTS settings (
         key VARCHAR(255) PRIMARY KEY,
         value TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+      )`
+    ];
 
-    console.log('PostgreSQL: Tables "customers", "pix_charges", "messages" and "settings" checked/created successfully');
-    // Insert default settings if not exists
+    for (const q of queries) {
+      await client.query(q);
+    }
+
+    // Default settings
     const settings = [
-      ['evolution_api_url', 'http://evo-da1g2ny0x7hsz7xfosw515rx.84.247.138.242.sslip.io'],
+      ['evolution_api_url', 'https://evo.appbr.pro'],
       ['evolution_instance', 'suporte lucas'],
       ['evolution_token', 'CF68A43EB928-462D-B2CC-C30D4203BE5A'],
       ['evolution_sender', '5588988584960']
@@ -229,12 +149,16 @@ async function initDB() {
       await client.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, val]);
     }
 
-    client.release();
+    console.log('PostgreSQL: All tables initialized successfully');
     dbStatus = 'connected';
+    return { success: true };
   } catch (err: any) {
     console.error('PostgreSQL: Initialization error:', err);
     dbStatus = 'error';
     dbError = err.message;
+    return { success: false, error: err.message };
+  } finally {
+    if (client) client.release();
   }
 }
 initDB();
@@ -465,6 +389,11 @@ app.post('/api/panel/renew/:username', async (req, res) => {
 // --- PG DATABASE ROUTES ---
 app.get('/api/db-status', (req, res) => {
   res.json({ status: dbStatus, error: dbError });
+});
+
+app.get('/api/db-migrate', async (req, res) => {
+  const result = await initDB();
+  res.json(result);
 });
 
 app.get('/api/customers', async (req, res) => {
