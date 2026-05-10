@@ -22,6 +22,7 @@ export default function AdminPanel() {
   
   // New Customer Form
   const [newUsername, setNewUsername] = useState('');
+  const [newName, setNewName] = useState('');
   const [newRenewalPrice, setNewRenewalPrice] = useState('49.90');
   const [newLinesCount, setNewLinesCount] = useState('1');
   const [newWhatsapp, setNewWhatsapp] = useState('');
@@ -174,6 +175,7 @@ export default function AdminPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: newUsername,
+          name: newName,
           whatsapp: newWhatsapp,
           renewalPrice: parseFloat(newRenewalPrice),
           linesCount: parseInt(newLinesCount),
@@ -188,6 +190,7 @@ export default function AdminPanel() {
       }
 
       setNewUsername('');
+      setNewName('');
       setNewExpirationDate('');
       setStatusFilter('all');
       setSearchTerm('');
@@ -496,8 +499,12 @@ export default function AdminPanel() {
                     </div>
                     <form onSubmit={handleAddCustomer} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
                       <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Usuário / Nome</label>
-                        <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="marcos_pro" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" required />
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Usuário do Painel</label>
+                        <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="ex: marcos_pro" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" required />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Cliente</label>
+                        <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="ex: Marcos Silva" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" required />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
@@ -633,8 +640,8 @@ export default function AdminPanel() {
                                 <User size={20} />
                               </div>
                               <div>
-                                <h4 className="font-black text-slate-800 text-sm tracking-tight">{customer.username}</h4>
-                                <p className="text-[10px] text-slate-400 font-bold">{customer.whatsapp || 'Sem WhatsApp'}</p>
+                                <h4 className="font-black text-slate-800 text-sm tracking-tight">{customer.name || customer.username}</h4>
+                                <p className="text-[10px] text-slate-400 font-bold">@{customer.username} • {customer.whatsapp || 'Sem WhatsApp'}</p>
                               </div>
                             </div>
                             <div className="text-right">

@@ -19,6 +19,7 @@ export interface CustomerApp {
 export interface Customer {
   id?: string | number;
   username: string;
+  name?: string;
   whatsapp?: string;
   renewalPrice?: number;
   renewal_price?: number | string; // For Postgres compat

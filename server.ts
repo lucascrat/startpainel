@@ -73,6 +73,7 @@ async function initDB() {
       `CREATE TABLE IF NOT EXISTS customers (
         id SERIAL PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
+        name TEXT,
         whatsapp TEXT,
         renewal_price DECIMAL(10,2) DEFAULT 49.90,
         cost_per_credit DECIMAL(10,2) DEFAULT 0.00,
@@ -240,7 +241,8 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
                   3. Se o usuário mandar algo que não se encaixa em nenhum dos dois, responda de forma geral e amigável.
                   
                   Mantenha sempre o estilo breve e com emojis.
-                  O cliente se chama ${userInfo?.name || 'Cliente'}.`;
+                  O cliente se chama ${userInfo?.name || 'Cliente'}.
+                  O username dele no sistema é ${userInfo?.username || 'desconhecido'}.`;
     }
 
     const model = genAI.getGenerativeModel({
@@ -439,11 +441,11 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', express.json(), async (req, res) => {
-  const { username, whatsapp, renewalPrice, costPerCredit, amountPaid, expirationDate, linesCount } = req.body;
+  const { username, whatsapp, name, renewalPrice, costPerCredit, amountPaid, expirationDate, linesCount } = req.body;
   try {
     const result = await pool.query(
-      'INSERT INTO customers (username, whatsapp, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [username, whatsapp, renewalPrice || 49.90, costPerCredit || 0, amountPaid || 0, expirationDate, linesCount || 1]
+      'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [username, whatsapp, name, renewalPrice || 49.90, costPerCredit || 0, amountPaid || 0, expirationDate, linesCount || 1]
     );
     res.json(result.rows[0]);
   } catch (err: any) {
@@ -454,11 +456,11 @@ app.post('/api/customers', express.json(), async (req, res) => {
 
 app.put('/api/customers/:id', express.json(), async (req, res) => {
   const { id } = req.params;
-  const { renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count } = req.body;
+  const { name, whatsapp, renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE customers SET renewal_price = $1, cost_per_credit = $2, amount_paid = $3, expiration_date = $4, status = $5, lines_count = $6 WHERE id = $7 RETURNING *',
-      [renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count, id]
+      'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8 WHERE id = $9 RETURNING *',
+      [name, whatsapp, renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count, id]
     );
     res.json(result.rows[0]);
   } catch (err: any) {
@@ -1087,6 +1089,18 @@ app.post('/api/webhooks/evolution', async (req, res) => {
           unread_count = CASE WHEN $4 = false THEN contacts.unread_count + 1 ELSE contacts.unread_count END
       `, [remoteJid, pushName, text || '[Mídia]', fromMe]);
 
+      // 1.2 Identify Customer by WhatsApp
+      const cleanNumber = remoteJid.split('@')[0];
+      const customerLookup = await pool.query(
+        'SELECT username, name FROM customers WHERE whatsapp LIKE $1 OR whatsapp = $2',
+        [`%${cleanNumber}%`, cleanNumber]
+      );
+      
+      const identifiedCustomer = customerLookup.rows[0] || null;
+      if (identifiedCustomer) {
+        console.log(`[Webhook] Identified customer: ${identifiedCustomer.name} (${identifiedCustomer.username})`);
+      }
+
       // 2. Save message (sender: 'customer' for user, 'attendant' for me)
       await pool.query(
         'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
@@ -1109,7 +1123,7 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         }));
 
         // 3.2 Get AI Response
-        const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName });
+        const aiResult = await handleAIChat(remoteJid, chatHistory, identifiedCustomer || { name: pushName });
         
         // 3.3 Process Text Response
         if (aiResult.text) {
@@ -1291,6 +1305,23 @@ async function startServer() {
     
     // API Health Check
     app.get('/api/health', (req, res) => res.json({ status: 'ok', db: dbStatus }));
+
+    // DB Migration
+    app.get('/api/db-migrate', async (req, res) => {
+      try {
+        const client = await pool.connect();
+        try {
+          await client.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS name TEXT');
+          await client.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp TEXT');
+          await client.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS renewal_price DECIMAL(10,2) DEFAULT 49.90');
+          res.json({ success: true, message: 'Database migrated successfully' });
+        } finally {
+          client.release();
+        }
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
     app.get('*', (req, res) => {
       // If it looks like an API call but wasn't handled, return 404
