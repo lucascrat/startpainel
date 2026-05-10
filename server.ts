@@ -1135,7 +1135,15 @@ app.post('/api/webhooks/evolution', async (req, res) => {
       }
       
     } catch (err: any) {
-      console.error('[Webhook] Error processing evolution event:', err.message);
+      console.error('[Webhook] Error processing evolution event:', err);
+      try {
+        await pool.query(
+          'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
+          [`⚠️ Erro Interno (Webhook): ${err.message}`, 'ai', 'text', remoteJid, pushName]
+        );
+      } catch (dbErr) {
+        // Ignore DB error
+      }
     }
   }
 });
