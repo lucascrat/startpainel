@@ -83,6 +83,7 @@ async function initDB() {
         lines_count INTEGER DEFAULT 1,
         status TEXT DEFAULT 'active',
         expiration_date DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )`,
       `CREATE TABLE IF NOT EXISTS automations (
@@ -149,7 +150,8 @@ async function initDB() {
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2) DEFAULT 0.00',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'active\'',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE'
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
     ];
 
     for (const m of migrations) {
@@ -561,11 +563,20 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', express.json(), async (req, res) => {
-  const { username, whatsapp, name, renewalPrice, costPerCredit, amountPaid, expirationDate, linesCount } = req.body;
+  const { username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count } = req.body;
   try {
     const result = await pool.query(
       'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [username, whatsapp, name, renewalPrice || 49.90, costPerCredit || 0, amountPaid || 0, expirationDate, linesCount || 1]
+      [
+        username, 
+        whatsapp, 
+        name, 
+        renewal_price || 49.90, 
+        cost_per_credit || 0, 
+        amount_paid || 0, 
+        expiration_date || null, 
+        lines_count || 1
+      ]
     );
     res.json(result.rows[0]);
   } catch (err: any) {
@@ -576,11 +587,11 @@ app.post('/api/customers', express.json(), async (req, res) => {
 
 app.put('/api/customers/:id', express.json(), async (req, res) => {
   const { id } = req.params;
-  const { name, whatsapp, renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count } = req.body;
+  const { name, whatsapp, renewal_price, cost_per_credit, amount_paid, expiration_date, status, lines_count } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8 WHERE id = $9 RETURNING *',
-      [name, whatsapp, renewalPrice, costPerCredit, amountPaid, expirationDate, status, lines_count, id]
+      'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9 RETURNING *',
+      [name, whatsapp, renewal_price, cost_per_credit, amount_paid, expiration_date, status, lines_count, id]
     );
     res.json(result.rows[0]);
   } catch (err: any) {
