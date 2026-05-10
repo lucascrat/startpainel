@@ -3,7 +3,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page } from 'puppeteer-core';
 import os from 'os';
 import path from 'path';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 puppeteer.use(StealthPlugin());
 
@@ -75,8 +75,8 @@ export async function runIboPlayerAutomation(mac: string, key: string, playlistU
         
         if (captchaElement) {
           const screenshot = await captchaElement.screenshot({ encoding: 'base64' });
-          const genAI = new GoogleGenAI(geminiKey);
-          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+          const genAI = new GoogleGenerativeAI(geminiKey);
+          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
           const prompt = "What is the text shown in this captcha image? Respond only with the characters found, nothing else.";
           const result = await model.generateContent([
             prompt,
@@ -88,7 +88,7 @@ export async function runIboPlayerAutomation(mac: string, key: string, playlistU
             aiUsage = {
               promptTokens: usage.promptTokenCount,
               candidatesTokens: usage.candidatesTokenCount,
-              model: "gemini-1.5-flash"
+              model: "gemini-2.5-flash"
             };
           }
 
