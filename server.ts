@@ -385,14 +385,17 @@ app.get('/api/ai-usage', async (req, res) => {
   res.json({ summary: stats.rows[0], recent: recent.rows });
 });
 
-// Evolution Webhook
-app.post('/api/webhooks/evolution', async (req, res) => {
+// Evolution Webhook — accepts both single-URL and "by-events" modes:
+//   POST /api/webhooks/evolution                  (single URL, body has data.event)
+//   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
+app.post('/api/webhooks/evolution/:event?', async (req, res) => {
   let remoteJid = '';
   let pushName = 'Cliente';
   try {
     const data = req.body;
     res.status(200).send('OK');
-    if (data.event !== 'messages.upsert') return;
+    const eventName = (req.params.event || data.event || '').toString().replace(/-/g, '.');
+    if (eventName !== 'messages.upsert') return;
     const msg = data.data.message;
     remoteJid = data.data.key.remoteJid;
     if (data.data.key.fromMe) return;
