@@ -246,7 +246,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-pro',
+      model: 'gemini-1.5-flash',
     });
 
     // Prepare contents with explicit roles and alternating turns
