@@ -77,6 +77,13 @@ initDB();
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+
+// Global Logger
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  next();
+});
+
 const PORT = process.env.PORT || 3000;
 
 // --- AI HELPERS ---
@@ -350,7 +357,6 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath, { index: false }));
     app.get('*', (req, res) => {
-      if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
