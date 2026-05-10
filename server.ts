@@ -1323,8 +1323,17 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    // Ensure API routes are checked before static files
+    app.use(express.static(distPath, { index: false })); 
+    
+    // API Health Check
+    app.get('/api/health', (req, res) => res.json({ status: 'ok', db: dbStatus }));
+
     app.get('*', (req, res) => {
+      // If it looks like an API call but wasn't handled, return 404
+      if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: 'API route not found' });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
