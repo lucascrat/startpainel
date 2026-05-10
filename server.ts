@@ -1061,10 +1061,10 @@ app.post('/api/webhooks/evolution', async (req, res) => {
           unread_count = CASE WHEN $4 = false THEN contacts.unread_count + 1 ELSE contacts.unread_count END
       `, [remoteJid, pushName, text || '[Mídia]', fromMe]);
 
-      // 2. Save message
+      // 2. Save message (sender: 'customer' for user, 'attendant' for me)
       await pool.query(
         'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
-        [text, fromMe ? 'user' : 'bot', msg?.imageMessage ? 'image' : 'text', remoteJid, pushName]
+        [text, fromMe ? 'attendant' : 'customer', msg?.imageMessage ? 'image' : 'text', remoteJid, pushName]
       );
 
       // 3. Automated AI Response (if not from me)
@@ -1073,12 +1073,12 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         
         // 3.1 Fetch History
         const historyRes = await pool.query(
-          'SELECT text, sender, type FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 6',
+          'SELECT text, sender, type FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10',
           [remoteJid]
         );
         
         const chatHistory = historyRes.rows.reverse().map(m => ({
-          role: (m.sender === 'user' || m.sender === 'ai') ? 'model' : 'user',
+          role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user',
           parts: [{ text: m.text }]
         }));
 

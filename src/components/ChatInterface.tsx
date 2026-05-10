@@ -167,7 +167,7 @@ export default function ChatInterface() {
 
     let userMessage: any = {
       text: inputText,
-      sender: 'user',
+      sender: 'attendant',
       type: 'text',
       createdAt: new Date().toISOString(),
       remoteJid: selectedContact?.remote_jid,
@@ -204,18 +204,18 @@ export default function ChatInterface() {
 
       // 2. Call AI Support (Backend)
       // Prepare history including the current message if it has an image
-      const recentMessages = messages.slice(-5).map(m => {
+      const recentMessages = messages.slice(-10).map(m => {
         const mParts: any[] = [{ text: m.text }];
         if (m.type === 'image' && m.imageData) {
           mParts.push({
             inlineData: {
               data: m.imageData.split(',')[1],
-              mimeType: 'image/jpeg' // Fallback or detect
+              mimeType: 'image/jpeg' 
             }
           });
         }
         return {
-          role: m.sender === 'user' ? 'user' : 'model',
+          role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user',
           parts: mParts
         };
       });
@@ -458,19 +458,19 @@ export default function ChatInterface() {
                     key={msg.id || idx}
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                    className={`flex ${msg.sender === 'customer' ? 'justify-start' : 'justify-end'}`}
                   >
                     <div 
                       className={`max-w-[85%] sm:max-w-[75%] p-2 shadow-[0_1px_0.5px_rgba(0,0,0,0.13)] relative ${
-                        msg.sender === 'user' 
-                          ? 'bg-whatsapp-light rounded-lg rounded-tr-none' 
-                          : 'bg-white rounded-lg rounded-tl-none'
+                        msg.sender === 'customer' 
+                          ? 'bg-white rounded-lg rounded-tl-none' 
+                          : 'bg-whatsapp-light rounded-lg rounded-tr-none'
                       }`}
                     >
                       <div className={`absolute top-0 w-3 h-3 ${
-                        msg.sender === 'user' 
-                          ? '-right-2.5 bg-whatsapp-light [clip-path:polygon(0_0,0_100%,100%_0)]' 
-                          : '-left-2.5 bg-white [clip-path:polygon(0_0,100%_0,100%_100%)]'
+                        msg.sender === 'customer' 
+                          ? '-left-2.5 bg-white [clip-path:polygon(0_0,100%_0,100%_100%)]'
+                          : '-right-2.5 bg-whatsapp-light [clip-path:polygon(0_0,0_100%,100%_0)]'
                       }`} />
                       
                       {msg.type === 'pix_qr' ? (
@@ -497,12 +497,12 @@ export default function ChatInterface() {
                       )}
                       
                       <div className="flex items-center justify-end space-x-1 mt-0.5">
-                        <span className={`text-[8px] sm:text-[9px] ${msg.sender === 'user' ? 'text-slate-500' : 'text-slate-400'}`}>
+                        <span className={`text-[8px] sm:text-[9px] ${msg.sender === 'customer' ? 'text-slate-400' : 'text-slate-500'}`}>
                           {msg.createdAt 
                             ? format(new Date(msg.createdAt), 'HH:mm') 
                             : format(new Date(), 'HH:mm')}
                         </span>
-                        {msg.sender === 'user' && (
+                        {msg.sender !== 'customer' && (
                           <CheckCheck size={10} className="text-emerald-500 sm:w-3 sm:h-3" />
                         )}
                       </div>
