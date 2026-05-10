@@ -1240,8 +1240,8 @@ app.post('/api/webhooks/evolution', async (req, res) => {
              await handleCustomerInfoTool(remoteJid, pushName, username);
           }
         }
+        }
       }
-      
     } catch (err: any) {
       console.error('[Webhook] Error processing evolution event:', err);
       try {
@@ -1253,7 +1253,6 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         // Ignore DB error
       }
     }
-  }
 });
 
 async function handlePixGenerationTool(remoteJid: string, pushName: string, username: string, amount: number) {
