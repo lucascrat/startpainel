@@ -2,10 +2,12 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 dotenv.config();
 import axios from 'axios';
+import jwt from 'jsonwebtoken';
 import Gerencianet from 'gn-api-sdk-node';
 import pkg from 'pg';
 const { Pool } = pkg;
@@ -297,6 +299,66 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// --- ADMIN AUTH ---
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(48).toString('hex');
+if (!process.env.ADMIN_JWT_SECRET) {
+  console.warn('AUTH: ADMIN_JWT_SECRET ausente — usando segredo efêmero (tokens invalidam ao reiniciar).');
+}
+if (!ADMIN_PASSWORD) {
+  console.warn('AUTH: ADMIN_PASSWORD ausente — login admin desativado.');
+}
+
+// Settings policy
+const PUBLIC_SETTING_KEYS = new Set(['attendant_name', 'attendant_image']);
+const SENSITIVE_SETTING_KEYS = new Set(['gemini_api_key']);
+
+function maskSecret(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (value.length <= 8) return '****';
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function verifyAdminToken(req: express.Request): boolean {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return false;
+  try {
+    jwt.verify(auth.slice(7), ADMIN_JWT_SECRET);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!verifyAdminToken(req)) {
+    return res.status(401).json({ error: 'Acesso negado' });
+  }
+  next();
+}
+
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ error: 'Login admin não configurado no servidor' });
+  }
+  if (typeof password !== 'string' || password.length === 0) {
+    return res.status(400).json({ error: 'Senha obrigatória' });
+  }
+  const a = Buffer.from(password);
+  const b = Buffer.from(ADMIN_PASSWORD);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) {
+    return res.status(401).json({ error: 'Senha incorreta' });
+  }
+  const token = jwt.sign({ role: 'admin' }, ADMIN_JWT_SECRET, { expiresIn: '12h' });
+  res.json({ token, expiresIn: 12 * 60 * 60 });
+});
+
+app.get('/api/admin/me', (req, res) => {
+  res.json({ authenticated: verifyAdminToken(req) });
+});
 
 // Initialize Efibank Certificate if provided as raw content
 if (process.env.EFIBANK_CERT_PATH && (process.env.EFIBANK_CERT_PATH.length > 500 || process.env.EFIBANK_CERT_PATH.includes('MII'))) {
@@ -746,19 +808,26 @@ app.post('/api/messages', async (req, res) => {
 // --- SETTINGS ROUTES ---
 app.get('/api/settings/:key', async (req, res) => {
   const { key } = req.params;
+  const isPublic = PUBLIC_SETTING_KEYS.has(key);
+  const isSensitive = SENSITIVE_SETTING_KEYS.has(key);
+
+  if (!isPublic && !verifyAdminToken(req)) {
+    return res.status(401).json({ error: 'Acesso negado' });
+  }
+
   try {
     const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
-    if (result.rows.length > 0) {
-      res.json({ value: result.rows[0].value });
-    } else {
-      res.json({ value: null });
+    const value = result.rows[0]?.value ?? null;
+    if (isSensitive) {
+      return res.json({ configured: !!value, masked: maskSecret(value) });
     }
+    res.json({ value });
   } catch (err: any) {
     res.status(500).json({ error: 'Erro ao buscar configuração', details: err.message });
   }
 });
 
-app.post('/api/settings', async (req, res) => {
+app.post('/api/settings', requireAdmin, async (req, res) => {
   const { key, value } = req.body;
   try {
     await pool.query(

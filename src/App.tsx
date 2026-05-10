@@ -1,12 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ChatInterface from './components/ChatInterface';
 import AdminPanel from './components/AdminPanel';
 import ActivationTester from './components/ActivationTester';
-import { MessageSquare, ShieldCheck, Github, Activity } from 'lucide-react';
+import { MessageSquare, ShieldCheck, Github, Activity, LogOut } from 'lucide-react';
+import { login, getToken, logout } from './lib/auth';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester'>('chat');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getToken());
+  const [pwInput, setPwInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  useEffect(() => {
+    const onExpired = () => setIsAuthenticated(false);
+    window.addEventListener('admin-auth-expired', onExpired);
+    return () => window.removeEventListener('admin-auth-expired', onExpired);
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pwInput) return;
+    setLoggingIn(true);
+    setLoginError(null);
+    const r = await login(pwInput);
+    setLoggingIn(false);
+    if (r.ok) {
+      setIsAuthenticated(true);
+      setPwInput('');
+    } else {
+      setLoginError(r.error || 'Falha no login');
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    setIsAuthenticated(false);
+  };
 
   return (
     <div className="flex flex-col h-[100dvh] bg-slate-50 font-sans overflow-hidden">
@@ -48,6 +78,16 @@ export default function App() {
             <Activity size={12} className="sm:w-3.5 sm:h-3.5" />
             Teste
           </button>
+          {isAuthenticated && (
+            <button
+              onClick={handleLogout}
+              title="Sair do admin"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-red-600 transition whitespace-nowrap"
+            >
+              <LogOut size={12} className="sm:w-3.5 sm:h-3.5" />
+              Sair
+            </button>
+          )}
         </div>
       </nav>
 
@@ -61,28 +101,33 @@ export default function App() {
         
         {(activeTab === 'admin' || activeTab === 'tester') && !isAuthenticated && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4">
-            <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full space-y-6 text-center">
+            <form onSubmit={handleLogin} className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full space-y-6 text-center">
               <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
                 <ShieldCheck size={32} />
               </div>
               <div>
                 <h3 className="font-black text-slate-800 uppercase tracking-widest">Acesso Restrito</h3>
-                <p className="text-xs text-slate-500 font-bold mt-1">Insira o PIN de administrador</p>
+                <p className="text-xs text-slate-500 font-bold mt-1">Senha de administrador</p>
               </div>
-              <input 
-                type="password" 
-                maxLength={4}
-                placeholder="••••"
-                className="w-full text-center text-3xl tracking-[1em] font-mono py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                onChange={(e) => {
-                  if (e.target.value === '2024') { // Default PIN
-                    setIsAuthenticated(true);
-                    e.target.value = '';
-                  }
-                }}
+              <input
+                type="password"
+                autoFocus
+                value={pwInput}
+                onChange={(e) => { setPwInput(e.target.value); setLoginError(null); }}
+                placeholder="••••••••"
+                className="w-full text-center text-lg font-mono py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
               />
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">(Dica: 2024)</p>
-            </div>
+              {loginError && (
+                <p className="text-[11px] font-bold text-red-500 uppercase tracking-wider">{loginError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={loggingIn || !pwInput}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold uppercase tracking-widest text-xs rounded-xl transition-colors"
+              >
+                {loggingIn ? 'Entrando...' : 'Entrar'}
+              </button>
+            </form>
           </div>
         )}
 

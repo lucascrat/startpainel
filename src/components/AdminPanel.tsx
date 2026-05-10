@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Customer, CustomerApp } from '../types';
+import { authFetch } from '../lib/auth';
 import { 
   Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle, 
   Brain, Save, Key, QrCode, DollarSign, TrendingUp, 
@@ -61,6 +62,8 @@ export default function AdminPanel() {
   const [autoCreateCms, setAutoCreateCms] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
+  const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
+  const [geminiKeyConfigured, setGeminiKeyConfigured] = useState(false);
   const [attendantName, setAttendantName] = useState('Suporte StartPainel');
   const [attendantImage, setAttendantImage] = useState('https://cdn-icons-png.flaticon.com/512/4712/4712027.png');
   const [aiSystemPrompt, setAiSystemPrompt] = useState('');
@@ -120,23 +123,24 @@ export default function AdminPanel() {
 
   const loadSettings = async () => {
     try {
-      const resKey = await fetch('/api/settings/gemini_api_key');
+      const resKey = await authFetch('/api/settings/gemini_api_key');
       const dataKey = await resKey.json();
-      if (dataKey.value) setGeminiKey(dataKey.value);
+      setGeminiKeyConfigured(!!dataKey.configured);
+      setGeminiKeyMasked(dataKey.masked ?? null);
 
-      const resCost = await fetch('/api/settings/default_cost_per_line');
+      const resCost = await authFetch('/api/settings/default_cost_per_line');
       const dataCost = await resCost.json();
       if (dataCost.value) setDefaultCostPerLine(dataCost.value);
 
-      const resName = await fetch('/api/settings/attendant_name');
+      const resName = await authFetch('/api/settings/attendant_name');
       const dataName = await resName.json();
       if (dataName.value) setAttendantName(dataName.value);
 
-      const resImg = await fetch('/api/settings/attendant_image');
+      const resImg = await authFetch('/api/settings/attendant_image');
       const dataImg = await resImg.json();
       if (dataImg.value) setAttendantImage(dataImg.value);
 
-      const resPrompt = await fetch('/api/settings/ai_system_prompt');
+      const resPrompt = await authFetch('/api/settings/ai_system_prompt');
       const dataPrompt = await resPrompt.json();
       if (dataPrompt.value) setAiSystemPrompt(dataPrompt.value);
     } catch (error) {}
@@ -332,32 +336,23 @@ export default function AdminPanel() {
   const handleSaveSettings = async () => {
     setIsSavingKey(true);
     try {
-      await fetch('/api/settings', {
+      const saveSetting = (key: string, value: string) => authFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'gemini_api_key', value: geminiKey })
+        body: JSON.stringify({ key, value })
       });
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'default_cost_per_line', value: defaultCostPerLine })
-      });
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'attendant_name', value: attendantName })
-      });
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'attendant_image', value: attendantImage })
-      });
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'ai_system_prompt', value: aiSystemPrompt })
-      });
+
+      // Only update Gemini key when admin actually typed a new value.
+      if (geminiKey.trim().length > 0) {
+        await saveSetting('gemini_api_key', geminiKey.trim());
+        setGeminiKey('');
+      }
+      await saveSetting('default_cost_per_line', defaultCostPerLine);
+      await saveSetting('attendant_name', attendantName);
+      await saveSetting('attendant_image', attendantImage);
+      await saveSetting('ai_system_prompt', aiSystemPrompt);
       alert('Configurações salvas!');
+      loadSettings();
     } catch (error) {} finally { setIsSavingKey(false); }
   };
 
@@ -592,10 +587,18 @@ export default function AdminPanel() {
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave API Gemini</label>
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                          Chave API Gemini {geminiKeyConfigured && <span className="text-emerald-400 normal-case tracking-normal">• configurada ({geminiKeyMasked})</span>}
+                        </label>
                         <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
                           <Key size={18} className="text-emerald-400" />
-                          <input type="password" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} placeholder="Altere a chave..." className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none" />
+                          <input
+                            type="password"
+                            value={geminiKey}
+                            onChange={e => setGeminiKey(e.target.value)}
+                            placeholder={geminiKeyConfigured ? 'Digite para substituir a chave atual' : 'Cole a chave AIza...'}
+                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
+                          />
                         </div>
                       </div>
 
