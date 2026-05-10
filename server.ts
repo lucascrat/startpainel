@@ -145,11 +145,16 @@ app.get('/api/health', (req, res) => {
 app.post('/api/login', (req, res) => {
   const { password } = req.body;
   const adminPass = process.env.ADMIN_PASSWORD || 'admin2026';
+  
+  console.log(`[Auth] Tentativa de login recebida. Senha enviada: ${password ? '***' : 'vazia'}`);
 
   if (password === adminPass) {
+    console.log('[Auth] Login bem-sucedido!');
     const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET || 'secret_key', { expiresIn: '24h' });
     return res.json({ success: true, token });
   }
+  
+  console.log('[Auth] Senha incorreta ou admin não configurado.');
   res.status(401).json({ error: 'Senha incorreta' });
 });
 
