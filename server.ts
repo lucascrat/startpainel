@@ -15,6 +15,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer } from './src/services/startpainel-puppeteer.js';
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
+import multer from 'multer';
 
 // Initialize Postgres Pool
 const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
@@ -321,6 +322,37 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// --- UPLOADS SETUP ---
+const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+app.post('/api/upload', upload.single('image'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+  }
+  const fileUrl = `/uploads/${req.file.filename}`;
+  res.json({ url: fileUrl });
+});
 
 // --- ADMIN AUTH ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -643,6 +675,68 @@ app.delete('/api/customers/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Erro ao excluir cliente no Postgres', details: err.message });
+  }
+});
+
+// --- CUSTOMER APPS ROUTES ---
+app.post('/api/customers/:customerId/apps', express.json(), async (req, res) => {
+  const { customerId } = req.params;
+  const { 
+    appName, appModel, accessType, macAddress, deviceKey,
+    appUsername, appPassword, providerUrl,
+    androidLink, iosLink, iconUrl, appSiteUrl, isTv 
+  } = req.body;
+  
+  try {
+    const result = await pool.query(
+      `INSERT INTO customer_apps (
+        customer_id, app_name, app_model, access_type, mac_address, device_key,
+        username, password, provider_url, android_link, ios_link, icon_url, app_site_url, is_tv
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [
+        customerId, appName, appModel, accessType, macAddress, deviceKey,
+        appUsername, appPassword, providerUrl, androidLink, iosLink, iconUrl, appSiteUrl, isTv !== undefined ? isTv : true
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error('Postgres Error (Create App):', err);
+    res.status(500).json({ error: 'Erro ao criar aplicativo para o cliente', details: err.message });
+  }
+});
+
+app.put('/api/apps/:id', express.json(), async (req, res) => {
+  const { id } = req.params;
+  const { 
+    app_name, app_model, access_type, mac_address, device_key,
+    username, password, provider_url, android_link, ios_link, icon_url, app_site_url, is_tv 
+  } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE customer_apps SET 
+        app_name = $1, app_model = $2, access_type = $3, mac_address = $4, device_key = $5,
+        username = $6, password = $7, provider_url = $8, android_link = $9, ios_link = $10,
+        icon_url = $11, app_site_url = $12, is_tv = $13
+      WHERE id = $14 RETURNING *`,
+      [
+        app_name, app_model, access_type, mac_address, device_key,
+        username, password, provider_url, android_link, ios_link, icon_url, app_site_url, is_tv, id
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao atualizar aplicativo', details: err.message });
+  }
+});
+
+app.delete('/api/apps/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM customer_apps WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao excluir aplicativo', details: err.message });
   }
 });
 

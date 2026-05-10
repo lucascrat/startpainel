@@ -282,6 +282,32 @@ export default function AdminPanel() {
     } finally { setIsLoading(false); }
   };
 
+  const handleUploadIcon = async (file: File, isEditing = false) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await response.json();
+      if (data.url) {
+        if (isEditing && viewingApp) {
+          setViewingApp({ ...viewingApp, icon_url: data.url });
+        } else {
+          setIconUrl(data.url);
+        }
+      } else {
+        alert('Erro ao subir imagem');
+      }
+    } catch (err) {
+      alert('Erro de conexão ao subir imagem');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleDeleteApp = async (appId: number) => {
     if (!confirm('Deseja excluir este acesso?')) return;
     try {
@@ -1125,6 +1151,23 @@ export default function AdminPanel() {
                             )}
                           </div>
 
+                          <div className="col-span-2 space-y-1">
+                            <p className="text-[8px] font-black text-slate-400 uppercase">Ícone do App</p>
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 overflow-hidden">
+                                {viewingApp.icon_url ? <img src={viewingApp.icon_url} className="w-full h-full object-cover" /> : (viewingApp.is_tv ? <Tv size={20} /> : <Smartphone size={20} />)}
+                              </div>
+                              {isEditingApp && (
+                                <input 
+                                  type="file" 
+                                  accept="image/*" 
+                                  onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0], true)}
+                                  className="text-[10px] text-slate-500"
+                                />
+                              )}
+                            </div>
+                          </div>
+
                           {(viewingApp.mac_address || isEditingApp) && (
                             <div className="bg-white p-3 rounded-xl border border-emerald-100 space-y-1">
                               <p className="text-[8px] font-black text-slate-400 uppercase">Endereço MAC</p>
@@ -1299,7 +1342,30 @@ export default function AdminPanel() {
 
                     <div className="col-span-2 space-y-1">
                       <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Site Oficial do App (ex: https://iboplayer.com/)</label>
-                      <input value={appSiteUrl} onChange={e => setAppSiteUrl(e.target.value)} placeholder="https://..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
+                      <input value={appSiteUrl} onChange={e => setAppSiteUrl(e.target.value)} placeholder="https://..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none font-mono" />
+                    </div>
+
+                    <div className="col-span-2 space-y-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Ícone / Imagem do App</label>
+                      <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 overflow-hidden shadow-sm">
+                          {iconUrl ? <img src={iconUrl} className="w-full h-full object-cover" /> : <Tv size={20} />}
+                        </div>
+                        <div className="flex-1">
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0])}
+                            className="text-[10px] text-slate-500 font-bold block w-full file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer" 
+                          />
+                          <p className="text-[8px] text-slate-400 font-bold uppercase mt-1">PNG, JPG ou GIF (Max 5MB)</p>
+                        </div>
+                        {iconUrl && (
+                          <button onClick={() => setIconUrl('')} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg">
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="col-span-2 grid grid-cols-2 gap-4">

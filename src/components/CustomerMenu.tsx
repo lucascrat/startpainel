@@ -30,6 +30,26 @@ export default function CustomerMenu() {
     lines_count: 1
   });
 
+  // App Management States
+  const [isAppModalOpen, setIsAppModalOpen] = useState(false);
+  const [viewingApp, setViewingApp] = useState<CustomerApp | null>(null);
+  const [isEditingApp, setIsEditingApp] = useState(false);
+  const [appForm, setAppForm] = useState({
+    appName: '',
+    appModel: 'IBO PLAYER',
+    accessType: 'mac_key' as 'mac_key' | 'user_pass',
+    macAddress: '',
+    deviceKey: '',
+    appUsername: '',
+    appPassword: '',
+    providerUrl: '',
+    androidLink: '',
+    iosLink: '',
+    iconUrl: '',
+    appSiteUrl: '',
+    isTv: true
+  });
+
   // Edit State
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>(null);
@@ -39,16 +59,113 @@ export default function CustomerMenu() {
   }, []);
 
   const loadCustomers = async () => {
-    setLoading(true);
+    setIsLoading(true);
     try {
       const response = await fetch('/api/customers');
       const data = await response.json();
       setCustomers(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Erro ao carregar clientes:', error);
+    } catch (err: any) {
+      setFormError(err.message);
     } finally {
+      setIsLoading(false);
       setLoading(false);
     }
+  };
+
+  const handleUploadIcon = async (file: File, isEditing = false) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await response.json();
+      if (data.url) {
+        if (isEditing && viewingApp) {
+          setViewingApp({ ...viewingApp, icon_url: data.url });
+        } else {
+          setAppForm(prev => ({ ...prev, iconUrl: data.url }));
+        }
+      } else {
+        alert('Erro ao subir imagem');
+      }
+    } catch (err) {
+      alert('Erro de conexão ao subir imagem');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveApp = async () => {
+    if (!selectedCustomer) return;
+    if (!appForm.appName) {
+      alert('Dê um nome para este acesso (ex: TV Sala)');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/customers/${selectedCustomer.id}/apps`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(appForm)
+      });
+      if (response.ok) {
+        setAppForm({
+          appName: '', appModel: 'IBO PLAYER', accessType: 'mac_key',
+          macAddress: '', deviceKey: '', appUsername: '', appPassword: '',
+          providerUrl: '', androidLink: '', iosLink: '', iconUrl: '',
+          appSiteUrl: '', isTv: true
+        });
+        loadCustomers();
+        const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
+        setSelectedCustomer(updated);
+        alert('App cadastrado com sucesso!');
+      } else {
+        alert('Erro ao cadastrar app');
+      }
+    } catch (error: any) {
+      alert(`Erro: ${error.message}`);
+    } finally { setIsLoading(false); }
+  };
+
+  const handleDeleteApp = async (appId: number) => {
+    if (!confirm('Deseja excluir este acesso?')) return;
+    try {
+      await fetch(`/api/apps/${appId}`, { method: 'DELETE' });
+      loadCustomers();
+      if (selectedCustomer) {
+        const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
+        setSelectedCustomer(updated);
+      }
+      if (viewingApp?.id === appId) setViewingApp(null);
+    } catch (error) {}
+  };
+
+  const handleUpdateApp = async () => {
+    if (!viewingApp) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/apps/${viewingApp.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(viewingApp)
+      });
+      if (response.ok) {
+        setIsEditingApp(false);
+        loadCustomers();
+        if (selectedCustomer) {
+          const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
+          setSelectedCustomer(updated);
+        }
+        alert('App atualizado com sucesso!');
+      } else {
+        alert('Erro ao atualizar app');
+      }
+    } catch (error: any) {
+      alert(`Erro: ${error.message}`);
+    } finally { setIsLoading(false); }
   };
 
   const handleAddCustomer = async (e: React.FormEvent) => {
@@ -195,7 +312,6 @@ export default function CustomerMenu() {
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
-      {/* Header Section */}
       <div className="bg-white border-b border-slate-200 px-6 py-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -250,9 +366,7 @@ export default function CustomerMenu() {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
-        {/* Customer List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-40 space-y-3 text-slate-400">
@@ -311,7 +425,6 @@ export default function CustomerMenu() {
                     </div>
                   </div>
 
-                  {/* Quick stats overlay on hover */}
                   <div className="mt-3 pt-3 border-t border-slate-50 flex items-center gap-4">
                     <div className="flex items-center gap-1.5">
                       <Tv size={12} className="text-slate-400" />
@@ -330,7 +443,6 @@ export default function CustomerMenu() {
           )}
         </div>
 
-        {/* Details Panel - Responsive */}
         <AnimatePresence>
           {selectedCustomer && (
             <motion.div 
@@ -361,7 +473,6 @@ export default function CustomerMenu() {
                 </div>
 
                 {isEditing ? (
-                  /* Edit Form */
                   <div className="space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
@@ -435,7 +546,6 @@ export default function CustomerMenu() {
                     </div>
                   </div>
                 ) : (
-                  /* View Mode */
                   <>
                     <div className="flex flex-col items-center text-center space-y-4">
                       <div className="w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-3xl font-black text-white shadow-xl shadow-indigo-100">
@@ -482,6 +592,12 @@ export default function CustomerMenu() {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-1">
                           <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dispositivos & Apps</h4>
+                          <button 
+                            onClick={() => setIsAppModalOpen(true)}
+                            className="text-[9px] font-black text-indigo-600 uppercase hover:text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full transition-all"
+                          >
+                            Gerenciar
+                          </button>
                         </div>
                         
                         <div className="space-y-2">
@@ -497,9 +613,6 @@ export default function CustomerMenu() {
                                     <p className="text-[9px] font-bold text-slate-400 mt-1">{app.app_model || 'Geral'}</p>
                                   </div>
                                 </div>
-                                <button className="p-2 text-slate-300 hover:text-indigo-600 transition-colors opacity-0 group-hover/app:opacity-100">
-                                  <ExternalLink size={14} />
-                                </button>
                               </div>
                             ))
                           ) : (
@@ -527,7 +640,6 @@ export default function CustomerMenu() {
         </AnimatePresence>
       </div>
 
-      {/* New Customer Modal */}
       <AnimatePresence>
         {isAdding && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -642,6 +754,203 @@ export default function CustomerMenu() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAppModalOpen && selectedCustomer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-5 bg-slate-900 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="font-black uppercase tracking-widest text-xs text-emerald-400">Gerenciar Dispositivos</h3>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1">{selectedCustomer.name}</p>
+                </div>
+                <button onClick={() => setIsAppModalOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={24} /></button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-6">
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aplicativos Ativos</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {selectedCustomer.apps?.map(app => (
+                      <div key={app.id} 
+                        onClick={() => setViewingApp(viewingApp?.id === app.id ? null : app)}
+                        className={`p-3 rounded-2xl border transition-all flex items-center gap-4 group cursor-pointer ${
+                          viewingApp?.id === app.id ? 'bg-indigo-50 border-indigo-200 ring-2 ring-indigo-500/20' : 'bg-slate-50 border-slate-100 hover:border-slate-200'
+                        }`}
+                      >
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 shadow-sm overflow-hidden">
+                          {app.icon_url ? <img src={app.icon_url} className="w-full h-full object-cover" /> : (app.is_tv ? <Tv size={20} /> : <Smartphone size={20} />)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-black text-slate-800 truncate">{app.app_name}</p>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase">{app.app_model}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteApp(app.id!); }} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {(!selectedCustomer.apps?.length) && (
+                      <div className="col-span-full py-8 text-center text-[10px] font-black text-slate-300 uppercase italic border-2 border-dashed border-slate-100 rounded-3xl">Nenhum app cadastrado</div>
+                    )}
+                  </div>
+                </div>
+
+                {viewingApp && (
+                  <div className="bg-indigo-900/5 border border-indigo-100 rounded-3xl p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        {isEditingApp ? 'Editando Acesso' : `Detalhes do Acesso: ${viewingApp.app_name}`}
+                      </h4>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => setIsEditingApp(!isEditingApp)}
+                          className="text-[10px] font-black text-indigo-600 uppercase hover:text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full transition-all"
+                        >
+                          {isEditingApp ? 'Cancelar' : 'Editar'}
+                        </button>
+                        <button onClick={() => { setViewingApp(null); setIsEditingApp(false); }} className="text-[10px] font-black text-slate-400 uppercase hover:text-slate-600">Fechar</button>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2 space-y-1">
+                        <p className="text-[8px] font-black text-slate-400 uppercase">Nome / Identificação</p>
+                        {isEditingApp ? (
+                          <input value={viewingApp.app_name} onChange={e => setViewingApp({...viewingApp, app_name: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-xs font-bold outline-none" />
+                        ) : (
+                          <p className="text-xs font-bold text-slate-700">{viewingApp.app_name}</p>
+                        )}
+                      </div>
+
+                      <div className="col-span-2 space-y-1">
+                        <p className="text-[8px] font-black text-slate-400 uppercase">Ícone do App</p>
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 shadow-sm overflow-hidden">
+                            {viewingApp.icon_url ? <img src={viewingApp.icon_url} className="w-full h-full object-cover" /> : (viewingApp.is_tv ? <Tv size={24} /> : <Smartphone size={24} />)}
+                          </div>
+                          {isEditingApp && (
+                            <div className="flex-1">
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0], true)}
+                                className="text-[10px] text-slate-500 font-bold block w-full file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {isEditingApp && (
+                        <button 
+                          onClick={handleUpdateApp}
+                          disabled={isLoading}
+                          className="col-span-2 bg-indigo-600 text-white py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg flex items-center justify-center gap-2"
+                        >
+                          {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Save size={14} />}
+                          Salvar Alterações
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="h-px bg-slate-100 w-full" />
+
+                {!viewingApp && (
+                  <div className="space-y-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cadastrar Novo Acesso</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Identificação (ex: TV Quarto, Celular Pai)</label>
+                        <input value={appForm.appName} onChange={e => setAppForm({...appForm, appName: e.target.value})} placeholder="TV Sala" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
+                      </div>
+                      
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Modelo / Player</label>
+                        <select value={appForm.appModel} onChange={e => setAppForm({...appForm, appModel: e.target.value})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                          <option>IBO PLAYER</option>
+                          <option>IBO PRO</option>
+                          <option>ULTRA PLAYER</option>
+                          <option>QUICKPLAYER</option>
+                          <option>LAZER PLAYER</option>
+                          <option>SMARTERS PLAYER LITE</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
+                        <select value={appForm.accessType} onChange={e => setAppForm({...appForm, accessType: e.target.value as any})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                          <option value="mac_key">MAC & Device Key</option>
+                          <option value="user_pass">Usuário & Senha</option>
+                        </select>
+                      </div>
+
+                      {appForm.accessType === 'mac_key' ? (
+                        <>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Endereço MAC</label>
+                            <input value={appForm.macAddress} onChange={e => setAppForm({...appForm, macAddress: e.target.value})} placeholder="00:11:22:33:44:55" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Device Key</label>
+                            <input value={appForm.deviceKey} onChange={e => setAppForm({...appForm, deviceKey: e.target.value})} placeholder="123456" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Usuário</label>
+                            <input value={appForm.appUsername} onChange={e => setAppForm({...appForm, appUsername: e.target.value})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Senha</label>
+                            <input value={appForm.appPassword} onChange={e => setAppForm({...appForm, appPassword: e.target.value})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
+                          </div>
+                        </>
+                      )}
+
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Ícone do App</label>
+                        <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                          <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 overflow-hidden shadow-sm">
+                            {appForm.iconUrl ? <img src={appForm.iconUrl} className="w-full h-full object-cover" /> : <Tv size={20} />}
+                          </div>
+                          <div className="flex-1">
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0])}
+                              className="text-[10px] text-slate-500 font-bold block w-full file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={handleSaveApp}
+                        disabled={isLoading}
+                        className="col-span-2 bg-slate-900 text-white py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-slate-200"
+                      >
+                        {isLoading ? <RefreshCw className="animate-spin" size={16} /> : <Plus size={16} />}
+                        Cadastrar Dispositivo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </motion.div>
           </div>
         )}
