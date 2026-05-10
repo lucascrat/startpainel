@@ -292,7 +292,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
     });
 
     const contents: any[] = [
@@ -1534,7 +1534,7 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                     rate: '+0%',
                     pitch: '+0Hz'
                   });
-                  const base64Audio = buffer.toString('base64');
+                  const base64Audio = `data:audio/ogg;base64,${buffer.toString('base64')}`;
                   await evo.sendAudio(remoteJid, base64Audio);
                 } catch (ttsErr) {
                   console.error('[TTS] Error generating audio:', ttsErr);
