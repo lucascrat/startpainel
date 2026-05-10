@@ -292,7 +292,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
     });
 
     const contents: any[] = [
@@ -341,7 +341,11 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       model: 'gemini-1.5-flash'
     };
   } catch (error: any) {
-    console.error("Gemini Error:", error);
+    console.error("Gemini Error Details:", {
+      message: error.message,
+      stack: error.stack,
+      model: 'gemini-2.5-flash'
+    });
     return { text: `⚠️ IA: ${error.message || 'Erro inesperado'}.`, functionCalls: [] };
   }
 }
