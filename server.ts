@@ -18,7 +18,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Postgres Pool
-const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
+const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:startpainel_db_pass_2024@84.247.138.242:5432/postgres';
 
 const pool = new Pool({
   connectionString: DB_URL,
@@ -115,7 +115,13 @@ function getEfibankClient() {
 // --- API ROUTES ---
 
 // Health
-app.get('/api/health', (req, res) => res.json({ status: 'ok', db: dbStatus, error: dbError }));
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: dbStatus === 'connected' ? 'ok' : 'error', 
+    db: dbStatus, 
+    details: dbError || 'No errors reported'
+  });
+});
 
 // Customers
 app.get('/api/customers', async (req, res) => {
