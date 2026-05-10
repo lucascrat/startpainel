@@ -3,10 +3,11 @@ import { Customer } from '../types';
 import { 
   Users, Search, Phone, Calendar, 
   ChevronRight, Tv, RefreshCw, Smartphone,
-  Plus, MessageSquare, ExternalLink, XCircle
+  Plus, MessageSquare, ExternalLink, XCircle,
+  Save, Trash2, AlertCircle, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, isAfter, parseISO } from 'date-fns';
+import { format, isAfter, parseISO, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function CustomerMenu() {
@@ -15,6 +16,18 @@ export default function CustomerMenu() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'expired'>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  
+  // Add Customer Modal State
+  const [isAdding, setIsAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [newCust, setNewCust] = useState({
+    username: '',
+    name: '',
+    whatsapp: '',
+    renewal_price: '30.00',
+    expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd')
+  });
 
   useEffect(() => {
     loadCustomers();
@@ -30,6 +43,85 @@ export default function CustomerMenu() {
       console.error('Erro ao carregar clientes:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCust.username) return;
+    
+    setSaving(true);
+    setFormError(null);
+    try {
+      const response = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newCust,
+          status: 'active'
+        }),
+      });
+
+      if (response.ok) {
+        await loadCustomers();
+        setIsAdding(false);
+        setNewCust({
+          username: '',
+          name: '',
+          whatsapp: '',
+          renewal_price: '30.00',
+          expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd')
+        });
+      } else {
+        const err = await response.json();
+        setFormError(err.error || 'Erro ao criar cliente');
+      }
+    } catch (error) {
+      setFormError('Erro de conexão com o servidor');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRenew = async (customer: Customer) => {
+    if (!confirm(`Deseja renovar ${customer.name || customer.username} por mais 30 dias?`)) return;
+    
+    try {
+      const currentExp = customer.expiration_date ? parseISO(customer.expiration_date) : new Date();
+      const newExp = isAfter(currentExp, new Date()) ? addMonths(currentExp, 1) : addMonths(new Date(), 1);
+      
+      const response = await fetch(`/api/customers/${customer.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expiration_date: format(newExp, 'yyyy-MM-dd'),
+          last_renewal: new Date().toISOString()
+        }),
+      });
+
+      if (response.ok) {
+        await loadCustomers();
+        if (selectedCustomer?.id === customer.id) {
+          const updated = await response.json();
+          setSelectedCustomer(updated);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao renovar:', error);
+    }
+  };
+
+  const handleDelete = async (customer: Customer) => {
+    if (!confirm(`Tem certeza que deseja excluir o cliente ${customer.name || customer.username}? Esta ação não pode ser desfeita.`)) return;
+    
+    try {
+      const response = await fetch(`/api/customers/${customer.id}`, { method: 'DELETE' });
+      if (response.ok) {
+        setSelectedCustomer(null);
+        await loadCustomers();
+      }
+    } catch (error) {
+      console.error('Erro ao excluir:', error);
     }
   };
 
@@ -55,7 +147,7 @@ export default function CustomerMenu() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="flex flex-col h-full bg-slate-50 relative">
       {/* Header Section */}
       <div className="bg-white border-b border-slate-200 px-6 py-4 space-y-4">
         <div className="flex items-center justify-between">
@@ -69,7 +161,8 @@ export default function CustomerMenu() {
             </div>
           </div>
           <button 
-            className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2"
+            onClick={() => setIsAdding(true)}
+            className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2 shadow-lg shadow-slate-200"
           >
             <Plus size={16} />
             Novo Cliente
@@ -216,10 +309,16 @@ export default function CustomerMenu() {
                     <p className="text-xs font-bold text-slate-400 mt-1">@{selectedCustomer.username}</p>
                   </div>
                   <div className="flex gap-2">
-                    <button className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all">
+                    <button 
+                      onClick={() => window.open(`https://wa.me/${selectedCustomer.whatsapp?.replace(/\D/g, '')}`, '_blank')}
+                      className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all"
+                    >
                       <MessageSquare size={14} /> WhatsApp
                     </button>
-                    <button className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-100">
+                    <button 
+                      onClick={() => handleRenew(selectedCustomer)}
+                      className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-100"
+                    >
                       <RefreshCw size={14} /> Renovar
                     </button>
                   </div>
@@ -274,11 +373,128 @@ export default function CustomerMenu() {
                     </div>
                   </div>
                 </div>
+
+                <div className="pt-6">
+                  <button 
+                    onClick={() => handleDelete(selectedCustomer)}
+                    className="w-full bg-rose-50 text-rose-600 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={16} className="text-rose-400" /> Excluir Cliente
+                  </button>
+                </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {/* New Customer Modal */}
+      <AnimatePresence>
+        {isAdding && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="bg-slate-900 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center text-white">
+                    <Plus size={18} />
+                  </div>
+                  <h3 className="text-white font-black text-xs uppercase tracking-widest">Novo Cliente</h3>
+                </div>
+                <button onClick={() => setIsAdding(false)} className="text-slate-400 hover:text-white transition-colors">
+                  <XCircle size={24} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddCustomer} className="p-6 space-y-4">
+                {formError && (
+                  <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl flex items-center gap-3 text-rose-600">
+                    <AlertCircle size={18} />
+                    <p className="text-[10px] font-black uppercase tracking-widest">{formError}</p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Usuário / Login</label>
+                    <input 
+                      required
+                      value={newCust.username}
+                      onChange={e => setNewCust({...newCust, username: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="Ex: joao123"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                    <input 
+                      value={newCust.name}
+                      onChange={e => setNewCust({...newCust, name: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="Ex: João Silva"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
+                    <input 
+                      value={newCust.whatsapp}
+                      onChange={e => setNewCust({...newCust, whatsapp: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="Ex: 5511999999999"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Vencimento Inicial</label>
+                    <input 
+                      type="date"
+                      value={newCust.expiration_date}
+                      onChange={e => setNewCust({...newCust, expiration_date: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor da Renovação (R$)</label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    value={newCust.renewal_price}
+                    onChange={e => setNewCust({...newCust, renewal_price: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    placeholder="30.00"
+                  />
+                </div>
+
+                <div className="pt-4 flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setIsAdding(false)}
+                    className="flex-1 px-4 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={saving}
+                    className="flex-[2] bg-indigo-600 text-white px-4 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+                  >
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    {saving ? 'Salvando...' : 'Salvar Cliente'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
