@@ -1534,7 +1534,7 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                     rate: '+0%',
                     pitch: '+0Hz'
                   });
-                  const base64Audio = `data:audio/ogg;base64,${buffer.toString('base64')}`;
+                  const base64Audio = `data:audio/mp3;base64,${buffer.toString('base64')}`;
                   await evo.sendAudio(remoteJid, base64Audio);
                 } catch (ttsErr) {
                   console.error('[TTS] Error generating audio:', ttsErr);
