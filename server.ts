@@ -16,7 +16,7 @@ import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer }
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
 import multer from 'multer';
-import * as googleTTS from 'google-tts-api';
+import { EdgeTTS } from '@andresaya/edge-tts';
 
 // Initialize Postgres Pool
 const DB_URL = process.env.DATABASE_URL || 'postgres://postgres:EUUQna43FyrX3Vr74SYTihqqTkvQhMr630clCNtuJlfgeiS4I5lSkFUq7achOqsv@187.77.230.251:5436/postgres';
@@ -1510,13 +1510,13 @@ app.post('/api/webhooks/evolution', async (req, res) => {
              
              if (shouldSendAudio) {
                 try {
-                  const url = googleTTS.getAudioUrl(aiResult.text, {
-                    lang: 'pt-BR',
-                    slow: false,
-                    host: 'https://translate.google.com',
+                  const tts = new EdgeTTS();
+                  const buffer = await tts.tts(aiResult.text, {
+                    voice: 'pt-BR-AntonioNeural',
+                    rate: '+0%',
+                    pitch: '+0Hz'
                   });
-                  const audioResponse = await axios.get(url, { responseType: 'arraybuffer' });
-                  const base64Audio = Buffer.from(audioResponse.data).toString('base64');
+                  const base64Audio = buffer.toString('base64');
                   await evo.sendAudio(remoteJid, base64Audio);
                 } catch (ttsErr) {
                   console.error('[TTS] Error generating audio:', ttsErr);
