@@ -155,7 +155,8 @@ async function initDB() {
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'active\'',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS playlist_url TEXT',
-      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+      'ALTER TABLE ai_usage_logs ALTER COLUMN estimated_cost TYPE DECIMAL(15,8)'
     ];
 
     for (const m of migrations) {
@@ -333,7 +334,12 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     const functionCalls = response.functionCalls() || [];
     const text = response.text() || '';
 
-    return { text, functionCalls };
+    return { 
+      text, 
+      functionCalls, 
+      usage: response.usageMetadata,
+      model: 'gemini-1.5-flash'
+    };
   } catch (error: any) {
     console.error("Gemini Error:", error);
     return { text: `⚠️ IA: ${error.message || 'Erro inesperado'}.`, functionCalls: [] };
@@ -1492,7 +1498,17 @@ app.post('/api/webhooks/evolution', async (req, res) => {
         // 3.3 Get AI Response
         const aiResult = await handleAIChat(remoteJid, chatHistory, identifiedCustomer || { name: pushName }, mediaData);
         
-        // 3.3 Process Text and Audio Response
+        // 3.4 Log AI Usage
+        if (aiResult.usage) {
+          const { promptTokenCount, candidatesTokenCount } = aiResult.usage as any;
+          const cost = (promptTokenCount * 0.000000075) + (candidatesTokenCount * 0.00000030);
+          await pool.query(
+            'INSERT INTO ai_usage_logs (model, type, prompt_tokens, candidates_tokens, estimated_cost) VALUES ($1, $2, $3, $4, $5)',
+            [aiResult.model, 'chat_webhook', promptTokenCount, candidatesTokenCount, cost]
+          );
+        }
+        
+        // 3.5 Process Text and Audio Response
         if (aiResult.text) {
           const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
           const config: any = {};
