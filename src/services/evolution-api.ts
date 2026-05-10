@@ -76,12 +76,15 @@ export class EvolutionService {
   }
 
   async loadMedia(messageKey: any) {
+    // Evolution API v2: /chat/getBase64FromMediaMessage/{instance}
+    // (rota antiga /message/loadMedia/{instance} foi removida e retorna 404)
     try {
-      const url = `${this.config.apiUrl}/message/loadMedia/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/chat/getBase64FromMediaMessage/${this.config.instance}`;
       const response = await axios.post(url, {
-        key: messageKey
+        message: { key: messageKey },
+        convertToMp4: false
       }, { headers: this.headers });
-      return response.data; // Usually contains { base64: '...' }
+      return response.data; // { base64: '...', mediaType, mimetype, fileName }
     } catch (error: any) {
       console.error('[EvolutionAPI] Error loading media:', error.response?.data || error.message);
       throw error;
