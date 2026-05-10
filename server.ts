@@ -140,6 +140,26 @@ async function initDB() {
       await client.query(q);
     }
 
+    // Ensure all columns exist (in case the table was created with an older schema)
+    const migrations = [
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS name TEXT',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp TEXT',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS renewal_price DECIMAL(10,2) DEFAULT 49.90',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0.00',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2) DEFAULT 0.00',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'active\'',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE'
+    ];
+
+    for (const m of migrations) {
+      try {
+        await client.query(m);
+      } catch (err) {
+        console.warn(`PG: Migration failed (might already exist): ${m}`, err);
+      }
+    }
+
     // Default settings
     const settings = [
       ['evolution_api_url', 'https://evo.appbr.pro'],
