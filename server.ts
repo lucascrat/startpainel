@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -86,13 +87,73 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
+// --- ADMIN AUTH ---
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(48).toString('hex');
+if (!process.env.ADMIN_JWT_SECRET) {
+  console.warn('AUTH: ADMIN_JWT_SECRET ausente — usando segredo efêmero (tokens invalidam ao reiniciar).');
+}
+if (!ADMIN_PASSWORD) {
+  console.warn('AUTH: ADMIN_PASSWORD ausente — login admin desativado.');
+}
+
+const PUBLIC_SETTING_KEYS = new Set(['attendant_name', 'attendant_image']);
+const SENSITIVE_SETTING_KEYS = new Set(['gemini_api_key']);
+
+function maskSecret(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (value.length <= 8) return '****';
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function verifyAdminToken(req: express.Request): boolean {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return false;
+  try {
+    jwt.verify(auth.slice(7), ADMIN_JWT_SECRET);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!verifyAdminToken(req)) {
+    return res.status(401).json({ error: 'Acesso negado' });
+  }
+  next();
+}
+
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ error: 'Login admin não configurado no servidor' });
+  }
+  if (typeof password !== 'string' || password.length === 0) {
+    return res.status(400).json({ error: 'Senha obrigatória' });
+  }
+  const a = Buffer.from(password);
+  const b = Buffer.from(ADMIN_PASSWORD);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) {
+    return res.status(401).json({ error: 'Senha incorreta' });
+  }
+  const token = jwt.sign({ role: 'admin' }, ADMIN_JWT_SECRET, { expiresIn: '12h' });
+  res.json({ token, expiresIn: 12 * 60 * 60 });
+});
+
+app.get('/api/admin/me', (req, res) => {
+  res.json({ authenticated: verifyAdminToken(req) });
+});
+
 // --- AI HELPERS ---
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY is not defined");
+    const GEMINI_MODEL = 'gemini-2.5-flash';
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     const contents: any[] = [
       { role: 'user', parts: [{ text: "Você é o assistente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps." }] },
@@ -108,18 +169,18 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
       contents,
       tools: [{
         functionDeclarations: [
-          { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "object", properties: { username: { type: "string" }, amount: { type: "number" } }, required: ["username", "amount"] } },
-          { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "object", properties: { username: { type: "string" } }, required: ["username"] } },
-          { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "object", properties: { username: { type: "string" }, appName: { type: "string" } }, required: ["username", "appName"] } }
+          { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } },
+          { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
+          { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } }
         ]
-      }]
+      }] as any
     });
 
     const response = result.response;
-    return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: 'gemini-3.1-flash-lite' };
+    return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: GEMINI_MODEL };
   } catch (error: any) {
     console.error('[AI Error]', error.message);
-    return { text: `⚠️ IA Erro: ${error.message}`, functionCalls: [], model: 'gemini-3.1-flash-lite' };
+    return { text: `⚠️ IA Erro: ${error.message}`, functionCalls: [], model: 'gemini-2.5-flash' };
   }
 }
 
@@ -214,26 +275,33 @@ app.delete('/api/customers/:id', async (req, res) => {
 });
 
 // Settings
-app.get('/api/settings', async (req, res) => {
-  const result = await pool.query('SELECT * FROM settings');
-  res.json(result.rows);
+app.get('/api/settings', requireAdmin, async (req, res) => {
+  // Returns all settings — sensitive keys come masked.
+  const result = await pool.query('SELECT key, value FROM settings');
+  const rows = result.rows.map(r => SENSITIVE_SETTING_KEYS.has(r.key)
+    ? { key: r.key, configured: !!r.value, masked: maskSecret(r.value) }
+    : { key: r.key, value: r.value });
+  res.json(rows);
 });
 
 app.get('/api/settings/:key', async (req, res) => {
   try {
     const { key } = req.params;
-    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
-    if (result.rows.length > 0) {
-      if (key.includes('api_key') || key.includes('token')) {
-        return res.json({ value: result.rows[0].value, configured: true, masked: '****' + result.rows[0].value.slice(-4) });
-      }
-      return res.json({ value: result.rows[0].value });
+    const isPublic = PUBLIC_SETTING_KEYS.has(key);
+    const isSensitive = SENSITIVE_SETTING_KEYS.has(key);
+    if (!isPublic && !verifyAdminToken(req)) {
+      return res.status(401).json({ error: 'Acesso negado' });
     }
-    res.json({ value: null, configured: false });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+    const value = result.rows[0]?.value ?? null;
+    if (isSensitive) {
+      return res.json({ configured: !!value, masked: maskSecret(value) });
+    }
+    res.json({ value });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/settings', async (req, res) => {
+app.post('/api/settings', requireAdmin, async (req, res) => {
   const { key, value } = req.body;
   await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()', [key, value]);
   res.json({ success: true });
