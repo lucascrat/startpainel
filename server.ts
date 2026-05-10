@@ -219,6 +219,20 @@ app.get('/api/settings', async (req, res) => {
   res.json(result.rows);
 });
 
+app.get('/api/settings/:key', async (req, res) => {
+  try {
+    const { key } = req.params;
+    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+    if (result.rows.length > 0) {
+      if (key.includes('api_key') || key.includes('token')) {
+        return res.json({ value: result.rows[0].value, configured: true, masked: '****' + result.rows[0].value.slice(-4) });
+      }
+      return res.json({ value: result.rows[0].value });
+    }
+    res.json({ value: null, configured: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/settings', async (req, res) => {
   const { key, value } = req.body;
   await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()', [key, value]);
