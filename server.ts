@@ -139,13 +139,36 @@ function getEfibankClient() {
 
 // --- API ROUTES ---
 
-// Health
+// Health / DB Status
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: dbStatus === 'connected' ? 'ok' : 'error', 
-    db: dbStatus, 
-    details: dbError || 'No errors reported'
-  });
+  res.json({ status: dbStatus === 'connected' ? 'ok' : 'error', db: dbStatus, details: dbError });
+});
+
+app.get('/api/db-status', (req, res) => {
+  res.json({ status: dbStatus, error: dbError });
+});
+
+// AI Usage
+app.get('/api/ai-usage', async (req, res) => {
+  try {
+    const summary = await pool.query('SELECT model, type, COUNT(*) as count, SUM(estimated_cost) as total_cost FROM ai_usage_logs GROUP BY model, type');
+    const recent = await pool.query('SELECT * FROM ai_usage_logs ORDER BY created_at DESC LIMIT 10');
+    res.json({ summary: summary.rows, recent: recent.rows });
+  } catch (e) { res.json({ summary: [], recent: [] }); }
+});
+
+// Financials
+app.get('/api/financials', async (req, res) => {
+  try {
+    const totalCustomers = await pool.query('SELECT COUNT(*) FROM customers');
+    const activeCustomers = await pool.query("SELECT COUNT(*) FROM customers WHERE status = 'active'");
+    const monthlyRevenue = await pool.query('SELECT SUM(renewal_price) FROM customers');
+    res.json({
+      total_customers: parseInt(totalCustomers.rows[0].count),
+      active_customers: parseInt(activeCustomers.rows[0].count),
+      monthly_revenue: parseFloat(monthlyRevenue.rows[0].sum || 0)
+    });
+  } catch (e) { res.json({ error: e.message }); }
 });
 
 // Auth Login
