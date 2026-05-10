@@ -9,7 +9,7 @@ import axios from 'axios';
 import Gerencianet from 'gn-api-sdk-node';
 import pkg from 'pg';
 const { Pool } = pkg;
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer } from './src/services/startpainel-puppeteer.js';
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
@@ -183,16 +183,16 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
 
     const generatePixDeclaration = {
       name: 'generate_pix',
       description: 'Gera uma cobrança Pix (QR Code e Copia/Cola) para o cliente efetuar o pagamento. Sempre use essa ferramenta quando o cliente concordar com a renovação e precisar pagar. Não crie o pix sem saber o nome de usuário do cliente.',
       parameters: {
-        type: Type.OBJECT,
+        type: "OBJECT",
         properties: {
-          username: { type: Type.STRING, description: 'O nome de usuário do painel StartPainel que será renovado.' },
-          amount: { type: Type.NUMBER, description: 'O valor da renovação em reais.' },
+          username: { type: "STRING", description: 'O nome de usuário do painel StartPainel que será renovado.' },
+          amount: { type: "NUMBER", description: 'O valor da renovação em reais.' },
         },
         required: ['username', 'amount'],
       },
@@ -202,9 +202,9 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
       name: 'get_customer_info',
       description: 'Busca informações detalhadas de um cliente, incluindo seus aplicativos cadastrados (TV, Celular), dados de acesso (MAC, Senha), links de download e data de vencimento. Use isso quando o cliente pedir seus dados de acesso ou perguntar quando vence.',
       parameters: {
-        type: Type.OBJECT,
+        type: "OBJECT",
         properties: {
-          username: { type: Type.STRING, description: 'O nome de usuário do cliente no sistema.' },
+          username: { type: "STRING", description: 'O nome de usuário do cliente no sistema.' },
         },
         required: ['username'],
       },
@@ -231,28 +231,28 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
                   Mantenha sempre o estilo breve e com emojis.
                   O cliente se chama ${userInfo?.name || 'Cliente'}.`;
 
-    const contents = [
-      { role: 'user' as const, parts: [{ text: systemPrompt }] },
-      { role: 'model' as const, parts: [{ text: 'Entendido! Estou pronto para ajudar. 😊' }] },
-      ...chatHistory.map((m: any) => ({
-        role: m.role === 'user' ? 'user' as const : 'model' as const,
-        parts: m.parts.map((p: any) => {
-          if (p.text) return { text: p.text };
-          if (p.inlineData) return { inlineData: p.inlineData };
-          return p;
-        })
-      }))
-    ];
-
-    const result = await ai.models.generateContent({
+    const model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      contents,
-      config: {
-        tools: [{ functionDeclarations: [generatePixDeclaration, getCustomerInfoDeclaration] }],
-      }
+      systemInstruction: systemPrompt,
+      tools: [{
+        functionDeclarations: [generatePixDeclaration, getCustomerInfoDeclaration]
+      }]
     });
 
-    return { text: result.text ?? '', functionCalls: result.functionCalls ?? [] };
+    const chat = model.startChat({
+      history: chatHistory.map((m: any) => ({
+        role: m.role,
+        parts: m.parts
+      }))
+    });
+
+    const result = await chat.sendMessage(chatHistory[chatHistory.length - 1]?.parts[0]?.text || 'Olá');
+    const response = result.response;
+    
+    const functionCalls = response.functionCalls() || [];
+    const text = response.text() || '';
+
+    return { text, functionCalls };
   } catch (error: any) {
     console.error("Gemini Error:", error);
     throw error;
