@@ -563,7 +563,14 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', express.json(), async (req, res) => {
-  const { username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count } = req.body;
+  const { 
+    username, whatsapp, name, 
+    renewal_price, renewalPrice,
+    cost_per_credit, costPerCredit,
+    amount_paid, amountPaid,
+    expiration_date, expirationDate,
+    lines_count, linesCount 
+  } = req.body;
   try {
     const result = await pool.query(
       'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
@@ -571,11 +578,11 @@ app.post('/api/customers', express.json(), async (req, res) => {
         username, 
         whatsapp, 
         name, 
-        renewal_price || 49.90, 
-        cost_per_credit || 0, 
-        amount_paid || 0, 
-        expiration_date || null, 
-        lines_count || 1
+        renewal_price || renewalPrice || 49.90, 
+        cost_per_credit || costPerCredit || 0, 
+        amount_paid || amountPaid || 0, 
+        expiration_date || expirationDate || null, 
+        lines_count || linesCount || 1
       ]
     );
     res.json(result.rows[0]);
@@ -587,11 +594,27 @@ app.post('/api/customers', express.json(), async (req, res) => {
 
 app.put('/api/customers/:id', express.json(), async (req, res) => {
   const { id } = req.params;
-  const { name, whatsapp, renewal_price, cost_per_credit, amount_paid, expiration_date, status, lines_count } = req.body;
+  const { 
+    name, whatsapp, 
+    renewal_price, renewalPrice,
+    cost_per_credit, costPerCredit,
+    amount_paid, amountPaid,
+    expiration_date, expirationDate,
+    status, lines_count, linesCount 
+  } = req.body;
   try {
     const result = await pool.query(
       'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9 RETURNING *',
-      [name, whatsapp, renewal_price, cost_per_credit, amount_paid, expiration_date, status, lines_count, id]
+      [
+        name, whatsapp, 
+        renewal_price || renewalPrice, 
+        cost_per_credit || costPerCredit, 
+        amount_paid || amountPaid, 
+        expiration_date || expirationDate, 
+        status, 
+        lines_count || linesCount, 
+        id
+      ]
     );
     res.json(result.rows[0]);
   } catch (err: any) {
