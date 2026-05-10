@@ -84,6 +84,7 @@ async function initDB() {
         lines_count INTEGER DEFAULT 1,
         status TEXT DEFAULT 'active',
         expiration_date DATE,
+        playlist_url TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )`,
@@ -152,6 +153,7 @@ async function initDB() {
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'active\'',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_date DATE',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS playlist_url TEXT',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
     ];
 
@@ -601,7 +603,8 @@ app.post('/api/customers', express.json(), async (req, res) => {
     cost_per_credit, costPerCredit,
     amount_paid, amountPaid,
     expiration_date, expirationDate,
-    lines_count, linesCount 
+    lines_count, linesCount,
+    playlist_url, playlistUrl
   } = req.body;
 
   const parseNum = (val: any) => {
@@ -619,7 +622,7 @@ app.post('/api/customers', express.json(), async (req, res) => {
 
   try {
     const result = await pool.query(
-      'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count, playlist_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
       [
         username, 
         whatsapp, 
@@ -628,7 +631,8 @@ app.post('/api/customers', express.json(), async (req, res) => {
         cCredit !== null ? cCredit : 0, 
         aPaid !== null ? aPaid : 0, 
         expiration_date || expirationDate || null, 
-        lines_count || linesCount || 1
+        lines_count || linesCount || 1,
+        playlist_url || playlistUrl || null
       ]
     );
     res.json(result.rows[0]);
@@ -646,11 +650,12 @@ app.put('/api/customers/:id', express.json(), async (req, res) => {
     cost_per_credit, costPerCredit,
     amount_paid, amountPaid,
     expiration_date, expirationDate,
-    status, lines_count, linesCount 
+    status, lines_count, linesCount,
+    playlist_url, playlistUrl
   } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9 RETURNING *',
+      'UPDATE customers SET name = $1, whatsapp = $2, renewal_price = $3, cost_per_credit = $4, amount_paid = $5, expiration_date = $6, status = $7, lines_count = $8, playlist_url = $9, updated_at = CURRENT_TIMESTAMP WHERE id = $10 RETURNING *',
       [
         name, whatsapp, 
         renewal_price || renewalPrice, 
@@ -659,6 +664,7 @@ app.put('/api/customers/:id', express.json(), async (req, res) => {
         expiration_date || expirationDate, 
         status, 
         lines_count || linesCount, 
+        playlist_url || playlistUrl,
         id
       ]
     );

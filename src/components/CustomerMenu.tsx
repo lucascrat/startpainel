@@ -27,7 +27,8 @@ export default function CustomerMenu() {
     whatsapp: '',
     renewal_price: '30.00',
     expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
-    lines_count: 1
+    lines_count: 1,
+    playlist_url: ''
   });
 
   // App Management States
@@ -528,6 +529,16 @@ export default function CustomerMenu() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">URL da Lista M3U</label>
+                      <input 
+                        type="url"
+                        placeholder="http://painel.com/get.php?username=..."
+                        value={editForm.playlist_url || ''}
+                        onChange={e => setEditForm({...editForm, playlist_url: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-mono focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                    </div>
                     <div className="pt-4 flex gap-3">
                       <button 
                         onClick={() => setIsEditing(false)}
@@ -589,11 +600,37 @@ export default function CustomerMenu() {
                         </div>
                       </div>
 
+                      {selectedCustomer.playlist_url && (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Lista M3U Principal</span>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              readOnly 
+                              value={selectedCustomer.playlist_url} 
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[9px] font-mono text-slate-600 outline-none"
+                            />
+                            <button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(selectedCustomer.playlist_url!);
+                                alert('Lista copiada!');
+                              }}
+                              className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
+                              title="Copiar Lista"
+                            >
+                              <Check size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-1">
                           <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dispositivos & Apps</h4>
                           <button 
-                            onClick={() => setIsAppModalOpen(true)}
+                            onClick={() => {
+                              setIsAppModalOpen(true);
+                              setAppForm(prev => ({ ...prev, providerUrl: selectedCustomer.playlist_url || '' }));
+                            }}
                             className="text-[9px] font-black text-indigo-600 uppercase hover:text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full transition-all"
                           >
                             Gerenciar
@@ -732,6 +769,16 @@ export default function CustomerMenu() {
                       onChange={e => setNewCust({...newCust, lines_count: parseInt(e.target.value)})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       placeholder="1"
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">URL da Lista M3U</label>
+                    <input 
+                      type="url"
+                      placeholder="http://painel.com/get.php?username=..."
+                      value={newCust.playlist_url}
+                      onChange={e => setNewCust({...newCust, playlist_url: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-mono focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                     />
                   </div>
                 </div>

@@ -28,6 +28,7 @@ export default function AdminPanel() {
   const [newLinesCount, setNewLinesCount] = useState('1');
   const [newWhatsapp, setNewWhatsapp] = useState('');
   const [newExpirationDate, setNewExpirationDate] = useState('');
+  const [newPlaylistUrl, setNewPlaylistUrl] = useState('');
   
   // App Management
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
@@ -211,7 +212,10 @@ export default function AdminPanel() {
 
       setNewUsername('');
       setNewName('');
+      setNewWhatsapp('');
       setNewExpirationDate('');
+      setNewLinesCount('1');
+      setNewPlaylistUrl('');
       setStatusFilter('all');
       setSearchTerm('');
       loadCustomers();
@@ -584,6 +588,10 @@ export default function AdminPanel() {
                       <div className="space-y-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Linhas</label>
                         <input type="number" value={newLinesCount} onChange={e => setNewLinesCount(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                      <div className="sm:col-span-2 lg:col-span-4 space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">URL da Lista M3U Principal</label>
+                        <input type="url" value={newPlaylistUrl} onChange={e => setNewPlaylistUrl(e.target.value)} placeholder="http://painel.com/get.php?username=..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
                       <div className="sm:col-span-2 lg:col-span-4 flex items-center gap-2 mt-2">
                         <input 
