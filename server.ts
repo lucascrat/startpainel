@@ -233,22 +233,36 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      systemInstruction: systemPrompt,
+    });
+
+    // Prepare contents with explicit roles and alternating turns
+    const contents: any[] = [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Entendido! Estou pronto para ajudar. 😊' }] }
+    ];
+
+    // Add history but omit the very last message (which we will send as the current prompt)
+    if (chatHistory.length > 1) {
+      chatHistory.slice(0, -1).forEach((m: any) => {
+        contents.push({
+          role: m.role,
+          parts: m.parts
+        });
+      });
+    }
+
+    // Always send the last message as the final user part
+    const lastMessage = chatHistory[chatHistory.length - 1]?.parts[0]?.text || 'Olá';
+    contents.push({ role: 'user', parts: [{ text: lastMessage }] });
+
+    const result = await model.generateContent({
+      contents,
       tools: [{
         functionDeclarations: [generatePixDeclaration, getCustomerInfoDeclaration]
       }]
     });
 
-    const chat = model.startChat({
-      history: chatHistory.map((m: any) => ({
-        role: m.role,
-        parts: m.parts
-      }))
-    });
-
-    const result = await chat.sendMessage(chatHistory[chatHistory.length - 1]?.parts[0]?.text || 'Olá');
     const response = result.response;
-    
     const functionCalls = response.functionCalls() || [];
     const text = response.text() || '';
 
