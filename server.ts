@@ -246,7 +246,7 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
     });
 
     // Prepare contents with explicit roles and alternating turns
@@ -283,7 +283,10 @@ async function handleAIChat(remoteJid: string, chatHistory: any[], userInfo: { n
     return { text, functionCalls };
   } catch (error: any) {
     console.error("Gemini Error:", error);
-    throw error;
+    return { 
+      text: `⚠️ Erro na IA (Gemini): ${error.message || 'Erro desconhecido'}. Verifique sua chave API ou o status do Google.`, 
+      functionCalls: [] 
+    };
   }
 }
 
@@ -1132,13 +1135,15 @@ app.post('/api/webhooks/evolution', async (req, res) => {
   // Respond immediately to Evolution API
   res.json({ success: true });
 
-  if (event === 'messages.upsert') {
+    const remoteJid = data.key?.remoteJid || '';
+    const pushName = data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
+
     try {
-      const msg = data.message;
-      const key = data.key;
-      const remoteJid = key.remoteJid;
-      const fromMe = key.fromMe;
-      const pushName = data.pushName || remoteJid.split('@')[0];
+      if (event === 'messages.upsert') {
+        const msg = data.message;
+        const key = data.key;
+        const fromMe = key.fromMe;
+        console.log(`[Webhook] Nova mensagem de ${pushName} (${remoteJid})`);
       
       let text = '';
       if (msg?.conversation) text = msg.conversation;
@@ -1163,12 +1168,17 @@ app.post('/api/webhooks/evolution', async (req, res) => {
 
       // 1.2 Identify Customer by WhatsApp
       const cleanNumber = remoteJid.split('@')[0];
-      const customerLookup = await pool.query(
-        'SELECT username, name FROM customers WHERE whatsapp LIKE $1 OR whatsapp = $2',
-        [`%${cleanNumber}%`, cleanNumber]
-      );
+      let identifiedCustomer = null;
+      try {
+        const customerLookup = await pool.query(
+          'SELECT username, name FROM customers WHERE whatsapp LIKE $1 OR whatsapp = $2',
+          [`%${cleanNumber}%`, cleanNumber]
+        );
+        identifiedCustomer = customerLookup.rows[0] || null;
+      } catch (dbErr) {
+        console.error('[Webhook] Database error during customer identification:', dbErr);
+      }
       
-      const identifiedCustomer = customerLookup.rows[0] || null;
       if (identifiedCustomer) {
         console.log(`[Webhook] Identified customer: ${identifiedCustomer.name} (${identifiedCustomer.username})`);
       }
