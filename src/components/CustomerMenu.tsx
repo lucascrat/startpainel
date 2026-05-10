@@ -74,7 +74,7 @@ export default function CustomerMenu() {
         });
       } else {
         const err = await response.json();
-        setFormError(err.error || 'Erro ao criar cliente');
+        setFormError(`${err.error}${err.details ? ': ' + err.details : ''}`);
       }
     } catch (error) {
       setFormError('Erro de conexão com o servidor');

@@ -571,6 +571,20 @@ app.post('/api/customers', express.json(), async (req, res) => {
     expiration_date, expirationDate,
     lines_count, linesCount 
   } = req.body;
+
+  const parseNum = (val: any) => {
+    if (val === undefined || val === null || val === '') return null;
+    if (typeof val === 'number') return val;
+    // Replace comma with dot for Portuguese locale support
+    const cleaned = String(val).replace(',', '.').replace(/[^\d.-]/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  };
+
+  const rPrice = parseNum(renewal_price || renewalPrice);
+  const cCredit = parseNum(cost_per_credit || costPerCredit);
+  const aPaid = parseNum(amount_paid || amountPaid);
+
   try {
     const result = await pool.query(
       'INSERT INTO customers (username, whatsapp, name, renewal_price, cost_per_credit, amount_paid, expiration_date, lines_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
@@ -578,9 +592,9 @@ app.post('/api/customers', express.json(), async (req, res) => {
         username, 
         whatsapp, 
         name, 
-        renewal_price || renewalPrice || 49.90, 
-        cost_per_credit || costPerCredit || 0, 
-        amount_paid || amountPaid || 0, 
+        rPrice !== null ? rPrice : 49.90, 
+        cCredit !== null ? cCredit : 0, 
+        aPaid !== null ? aPaid : 0, 
         expiration_date || expirationDate || null, 
         lines_count || linesCount || 1
       ]
