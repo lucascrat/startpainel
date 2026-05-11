@@ -52,6 +52,20 @@ async function initDB(retries = 5) {
         `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, remote_jid TEXT UNIQUE NOT NULL, name TEXT, last_message TEXT, last_message_time TIMESTAMP, unread_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS ai_usage_logs (id SERIAL PRIMARY KEY, model TEXT NOT NULL, type TEXT NOT NULL, prompt_tokens INTEGER, candidates_tokens INTEGER, estimated_cost DECIMAL(15,8), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS payment_receipts (
+          id SERIAL PRIMARY KEY,
+          customer_username TEXT,
+          customer_id INTEGER,
+          payer_name TEXT,
+          amount DECIMAL(10,2),
+          paid_at TIMESTAMP,
+          remote_jid TEXT,
+          image_data TEXT,
+          status TEXT DEFAULT 'pending_review',
+          notes TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at TIMESTAMP
+        )`,
         `CREATE TABLE IF NOT EXISTS customer_apps (id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE, app_name TEXT NOT NULL, app_model TEXT, access_type TEXT, mac_address TEXT, device_key TEXT, username TEXT, password TEXT, provider_url TEXT, is_tv BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS pix_charges (txid TEXT PRIMARY KEY, customer_username TEXT, amount DECIMAL(10,2), status TEXT DEFAULT 'ATIVA', processed BOOLEAN DEFAULT false, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS settings (key VARCHAR(255) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
@@ -146,6 +160,30 @@ app.get('/api/admin/me', (req, res) => {
   res.json({ authenticated: verifyAdminToken(req) });
 });
 
+// --- AI USAGE LOGGING ---
+// Preços por 1M tokens (USD). Atualizar conforme tabela oficial do Gemini.
+const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
+  'gemini-2.5-flash':              { input: 0.075,  output: 0.30 },
+  'gemini-2.5-flash-preview-tts':  { input: 0.075,  output: 0.30 },
+  'gemini-2.5-pro':                { input: 1.25,   output: 5.00 },
+  'gemini-2.5-pro-preview-tts':    { input: 1.25,   output: 5.00 },
+};
+
+async function logAiUsage(model: string, type: string, usage: any) {
+  try {
+    const promptTokens = Number(usage?.promptTokenCount || 0);
+    const candidatesTokens = Number(usage?.candidatesTokenCount || 0);
+    const pricing = GEMINI_PRICING[model] || { input: 0.075, output: 0.30 };
+    const cost = (promptTokens * pricing.input + candidatesTokens * pricing.output) / 1_000_000;
+    await pool.query(
+      'INSERT INTO ai_usage_logs (model, type, prompt_tokens, candidates_tokens, estimated_cost) VALUES ($1, $2, $3, $4, $5)',
+      [model, type, promptTokens, candidatesTokens, cost.toFixed(8)]
+    );
+  } catch (e: any) {
+    console.error('[AI Usage] log falhou:', e?.message || e);
+  }
+}
+
 // --- TTS HELPERS ---
 // Gemini 2.5 Flash Preview TTS é mais natural mas pago; EdgeTTS é fallback grátis.
 // Para economizar: só vira áudio quando a resposta é curta OU o cliente mandou áudio.
@@ -189,6 +227,7 @@ async function generateGeminiTTS(text: string): Promise<{ base64: string; mimeTy
       } as any,
     });
     const result = await model.generateContent(text);
+    await logAiUsage(GEMINI_TTS_MODEL, 'tts', result.response.usageMetadata);
     const part: any = result.response.candidates?.[0]?.content?.parts?.[0];
     const data: string | undefined = part?.inlineData?.data;
     if (!data) {
@@ -239,7 +278,9 @@ Você é multimodal:
 
 Regras de resposta:
 - Quando receber áudio, transcreva mentalmente e responda ao conteúdo falado.
-- Quando receber imagem (print de erro, captura de tela, foto do app), analise o que está mostrando e responda com base no que vê.
+- Quando receber imagem, analise o que está mostrando.
+- Se a imagem for um COMPROVANTE DE PIX (tem valor em R$, data, hora, nome do pagador, banco), extraia os dados e use a tool 'register_pix_receipt' com payer_name (quem pagou), amount (valor numérico), paid_at (data e hora no formato ISO 8601 'YYYY-MM-DDTHH:mm:ss'). Após registrar, responda confirmando o recebimento e a renovação do plano.
+- Se a imagem NÃO for comprovante (print de erro, foto do app, etc.), apenas analise normalmente.
 - Se o cliente pedir explicitamente uma resposta em áudio, apenas mantenha a resposta curta (frase única) e ela já virá em áudio.
 - Sempre responda em português, estilo WhatsApp: breve, claro, com emojis quando apropriado.`;
 
@@ -260,12 +301,14 @@ Regras de resposta:
         functionDeclarations: [
           { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } },
           { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
-          { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } }
+          { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } },
+          { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }
         ]
       }] as any
     });
 
     const response = result.response;
+    await logAiUsage(GEMINI_MODEL, 'chat', response.usageMetadata);
     return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: GEMINI_MODEL };
   } catch (error: any) {
     console.error('[AI Error]', error.message);
@@ -299,13 +342,46 @@ app.get('/api/db-status', (req, res) => {
   res.json({ status: dbStatus, error: dbError });
 });
 
-// AI Usage
-app.get('/api/ai-usage', async (req, res) => {
+// (rota /api/ai-usage definida abaixo — esta duplicata foi removida)
+
+// --- PAYMENT RECEIPTS (admin only) ---
+app.get('/api/payment-receipts', requireAdmin, async (req, res) => {
   try {
-    const summary = await pool.query('SELECT model, type, COUNT(*) as count, SUM(estimated_cost) as total_cost FROM ai_usage_logs GROUP BY model, type');
-    const recent = await pool.query('SELECT * FROM ai_usage_logs ORDER BY created_at DESC LIMIT 10');
-    res.json({ summary: summary.rows, recent: recent.rows });
-  } catch (e) { res.json({ summary: [], recent: [] }); }
+    const result = await pool.query(
+      `SELECT id, customer_username, customer_id, payer_name, amount, paid_at, remote_jid,
+              image_data, status, notes, created_at, reviewed_at
+       FROM payment_receipts ORDER BY created_at DESC LIMIT 200`
+    );
+    res.json(result.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/payment-receipts/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body || {};
+    const allowedStatus = ['pending_review', 'approved', 'rejected', 'refunded'];
+    if (status && !allowedStatus.includes(status)) {
+      return res.status(400).json({ error: `status invalido. Use: ${allowedStatus.join(', ')}` });
+    }
+    const result = await pool.query(
+      `UPDATE payment_receipts
+       SET status = COALESCE($2, status),
+           notes  = COALESCE($3, notes),
+           reviewed_at = CASE WHEN $2 IS NOT NULL THEN NOW() ELSE reviewed_at END
+       WHERE id = $1 RETURNING *`,
+      [id, status || null, notes || null]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Comprovante nao encontrado' });
+    res.json(result.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/payment-receipts/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM payment_receipts WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // Financials
@@ -603,10 +679,67 @@ app.post('/api/webhooks/evolution/:event?', async (req, res) => {
     }
 
     for (const call of aiResult.functionCalls) {
-      if (call.name === 'generate_pix') await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
+      if (call.name === 'generate_pix') {
+        await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
+      } else if (call.name === 'register_pix_receipt') {
+        await handleRegisterPixReceipt(
+          remoteJid,
+          pushName,
+          call.args.payer_name,
+          call.args.amount,
+          call.args.paid_at,
+          mediaData ? `data:${mediaData.mimeType};base64,${mediaData.data}` : null
+        );
+      }
     }
   } catch (err: any) { console.error('[Webhook Error]', err); }
 });
+
+async function handleRegisterPixReceipt(
+  remoteJid: string,
+  pushName: string,
+  payerName: string,
+  amount: number,
+  paidAt: string,
+  imageDataUri: string | null
+) {
+  try {
+    // Procura cliente por número de WhatsApp (normaliza só dígitos).
+    const number = (remoteJid || '').split('@')[0].replace(/\D/g, '');
+    let customerId: number | null = null;
+    let customerUsername: string | null = null;
+    if (number) {
+      const r = await pool.query(
+        "SELECT id, username FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
+        [number]
+      );
+      if (r.rows[0]) { customerId = r.rows[0].id; customerUsername = r.rows[0].username; }
+    }
+
+    let parsedDate: Date | null = null;
+    try { const d = new Date(paidAt); if (!isNaN(d.getTime())) parsedDate = d; } catch {}
+
+    const inserted = await pool.query(
+      `INSERT INTO payment_receipts (customer_username, customer_id, payer_name, amount, paid_at, remote_jid, image_data, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_review') RETURNING id`,
+      [customerUsername, customerId, payerName, amount, parsedDate, remoteJid, imageDataUri]
+    );
+    console.log(`[Receipt] registrado #${inserted.rows[0].id} pagador=${payerName} valor=${amount} cliente=${customerUsername || 'desconhecido'}`);
+
+    // Renova: bumpa expiration_date em 30 dias (se já vencido, conta a partir de hoje).
+    if (customerId) {
+      await pool.query(
+        `UPDATE customers SET expiration_date = GREATEST(COALESCE(expiration_date, NOW()::date), NOW()::date) + INTERVAL '30 days', status = 'active', last_renewal = NOW(), updated_at = NOW() WHERE id = $1`,
+        [customerId]
+      );
+      console.log(`[Receipt] cliente ${customerUsername} renovado por +30 dias`);
+    } else {
+      console.warn(`[Receipt] sem cliente vinculado a ${number} — renovacao manual necessaria`);
+    }
+  } catch (e: any) {
+    console.error('[Receipt] erro:', e?.message || e);
+  }
+}
 
 async function handlePixGenerationTool(remoteJid: string, pushName: string, username: string, amount: number) {
   try {

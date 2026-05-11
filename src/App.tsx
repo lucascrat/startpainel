@@ -4,11 +4,12 @@ import AdminPanel from './components/AdminPanel';
 import ActivationTester from './components/ActivationTester';
 import CustomerMenu from './components/CustomerMenu';
 import PublicChat from './components/PublicChat';
-import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users, X } from 'lucide-react';
+import PaymentReceipts from './components/PaymentReceipts';
+import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users, X, Receipt } from 'lucide-react';
 import { login, getToken, logout } from './lib/auth';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts'>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getToken());
   const [showLogin, setShowLogin] = useState(false);
   const [pwInput, setPwInput] = useState('');
@@ -126,6 +127,15 @@ export default function App() {
             Clientes
           </button>
           <button
+            onClick={() => setActiveTab('receipts')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
+              activeTab === 'receipts' ? 'bg-white text-whatsapp-teal shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Receipt size={12} className="sm:w-3.5 sm:h-3.5" />
+            Comprovantes
+          </button>
+          <button
             onClick={() => setActiveTab('admin')}
             className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
               activeTab === 'admin' ? 'bg-white text-whatsapp-teal shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -163,6 +173,11 @@ export default function App() {
         {activeTab === 'customers' && (
           <div className="flex-1 overflow-hidden bg-slate-50">
             <CustomerMenu />
+          </div>
+        )}
+        {activeTab === 'receipts' && (
+          <div className="flex-1 overflow-hidden flex flex-col bg-slate-50">
+            <PaymentReceipts />
           </div>
         )}
         {activeTab === 'admin' && (
