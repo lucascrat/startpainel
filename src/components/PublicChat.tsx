@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Lock } from 'lucide-react';
+import { Send, Lock, Volume2, VolumeX, Play } from 'lucide-react';
 
-type Msg = { role: 'user' | 'model'; text: string };
+type Msg = { role: 'user' | 'model'; text: string; audioUrl?: string };
+
+const MUTE_KEY = 'public_chat_muted';
 
 const SESSION_KEY = 'public_chat_session_id';
 const NAME_KEY = 'public_chat_name';
@@ -27,7 +29,25 @@ export default function PublicChat({ onAdminClick }: Props) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [muted, setMuted] = useState<boolean>(() => localStorage.getItem(MUTE_KEY) === '1');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playAudio = (url: string) => {
+    try {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
+      const a = new Audio(url);
+      audioRef.current = a;
+      a.play().catch(() => {});
+    } catch {}
+  };
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    localStorage.setItem(MUTE_KEY, next ? '1' : '0');
+    if (next && audioRef.current) { audioRef.current.pause(); }
+  };
 
   useEffect(() => {
     fetch('/api/settings/attendant_name').then(r => r.json()).then(d => d.value && setAttendantName(d.value)).catch(() => {});
@@ -59,7 +79,12 @@ export default function PublicChat({ onAdminClick }: Props) {
         body: JSON.stringify({ sessionId: getSessionId(), name, message: text }),
       });
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'model', text: data.text || '⚠️ Sem resposta' }]);
+      let audioUrl: string | undefined;
+      if (data.audio?.data && data.audio?.mimeType) {
+        audioUrl = `data:${data.audio.mimeType};base64,${data.audio.data}`;
+        if (!muted) playAudio(audioUrl);
+      }
+      setMessages(prev => [...prev, { role: 'model', text: data.text || '⚠️ Sem resposta', audioUrl }]);
     } catch (e: any) {
       setMessages(prev => [...prev, { role: 'model', text: `⚠️ Erro: ${e?.message || 'falha de rede'}` }]);
     } finally {
@@ -79,13 +104,22 @@ export default function PublicChat({ onAdminClick }: Props) {
               <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Online</p>
             </div>
           </div>
-          <button
-            onClick={onAdminClick}
-            title="Acesso administrativo"
-            className="p-1.5 text-slate-300 hover:text-slate-500 transition"
-          >
-            <Lock size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleMute}
+              title={muted ? 'Áudio desativado — clique para ativar' : 'Áudio ativo — clique para silenciar'}
+              className={`p-1.5 transition ${muted ? 'text-slate-300 hover:text-slate-500' : 'text-emerald-500 hover:text-emerald-700'}`}
+            >
+              {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+            <button
+              onClick={onAdminClick}
+              title="Acesso administrativo"
+              className="p-1.5 text-slate-300 hover:text-slate-500 transition"
+            >
+              <Lock size={14} />
+            </button>
+          </div>
         </div>
         <div className="flex-1 flex items-center justify-center p-6">
           <form onSubmit={handleSetName} className="w-full max-w-sm space-y-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -146,6 +180,15 @@ export default function PublicChat({ onAdminClick }: Props) {
               }`}
             >
               {m.text}
+              {m.audioUrl && (
+                <button
+                  onClick={() => playAudio(m.audioUrl!)}
+                  title="Reproduzir áudio"
+                  className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition align-middle"
+                >
+                  <Play size={10} />
+                </button>
+              )}
             </div>
           </div>
         ))}

@@ -146,6 +146,82 @@ app.get('/api/admin/me', (req, res) => {
   res.json({ authenticated: verifyAdminToken(req) });
 });
 
+// --- TTS HELPERS ---
+// Gemini 2.5 Flash Preview TTS é mais natural mas pago; EdgeTTS é fallback grátis.
+// Para economizar: só vira áudio quando a resposta é curta OU o cliente mandou áudio.
+const TTS_AUDIO_MAX_CHARS = 220;
+const GEMINI_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
+const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Kore';
+
+function pcmToWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const dataSize = pcm.length;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+async function generateGeminiTTS(text: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || !text?.trim()) return null;
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_TTS_MODEL,
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } },
+        },
+      } as any,
+    });
+    const result = await model.generateContent(text);
+    const part: any = result.response.candidates?.[0]?.content?.parts?.[0];
+    const data: string | undefined = part?.inlineData?.data;
+    if (!data) {
+      console.warn('[GeminiTTS] resposta sem inlineData');
+      return null;
+    }
+    // Gemini retorna PCM 16-bit mono 24kHz. Embrulha em WAV pra navegador/Evolution tocarem.
+    const pcm = Buffer.from(data, 'base64');
+    const wav = pcmToWav(pcm, 24000, 1, 16);
+    return { base64: wav.toString('base64'), mimeType: 'audio/wav' };
+  } catch (e: any) {
+    console.error('[GeminiTTS] erro:', e?.message || e);
+    return null;
+  }
+}
+
+async function generateEdgeTTS(text: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    if (!text?.trim()) return null;
+    const tts = new EdgeTTS();
+    const buffer = await tts.tts(text, { voice: 'pt-BR-AntonioNeural' });
+    return { base64: buffer.toString('base64'), mimeType: 'audio/mp3' };
+  } catch (e: any) {
+    console.error('[EdgeTTS] erro:', e?.message || e);
+    return null;
+  }
+}
+
+// Tenta Gemini primeiro (mais natural), cai pra EdgeTTS (grátis) se falhar.
+async function generateAudio(text: string): Promise<{ base64: string; mimeType: string } | null> {
+  return (await generateGeminiTTS(text)) || (await generateEdgeTTS(text));
+}
+
 // --- AI HELPERS ---
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
@@ -432,7 +508,14 @@ app.post('/api/public-chat', async (req, res) => {
       [replyText, 'ai', 'text', remoteJid, visitorName]
     );
 
-    res.json({ text: replyText });
+    // Áudio só pra respostas curtas (economia + humanização).
+    let audio: { data: string; mimeType: string } | null = null;
+    if (replyText.length <= TTS_AUDIO_MAX_CHARS && !replyText.startsWith('⚠️')) {
+      const generated = await generateAudio(replyText);
+      if (generated) audio = { data: generated.base64, mimeType: generated.mimeType };
+    }
+
+    res.json({ text: replyText, audio });
   } catch (e: any) {
     console.error('[PublicChat Error]', e?.message || e);
     res.status(500).json({ error: e?.message || 'Erro interno' });
@@ -497,13 +580,19 @@ app.post('/api/webhooks/evolution/:event?', async (req, res) => {
        const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
        const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
        
-       if (msg?.audioMessage || Math.random() > 0.7) {
-         try {
-           const tts = new EdgeTTS();
-           const buffer = await tts.tts(aiResult.text, { voice: 'pt-BR-AntonioNeural' });
-           await evo.sendAudio(remoteJid, `data:audio/mp3;base64,${buffer.toString('base64')}`);
-         } catch (e) { await evo.sendMessage(remoteJid, aiResult.text); }
-       } else { await evo.sendMessage(remoteJid, aiResult.text); }
+       // Áudio quando: cliente mandou áudio OU resposta é curta (humanização barata).
+       const wantAudio = isAudio || aiResult.text.length <= TTS_AUDIO_MAX_CHARS;
+       let audioSent = false;
+       if (wantAudio) {
+         const audio = await generateAudio(aiResult.text);
+         if (audio) {
+           try {
+             await evo.sendAudio(remoteJid, `data:${audio.mimeType};base64,${audio.base64}`);
+             audioSent = true;
+           } catch (e: any) { console.error('[WhatsApp] sendAudio falhou:', e?.message || e); }
+         }
+       }
+       if (!audioSent) await evo.sendMessage(remoteJid, aiResult.text);
 
        await pool.query('INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)', [aiResult.text, 'ai', 'text', remoteJid, pushName]);
     }
