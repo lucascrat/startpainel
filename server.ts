@@ -393,6 +393,52 @@ app.get('/api/ai-usage', async (req, res) => {
   res.json({ summary: stats.rows[0], recent: recent.rows });
 });
 
+// Public Chat (visitor-facing widget on the website)
+// Sessions are identified by a client-generated UUID stored in localStorage.
+// All messages are persisted with remote_jid = `web:${sessionId}@public` so
+// the admin Multi-Chat can also see/answer them.
+app.post('/api/public-chat', async (req, res) => {
+  try {
+    const { sessionId, name, message } = req.body || {};
+    if (!sessionId || typeof sessionId !== 'string' || !message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'sessionId e message são obrigatórios' });
+    }
+    const remoteJid = `web:${sessionId}@public`;
+    const visitorName = (typeof name === 'string' && name.trim()) ? name.trim() : 'Visitante';
+
+    await pool.query(
+      'INSERT INTO contacts (remote_jid, name, last_message, last_message_time, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (remote_jid) DO UPDATE SET name=EXCLUDED.name, last_message=EXCLUDED.last_message, last_message_time=NOW(), updated_at=NOW()',
+      [remoteJid, visitorName, message]
+    );
+    await pool.query(
+      'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
+      [message, 'customer', 'text', remoteJid, visitorName]
+    );
+
+    const historyRes = await pool.query(
+      'SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10',
+      [remoteJid]
+    );
+    const chatHistory = historyRes.rows.reverse().map((m: any) => ({
+      role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user',
+      parts: [{ text: m.text || '' }]
+    }));
+
+    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: visitorName });
+    const replyText = aiResult.text || '⚠️ Sem resposta da IA';
+
+    await pool.query(
+      'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
+      [replyText, 'ai', 'text', remoteJid, visitorName]
+    );
+
+    res.json({ text: replyText });
+  } catch (e: any) {
+    console.error('[PublicChat Error]', e?.message || e);
+    res.status(500).json({ error: e?.message || 'Erro interno' });
+  }
+});
+
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
