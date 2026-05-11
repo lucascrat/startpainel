@@ -408,15 +408,31 @@ app.post('/api/upload', requireAdmin, async (req, res) => {
     if (!data || !mimeType) {
       return res.status(400).json({ error: 'data (base64) e mimeType são obrigatórios' });
     }
+    console.log(`[Upload] prefix=${prefix} mime=${mimeType} bytes=${Math.round(String(data).length * 3 / 4 / 1024)}KB r2=${r2Configured}`);
     if (!r2Configured) {
-      // Fallback: devolve data URI direto (mesmo comportamento de antes do R2)
       const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
       return res.json({ url: `data:${mimeType};base64,${cleanBase64}`, storage: 'inline' });
     }
     const url = await uploadToR2(prefix || 'misc', data, mimeType);
-    if (!url) return res.status(500).json({ error: 'Falha ao subir para R2' });
+    if (!url) return res.status(500).json({ error: 'Falha ao subir para R2 (ver logs do servidor)' });
+    console.log(`[Upload] OK: ${url}`);
     res.json({ url, storage: 'r2' });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    console.error('[Upload] erro:', e?.message || e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Diagnostico rapido — admin only
+app.get('/api/upload/status', requireAdmin, (req, res) => {
+  res.json({
+    r2Configured,
+    R2_ACCOUNT_ID: R2_ACCOUNT_ID ? `${R2_ACCOUNT_ID.slice(0, 8)}...` : null,
+    R2_BUCKET: R2_BUCKET || null,
+    R2_PUBLIC_BASE: R2_PUBLIC_BASE || null,
+    R2_ACCESS_KEY_ID: R2_ACCESS_KEY_ID ? `${R2_ACCESS_KEY_ID.slice(0, 4)}...` : null,
+    R2_SECRET_ACCESS_KEY_present: !!R2_SECRET_ACCESS_KEY,
+  });
 });
 
 // --- PAYMENT RECEIPTS (admin only) ---
