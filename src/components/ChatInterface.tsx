@@ -388,7 +388,12 @@ export default function ChatInterface() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-0.5">
-                  <h4 className="text-xs font-black text-slate-800 truncate uppercase tracking-tight">{contact.name || contact.remote_jid.split('@')[0]}</h4>
+                  <h4 className="text-xs font-black text-slate-800 truncate uppercase tracking-tight">
+                    {contact.remote_jid.startsWith('web:') && (
+                      <span className="inline-block px-1 py-0.5 mr-1 bg-indigo-100 text-indigo-700 rounded text-[7px] tracking-widest">WEB</span>
+                    )}
+                    {contact.name || contact.remote_jid.split('@')[0]}
+                  </h4>
                   <span className="text-[8px] font-bold text-slate-400 whitespace-nowrap">
                     {contact.last_message_time ? format(new Date(contact.last_message_time), 'HH:mm') : ''}
                   </span>
@@ -433,7 +438,9 @@ export default function ChatInterface() {
                   <h1 className="text-xs sm:text-sm font-bold text-white tracking-tight truncate">{selectedContact.name || selectedContact.remote_jid.split('@')[0]}</h1>
                   <p className="text-[9px] sm:text-[10px] text-white/80 flex items-center gap-1">
                     <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-                    WhatsApp ({selectedContact.remote_jid.split('@')[0]})
+                    {selectedContact.remote_jid.startsWith('web:')
+                      ? `Chat web (${selectedContact.remote_jid.replace('web:','').split('@')[0].slice(0,8)}...)`
+                      : `WhatsApp (${selectedContact.remote_jid.split('@')[0]})`}
                   </p>
                 </div>
               </div>

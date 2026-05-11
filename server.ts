@@ -20,10 +20,12 @@ import jwt from 'jsonwebtoken';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Database Connection Logic
-const INTERNAL_DB = 'postgres://postgres:startpainel_db_pass_2024@tqvwnbzn0gdnkkhl211aaal5:5432/postgres';
-const PUBLIC_DB = 'postgres://postgres:startpainel_db_pass_2024@84.247.138.242:5432/postgres';
-const DB_URL = process.env.DATABASE_URL || INTERNAL_DB;
+// Database Connection Logic — DATABASE_URL deve vir das envs (sem fallback hardcoded por seguranca)
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error('FATAL: DATABASE_URL nao configurado nas envs.');
+  process.exit(1);
+}
 
 console.log('PG: Initializing connection pool...');
 const pool = new Pool({
@@ -105,9 +107,10 @@ initDB();
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// Global Logger
+// Global Logger — silencia rotas de polling pra reduzir spam
+const QUIET_PATHS = new Set(['/api/panel/queue', '/api/db-status', '/api/health']);
 app.use((req, res, next) => {
-  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  if (!QUIET_PATHS.has(req.path)) console.log(`[REQUEST] ${req.method} ${req.url}`);
   next();
 });
 
@@ -150,7 +153,9 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
   next();
 }
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login',
+  rateLimit({ windowMs: 60_000, max: 8, key: clientIp, message: 'Muitas tentativas de login. Aguarde 1 minuto.' }),
+  (req, res) => {
   const { password } = req.body || {};
   if (!ADMIN_PASSWORD) {
     return res.status(503).json({ error: 'Login admin não configurado no servidor' });
@@ -171,6 +176,46 @@ app.post('/api/admin/login', (req, res) => {
 app.get('/api/admin/me', (req, res) => {
   res.json({ authenticated: verifyAdminToken(req) });
 });
+
+// --- RATE LIMITING (in-memory, suficiente pra single-instance) ---
+const rateLimitBuckets = new Map<string, number[]>();
+function rateLimit(opts: { windowMs: number; max: number; key: (req: express.Request) => string; message?: string }) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const k = `${req.path}:${opts.key(req)}`;
+    const now = Date.now();
+    const arr = (rateLimitBuckets.get(k) || []).filter(t => now - t < opts.windowMs);
+    if (arr.length >= opts.max) {
+      return res.status(429).json({ error: opts.message || 'Muitas requisicoes. Tente novamente em alguns segundos.' });
+    }
+    arr.push(now);
+    rateLimitBuckets.set(k, arr);
+    next();
+  };
+}
+function clientIp(req: express.Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+}
+// Limpa buckets antigos a cada 10min
+const _rlCleanupTimer: any = setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [k, arr] of rateLimitBuckets) {
+    const fresh = arr.filter(t => t > cutoff);
+    if (fresh.length === 0) rateLimitBuckets.delete(k); else rateLimitBuckets.set(k, fresh);
+  }
+}, 10 * 60 * 1000);
+_rlCleanupTimer?.unref?.();
+
+// --- VALIDACAO DO WEBHOOK (Evolution) ---
+const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
+if (!EVOLUTION_WEBHOOK_SECRET) {
+  console.warn('SECURITY: EVOLUTION_WEBHOOK_SECRET ausente — webhooks /api/webhooks/evolution/* sao publicos.');
+}
+function verifyEvolutionWebhook(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!EVOLUTION_WEBHOOK_SECRET) return next(); // permissivo se nao configurado
+  const provided = (req.headers['apikey'] || req.headers['x-webhook-secret']) as string | undefined;
+  if (provided && provided === EVOLUTION_WEBHOOK_SECRET) return next();
+  return res.status(401).json({ error: 'Webhook nao autorizado' });
+}
 
 // --- R2 STORAGE ---
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
@@ -212,7 +257,13 @@ async function uploadToR2(prefix: string, base64: string, mimeType: string): Pro
     }));
     return `${R2_PUBLIC_BASE}/${key}`;
   } catch (e: any) {
-    console.error('[R2] upload falhou:', e?.message || e);
+    console.error('[R2] upload falhou:', {
+      message: e?.message,
+      name: e?.name,
+      code: e?.Code || e?.code,
+      statusCode: e?.$metadata?.httpStatusCode,
+      requestId: e?.$metadata?.requestId,
+    });
     return null;
   }
 }
@@ -305,7 +356,8 @@ async function generateEdgeTTS(text: string): Promise<{ base64: string; mimeType
   try {
     if (!text?.trim()) return null;
     const tts = new EdgeTTS();
-    const buffer = await tts.tts(text, { voice: 'pt-BR-AntonioNeural' });
+    await tts.synthesize(text, 'pt-BR-AntonioNeural');
+    const buffer = tts.toBuffer();
     return { base64: buffer.toString('base64'), mimeType: 'audio/mp3' };
   } catch (e: any) {
     console.error('[EdgeTTS] erro:', e?.message || e);
@@ -327,7 +379,7 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-    const systemPrompt = `Você é a atendente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps.
+    const DEFAULT_PROMPT = `Você é a atendente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps.
 
 Você é multimodal:
 - ENTENDE: texto, áudio e imagens.
@@ -340,6 +392,13 @@ Regras de resposta:
 - Se a imagem NÃO for comprovante (print de erro, foto do app, etc.), apenas analise normalmente.
 - Se o cliente pedir explicitamente uma resposta em áudio, apenas mantenha a resposta curta (frase única) e ela já virá em áudio.
 - Sempre responda em português, estilo WhatsApp: breve, claro, com emojis quando apropriado.`;
+
+    let systemPrompt = DEFAULT_PROMPT;
+    try {
+      const r = await pool.query("SELECT value FROM settings WHERE key = 'ai_system_prompt'");
+      const dbPrompt = r.rows[0]?.value?.trim();
+      if (dbPrompt) systemPrompt = dbPrompt;
+    } catch (e) { /* silencioso, usa o default */ }
 
     const contents: any[] = [
       { role: 'user', parts: [{ text: systemPrompt }] },
@@ -400,6 +459,12 @@ app.get('/api/db-status', (req, res) => {
 });
 
 // (rota /api/ai-usage definida abaixo — esta duplicata foi removida)
+
+// Queue do painel — placeholder estavel pra evitar 404 spam do AdminPanel.
+// Quando houver fila real de renovacoes, plugar aqui.
+app.get('/api/panel/queue', (req, res) => {
+  res.json({ pending: [], processing: null, isBusy: false });
+});
 
 // --- UPLOAD para R2 (admin only) ---
 app.post('/api/upload', requireAdmin, async (req, res) => {
@@ -489,22 +554,7 @@ app.get('/api/financials', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
-// Auth Login
-app.post('/api/admin/login', (req, res) => {
-  const { password } = req.body;
-  const adminPass = process.env.ADMIN_PASSWORD || 'admin2026';
-  
-  console.log(`[Auth] Tentativa de login recebida. Senha enviada: ${password ? '***' : 'vazia'}`);
-
-  if (password === adminPass) {
-    console.log('[Auth] Login bem-sucedido!');
-    const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET || 'secret_key', { expiresIn: '24h' });
-    return res.json({ success: true, token });
-  }
-  
-  console.log('[Auth] Senha incorreta ou admin não configurado.');
-  res.status(401).json({ error: 'Senha incorreta' });
-});
+// (rota duplicada e insegura removida — usar a definida no topo com timingSafeEqual e ADMIN_JWT_SECRET)
 
 // Customers
 app.get('/api/customers', async (req, res) => {
@@ -707,7 +757,9 @@ app.get('/api/ai-usage', async (req, res) => {
 // Sessions are identified by a client-generated UUID stored in localStorage.
 // All messages are persisted with remote_jid = `web:${sessionId}@public` so
 // the admin Multi-Chat can also see/answer them.
-app.post('/api/public-chat', async (req, res) => {
+app.post('/api/public-chat',
+  rateLimit({ windowMs: 60_000, max: 12, key: req => (req.body?.sessionId || clientIp(req)) as string, message: 'Aguarde alguns segundos antes de mandar outra mensagem.' }),
+  async (req, res) => {
   try {
     const { sessionId, name, message } = req.body || {};
     if (!sessionId || typeof sessionId !== 'string' || !message || typeof message !== 'string') {
@@ -759,7 +811,7 @@ app.post('/api/public-chat', async (req, res) => {
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
-app.post('/api/webhooks/evolution/:event?', async (req, res) => {
+app.post('/api/webhooks/evolution/:event?', verifyEvolutionWebhook, async (req, res) => {
   let remoteJid = '';
   let pushName = 'Cliente';
   try {
@@ -925,6 +977,6 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`));
+  app.listen(Number(PORT), '0.0.0.0', () => console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`));
 }
 startServer();

@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Customer } from '../types';
+import { Customer, CustomerApp } from '../types';
 import { authFetch } from '../lib/auth';
-import { 
-  Users, Search, Phone, Calendar, 
+import {
+  Users, Search, Phone, Calendar,
   ChevronRight, Tv, RefreshCw, Smartphone,
   Plus, MessageSquare, ExternalLink, XCircle,
-  Save, Trash2, AlertCircle, Loader2, Edit3, Check
+  Save, Trash2, AlertCircle, Loader2, Edit3, Check, X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isAfter, parseISO, addMonths } from 'date-fns';
@@ -209,7 +209,8 @@ export default function CustomerMenu() {
           whatsapp: '',
           renewal_price: '30.00',
           expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
-          lines_count: 1
+          lines_count: 1,
+          playlist_url: ''
         });
       } else {
         const err = await response.json();

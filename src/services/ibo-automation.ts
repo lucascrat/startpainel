@@ -32,6 +32,7 @@ async function launchBrowser(headless = false): Promise<Browser> {
 
 export async function runIboPlayerAutomation(mac: string, key: string, playlistUrl: string, geminiKey?: string, targetUrl?: string) {
   let browser: Browser | null = null;
+  let aiUsage: any = null;
   try {
     browser = await launchBrowser(false); // Visible for monitoring
     const page = await browser.newPage();
@@ -66,7 +67,6 @@ export async function runIboPlayerAutomation(mac: string, key: string, playlistU
     await page.type('input[name="device_key"], #device_key', key, { delay: 100 });
 
     // Solve Captcha with Gemini if Key is available
-    let aiUsage = null;
     if (geminiKey) {
       console.log('[Automation] Tentando resolver Captcha com IA...');
       try {
@@ -169,6 +169,6 @@ export async function runIboPlayerAutomation(mac: string, key: string, playlistU
 
   } catch (error: any) {
     console.error('[Automation] Erro:', error.message);
-    return { success: false, message: error.message, aiUsage: (typeof aiUsage !== 'undefined' ? aiUsage : null) };
+    return { success: false, message: error.message, aiUsage };
   }
 }

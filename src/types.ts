@@ -29,19 +29,20 @@ export interface Customer {
   status: 'active' | 'expired';
   expiration_date?: string;
   last_renewal?: string;
+  playlist_url?: string;
   created_at?: any; // For Postgres compat
-  createdAt: any;
+  createdAt?: any;
   apps?: CustomerApp[];
 }
 
 export interface ChatMessage {
   id?: string;
   text: string;
-  sender: 'user' | 'ai' | 'admin';
-  type: 'text' | 'pix_qr' | 'pix_copy_paste' | 'image';
+  sender: 'user' | 'ai' | 'admin' | 'attendant' | 'customer';
+  type: 'text' | 'pix_qr' | 'pix_copy_paste' | 'image' | 'audio';
   metadata?: any;
   imageData?: string; // Base64 image data
-  createdAt: any;
+  createdAt?: any;
 }
 
 export interface PixData {
