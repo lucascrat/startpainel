@@ -75,26 +75,30 @@ export default function CustomerMenu() {
   };
 
   const handleUploadIcon = async (file: File, isEditing = false) => {
-    const formData = new FormData();
-    formData.append('image', file);
+    if (!file.type.startsWith('image/')) {
+      alert('Selecione um arquivo de imagem.');
+      return;
+    }
+    const MAX_BYTES = 1024 * 1024; // 1MB — icones nao precisam ser maiores
+    if (file.size > MAX_BYTES) {
+      alert(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 1MB.`);
+      return;
+    }
     setIsLoading(true);
     try {
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
       });
-      const data = await response.json();
-      if (data.url) {
-        if (isEditing && viewingApp) {
-          setViewingApp({ ...viewingApp, icon_url: data.url });
-        } else {
-          setAppForm(prev => ({ ...prev, iconUrl: data.url }));
-        }
+      if (isEditing && viewingApp) {
+        setViewingApp({ ...viewingApp, icon_url: dataUrl });
       } else {
-        alert('Erro ao subir imagem');
+        setAppForm(prev => ({ ...prev, iconUrl: dataUrl }));
       }
-    } catch (err) {
-      alert('Erro de conexão ao subir imagem');
+    } catch (err: any) {
+      alert(`Erro ao ler imagem: ${err?.message || err}`);
     } finally {
       setIsLoading(false);
     }
