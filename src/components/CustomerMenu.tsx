@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Customer } from '../types';
+import { authFetch } from '../lib/auth';
 import { 
   Users, Search, Phone, Calendar, 
   ChevronRight, Tv, RefreshCw, Smartphone,
@@ -79,9 +80,9 @@ export default function CustomerMenu() {
       alert('Selecione um arquivo de imagem.');
       return;
     }
-    const MAX_BYTES = 1024 * 1024; // 1MB — icones nao precisam ser maiores
+    const MAX_BYTES = 5 * 1024 * 1024; // 5MB
     if (file.size > MAX_BYTES) {
-      alert(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 1MB.`);
+      alert(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 5MB.`);
       return;
     }
     setIsLoading(true);
@@ -92,13 +93,22 @@ export default function CustomerMenu() {
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(file);
       });
+      const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+      const res = await authFetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64, mimeType: file.type, prefix: 'icons' }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json.error || 'Falha no upload');
+      const url = json.url as string;
       if (isEditing && viewingApp) {
-        setViewingApp({ ...viewingApp, icon_url: dataUrl });
+        setViewingApp({ ...viewingApp, icon_url: url });
       } else {
-        setAppForm(prev => ({ ...prev, iconUrl: dataUrl }));
+        setAppForm(prev => ({ ...prev, iconUrl: url }));
       }
     } catch (err: any) {
-      alert(`Erro ao ler imagem: ${err?.message || err}`);
+      alert(`Erro ao subir imagem: ${err?.message || err}`);
     } finally {
       setIsLoading(false);
     }

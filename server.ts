@@ -10,6 +10,7 @@ import Gerencianet from 'gn-api-sdk-node';
 import pkg from 'pg';
 const { Pool } = pkg;
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer } from './src/services/startpainel-puppeteer.js';
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 import { EvolutionService } from './src/services/evolution-api.js';
@@ -170,6 +171,51 @@ app.post('/api/admin/login', (req, res) => {
 app.get('/api/admin/me', (req, res) => {
   res.json({ authenticated: verifyAdminToken(req) });
 });
+
+// --- R2 STORAGE ---
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
+const R2_BUCKET = process.env.R2_BUCKET;
+const R2_PUBLIC_BASE = (process.env.R2_PUBLIC_BASE || '').replace(/\/$/, '');
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+
+const r2Configured = !!(R2_ACCOUNT_ID && R2_BUCKET && R2_PUBLIC_BASE && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY);
+if (!r2Configured) {
+  console.warn('R2: variaveis ausentes (R2_ACCOUNT_ID/R2_BUCKET/R2_PUBLIC_BASE/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY) — uploads cairao no fallback base64.');
+}
+
+const r2Client = r2Configured ? new S3Client({
+  region: 'auto',
+  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: { accessKeyId: R2_ACCESS_KEY_ID!, secretAccessKey: R2_SECRET_ACCESS_KEY! },
+}) : null;
+
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+  'image/webp': 'webp', 'image/svg+xml': 'svg', 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
+  'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/webm': 'weba',
+};
+
+async function uploadToR2(prefix: string, base64: string, mimeType: string): Promise<string | null> {
+  if (!r2Client) return null;
+  try {
+    const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    const ext = MIME_TO_EXT[mimeType.toLowerCase()] || 'bin';
+    const key = `${prefix.replace(/\/$/, '')}/${crypto.randomUUID()}.${ext}`;
+    await r2Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: buffer,
+      ContentType: mimeType,
+      CacheControl: 'public, max-age=31536000, immutable',
+    }));
+    return `${R2_PUBLIC_BASE}/${key}`;
+  } catch (e: any) {
+    console.error('[R2] upload falhou:', e?.message || e);
+    return null;
+  }
+}
 
 // --- AI USAGE LOGGING ---
 // Preços por 1M tokens (USD). Atualizar conforme tabela oficial do Gemini.
@@ -354,6 +400,24 @@ app.get('/api/db-status', (req, res) => {
 });
 
 // (rota /api/ai-usage definida abaixo — esta duplicata foi removida)
+
+// --- UPLOAD para R2 (admin only) ---
+app.post('/api/upload', requireAdmin, async (req, res) => {
+  try {
+    const { data, mimeType, prefix } = req.body || {};
+    if (!data || !mimeType) {
+      return res.status(400).json({ error: 'data (base64) e mimeType são obrigatórios' });
+    }
+    if (!r2Configured) {
+      // Fallback: devolve data URI direto (mesmo comportamento de antes do R2)
+      const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
+      return res.json({ url: `data:${mimeType};base64,${cleanBase64}`, storage: 'inline' });
+    }
+    const url = await uploadToR2(prefix || 'misc', data, mimeType);
+    if (!url) return res.status(500).json({ error: 'Falha ao subir para R2' });
+    res.json({ url, storage: 'r2' });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 // --- PAYMENT RECEIPTS (admin only) ---
 app.get('/api/payment-receipts', requireAdmin, async (req, res) => {
@@ -755,13 +819,19 @@ app.post('/api/webhooks/evolution/:event?', async (req, res) => {
       if (call.name === 'generate_pix') {
         await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
       } else if (call.name === 'register_pix_receipt') {
+        // Sobe a imagem do comprovante pro R2 (fallback: data URI inline)
+        let imageStored: string | null = null;
+        if (mediaData?.data) {
+          imageStored = await uploadToR2('receipts', mediaData.data, mediaData.mimeType)
+                     || `data:${mediaData.mimeType};base64,${mediaData.data}`;
+        }
         await handleRegisterPixReceipt(
           remoteJid,
           pushName,
           call.args.payer_name,
           call.args.amount,
           call.args.paid_at,
-          mediaData ? `data:${mediaData.mimeType};base64,${mediaData.data}` : null
+          imageStored
         );
       }
     }
