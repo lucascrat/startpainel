@@ -72,7 +72,18 @@ async function initDB(retries = 5) {
       ];
 
       for (const sql of tables) await client.query(sql);
-      
+
+      // Idempotent column additions (CREATE TABLE IF NOT EXISTS doesn't add new columns to existing tables)
+      const alters = [
+        `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS android_link TEXT`,
+        `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS ios_link TEXT`,
+        `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS icon_url TEXT`,
+        `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
+      ];
+      for (const sql of alters) {
+        try { await client.query(sql); } catch (e: any) { console.warn('PG: alter falhou:', e.message); }
+      }
+
       dbStatus = 'connected';
       return;
     } catch (err: any) {
@@ -437,6 +448,68 @@ app.put('/api/customers/:id', async (req, res) => {
 app.delete('/api/customers/:id', async (req, res) => {
   await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
   res.json({ success: true });
+});
+
+// Single customer com apps embutidos
+app.get('/api/customers/:id', async (req, res) => {
+  try {
+    const cust = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+    if (!cust.rows[0]) return res.status(404).json({ error: 'Cliente nao encontrado' });
+    const apps = await pool.query('SELECT * FROM customer_apps WHERE customer_id = $1 ORDER BY created_at DESC', [req.params.id]);
+    res.json({ ...cust.rows[0], apps: apps.rows });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Apps de cliente: aceita payload tanto em camelCase (form de criacao) quanto snake_case (edicao).
+function normalizeAppPayload(b: any) {
+  return {
+    app_name:     b.app_name     ?? b.appName     ?? null,
+    app_model:    b.app_model    ?? b.appModel    ?? null,
+    access_type:  b.access_type  ?? b.accessType  ?? 'mac_key',
+    mac_address:  b.mac_address  ?? b.macAddress  ?? null,
+    device_key:   b.device_key   ?? b.deviceKey   ?? null,
+    username:     b.username     ?? b.appUsername ?? null,
+    password:     b.password     ?? b.appPassword ?? null,
+    provider_url: b.provider_url ?? b.providerUrl ?? null,
+    android_link: b.android_link ?? b.androidLink ?? null,
+    ios_link:     b.ios_link     ?? b.iosLink     ?? null,
+    icon_url:     b.icon_url     ?? b.iconUrl     ?? null,
+    app_site_url: b.app_site_url ?? b.appSiteUrl  ?? null,
+    is_tv:        b.is_tv        ?? b.isTv        ?? true,
+  };
+}
+
+app.post('/api/customers/:id/apps', async (req, res) => {
+  try {
+    const a = normalizeAppPayload(req.body || {});
+    if (!a.app_name) return res.status(400).json({ error: 'app_name é obrigatório' });
+    const result = await pool.query(
+      `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, device_key, username, password, provider_url, android_link, ios_link, icon_url, app_site_url, is_tv)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
+    );
+    res.json(result.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/apps/:id', async (req, res) => {
+  try {
+    const a = normalizeAppPayload(req.body || {});
+    const result = await pool.query(
+      `UPDATE customer_apps SET app_name=$2, app_model=$3, access_type=$4, mac_address=$5, device_key=$6, username=$7, password=$8, provider_url=$9, android_link=$10, ios_link=$11, icon_url=$12, app_site_url=$13, is_tv=$14
+       WHERE id=$1 RETURNING *`,
+      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
+    res.json(result.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/apps/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM customer_apps WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // Settings
