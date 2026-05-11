@@ -13,6 +13,7 @@ import { ptBR } from 'date-fns/locale';
 export default function CustomerMenu() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'expired'>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
