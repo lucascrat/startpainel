@@ -62,10 +62,12 @@ export class EvolutionService {
     try {
       const jid = number.includes('@') ? number : `${number}@s.whatsapp.net`;
       const url = `${this.config.apiUrl}/message/sendWhatsAppAudio/${this.config.instance}`;
-      
+      // Evolution v2 espera base64 pura, sem prefixo data URI.
+      const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
+
       const response = await axios.post(url, {
         number: jid,
-        audio: base64,
+        audio: cleanBase64,
         delay: 1000
       }, { headers: this.headers });
       return response.data;
