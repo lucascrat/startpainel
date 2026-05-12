@@ -7,7 +7,13 @@ FROM node:20-slim AS deps
 WORKDIR /app
 COPY package*.json ./
 # Instala TODAS as dependencias (dev + prod) — devDeps tem tsx que usamos em runtime.
-RUN npm ci --no-audit --no-fund
+# npm install em vez de npm ci porque o registry as vezes da ECONNRESET no Coolify;
+# install tolera melhor falhas transitorias de rede e tem retry interno.
+# fetch-retries=5 da uma segunda chance se cair no meio.
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    (npm install --no-audit --no-fund || npm install --no-audit --no-fund)
 
 # ===== Build do frontend (vite) =====
 FROM node:20-slim AS builder
