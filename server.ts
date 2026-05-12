@@ -419,23 +419,26 @@ async function getEvolutionTokenCached(): Promise<string | null> {
 
 async function verifyEvolutionWebhook(req: express.Request, res: express.Response, next: express.NextFunction) {
   const provided = (req.headers['apikey'] || req.headers['x-webhook-secret']) as string | undefined;
+  const event = req.params.event || '?';
 
   // Modo 1: secret explicito via env (preferido pra producao com Evolution custom headers)
   if (EVOLUTION_WEBHOOK_SECRET) {
     if (provided && provided === EVOLUTION_WEBHOOK_SECRET) return next();
+    console.warn(`[Webhook Auth] REJEITADO modo=secret event=${event} provided=${provided?.slice(0, 8)}... expected=${EVOLUTION_WEBHOOK_SECRET.slice(0, 8)}...`);
     return res.status(401).json({ error: 'Webhook nao autorizado (secret invalido)' });
   }
 
   // Modo 2: valida usando o proprio token do Evolution (que ele ja envia naturalmente no header apikey)
-  // Vantagem: zero configuracao extra no Evolution. Desvantagem: se o token vazar, atacante consegue
-  // tanto chamar Evolution quanto injetar webhooks.
   const evoToken = await getEvolutionTokenCached();
   if (evoToken && provided && provided === evoToken) return next();
 
   // Modo 3 (fallback permissivo): nem secret nem token configurados — aceita tudo.
-  // So loga warning periodicamente pra nao spammar.
-  if (!evoToken) return next();
+  if (!evoToken) {
+    console.warn(`[Webhook Auth] PERMISSIVO event=${event} (sem evolution_token no banco — qualquer requisicao passa)`);
+    return next();
+  }
 
+  console.warn(`[Webhook Auth] REJEITADO modo=token event=${event} provided=${provided ? provided.slice(0, 8) + '...' : 'MISSING'} expected=${evoToken.slice(0, 8)}...`);
   return res.status(401).json({ error: 'Webhook nao autorizado (apikey nao bate com evolution_token)' });
 }
 
