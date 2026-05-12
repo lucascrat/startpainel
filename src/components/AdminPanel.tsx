@@ -73,7 +73,18 @@ export default function AdminPanel() {
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
   const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[]}>({summary: {}, recent: []});
-  const [queueStatus, setQueueStatus] = useState<{pending: string[], processing: string | null, isBusy: boolean}>({pending: [], processing: null, isBusy: false});
+  // Queue agora vem do backend como objetos completos. workerOnline = PC com 'npm run worker'
+  // mandou heartbeat nos ultimos 30s.
+  type QueueJob = { id: number; type: string; status: string; payload?: any; error?: string };
+  type QueueStatus = {
+    pending: QueueJob[];
+    processing: QueueJob | null;
+    recent?: QueueJob[];
+    isBusy: boolean;
+    workerOnline?: boolean;
+    workers?: any[];
+  };
+  const [queueStatus, setQueueStatus] = useState<QueueStatus>({pending: [], processing: null, isBusy: false, workerOnline: false});
 
   useEffect(() => {
     loadAll();
@@ -510,7 +521,20 @@ export default function AdminPanel() {
                     <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
                       <RefreshCw size={10} className="text-amber-500 animate-spin" />
                       <span className="text-[8px] text-amber-600 font-black uppercase tracking-widest">
-                        Processando: {queueStatus.processing} {queueStatus.pending.length > 0 ? `(+${queueStatus.pending.length})` : ''}
+                        Processando: {queueStatus.processing?.type} {queueStatus.pending.length > 0 ? `(+${queueStatus.pending.length})` : ''}
+                      </span>
+                    </div>
+                  )}
+                  {/* Indicador de worker (PC) online/offline — so mostra quando ha jobs OU PC offline. */}
+                  {(queueStatus.pending.length > 0 || queueStatus.isBusy || queueStatus.workerOnline === false) && (
+                    <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${
+                      queueStatus.workerOnline
+                        ? 'bg-emerald-50 border-emerald-100'
+                        : 'bg-rose-50 border-rose-100'
+                    }`} title={queueStatus.workerOnline ? 'PC com worker online' : 'PC offline — automacoes nao vao executar ate o worker voltar'}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${queueStatus.workerOnline ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`} />
+                      <span className={`text-[8px] font-black uppercase tracking-widest ${queueStatus.workerOnline ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        PC {queueStatus.workerOnline ? 'online' : 'offline'}
                       </span>
                     </div>
                   )}
