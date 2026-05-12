@@ -1203,10 +1203,9 @@ app.post('/api/automations/ibo/run', async (req, res) => {
   try {
     const { mac, key, playlistUrl, targetUrl } = req.body;
     if (!mac || !key || !playlistUrl) return res.status(400).json({ error: 'mac, key e playlistUrl obrigatorios' });
-    // Busca geminiKey aqui pra nao precisar dar permissao ao worker.
-    const geminiKeyRes = await pool.query('SELECT value FROM settings WHERE key = $1', ['gemini_api_key']);
-    const geminiKey = geminiKeyRes.rows[0]?.value;
-    const jobId = await enqueueJob('ibo_setup', { mac, key, playlistUrl, targetUrl, geminiKey });
+    // NOTA: geminiKey nao vai mais no payload — o worker tem GEMINI_API_KEY no .env local
+    // (evita expor a key em automation_jobs.payload, que e visivel no banco).
+    const jobId = await enqueueJob('ibo_setup', { mac, key, playlistUrl, targetUrl });
     const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

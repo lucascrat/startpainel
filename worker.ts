@@ -51,8 +51,9 @@ const handlers: Record<string, JobHandler> = {
   renew_client: ({ username }) => renewClientPuppeteer(username),
   create_client: ({ username }) => createClientAndGetPlaylist(username),
   activate_ultra: ({ username, mac }) => activateUltraPlayer(username, mac),
-  ibo_setup: ({ mac, key, playlistUrl, targetUrl, geminiKey }) =>
-    runIboPlayerAutomation(mac, key, playlistUrl, geminiKey, targetUrl),
+  ibo_setup: ({ mac, key, playlistUrl, targetUrl }) =>
+    // GEMINI_API_KEY do worker.env — nao recebe via payload pra nao expor no banco.
+    runIboPlayerAutomation(mac, key, playlistUrl, process.env.GEMINI_API_KEY, targetUrl),
 };
 
 async function api(path: string, body: any): Promise<Response> {
