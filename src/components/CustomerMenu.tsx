@@ -99,15 +99,27 @@ export default function CustomerMenu() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: base64, mimeType: file.type, prefix: 'icons' }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.url) throw new Error(json.error || 'Falha no upload');
+      const json = await res.json().catch(() => ({}));
+      console.log('[Upload] status=', res.status, 'response=', json);
+      if (!res.ok || !json.url) {
+        const serverMsg = json.error || json.message || `HTTP ${res.status}`;
+        throw new Error(serverMsg);
+      }
       const url = json.url as string;
+      // Avisa quando R2 falhou e caiu no fallback inline (imagem salva no banco).
+      if (json.storage === 'inline-fallback' && json.r2Error) {
+        console.warn('[Upload] R2 falhou, usando fallback inline. Detalhes:', json.r2Error);
+        const code = json.r2Error?.code || json.r2Error?.name || 'Erro';
+        const msg = json.r2Error?.message || 'sem detalhes';
+        alert(`⚠️ R2 falhou (${code}): ${msg}\n\nImagem salva localmente (data URL) por enquanto. Verifique as credenciais R2 no servidor.`);
+      }
       if (isEditing && viewingApp) {
         setViewingApp({ ...viewingApp, icon_url: url });
       } else {
         setAppForm(prev => ({ ...prev, iconUrl: url }));
       }
     } catch (err: any) {
+      console.error('[Upload] erro:', err);
       alert(`Erro ao subir imagem: ${err?.message || err}`);
     } finally {
       setIsLoading(false);

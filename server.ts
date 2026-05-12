@@ -241,8 +241,10 @@ const MIME_TO_EXT: Record<string, string> = {
   'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/webm': 'weba',
 };
 
-async function uploadToR2(prefix: string, base64: string, mimeType: string): Promise<string | null> {
-  if (!r2Client) return null;
+type R2UploadResult = { ok: true; url: string } | { ok: false; error: any };
+
+async function uploadToR2(prefix: string, base64: string, mimeType: string): Promise<R2UploadResult> {
+  if (!r2Client) return { ok: false, error: { message: 'R2 nao configurado (variaveis ausentes)' } };
   try {
     const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(cleanBase64, 'base64');
@@ -255,16 +257,17 @@ async function uploadToR2(prefix: string, base64: string, mimeType: string): Pro
       ContentType: mimeType,
       CacheControl: 'public, max-age=31536000, immutable',
     }));
-    return `${R2_PUBLIC_BASE}/${key}`;
+    return { ok: true, url: `${R2_PUBLIC_BASE}/${key}` };
   } catch (e: any) {
-    console.error('[R2] upload falhou:', {
+    const detail = {
       message: e?.message,
       name: e?.name,
       code: e?.Code || e?.code,
       statusCode: e?.$metadata?.httpStatusCode,
       requestId: e?.$metadata?.requestId,
-    });
-    return null;
+    };
+    console.error('[R2] upload falhou:', detail);
+    return { ok: false, error: detail };
   }
 }
 
@@ -467,24 +470,44 @@ app.get('/api/panel/queue', (req, res) => {
 });
 
 // --- UPLOAD para R2 (admin only) ---
+// Comportamento: tenta R2 primeiro; se falhar, faz fallback pra base64 inline pra nao bloquear o usuario.
+// Retorna detalhes do erro R2 no header pra debug, mas nao quebra o fluxo.
 app.post('/api/upload', requireAdmin, async (req, res) => {
   try {
     const { data, mimeType, prefix } = req.body || {};
     if (!data || !mimeType) {
-      return res.status(400).json({ error: 'data (base64) e mimeType são obrigatórios' });
+      return res.status(400).json({ error: 'data (base64) e mimeType sao obrigatorios' });
     }
-    console.log(`[Upload] prefix=${prefix} mime=${mimeType} bytes=${Math.round(String(data).length * 3 / 4 / 1024)}KB r2=${r2Configured}`);
+    const sizeKb = Math.round(String(data).length * 3 / 4 / 1024);
+    console.log(`[Upload] prefix=${prefix} mime=${mimeType} size=${sizeKb}KB r2=${r2Configured}`);
+
     if (!r2Configured) {
       const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
-      return res.json({ url: `data:${mimeType};base64,${cleanBase64}`, storage: 'inline' });
+      return res.json({
+        url: `data:${mimeType};base64,${cleanBase64}`,
+        storage: 'inline',
+        note: 'R2 nao configurado — usando base64 inline (lento e ocupa banco).'
+      });
     }
-    const url = await uploadToR2(prefix || 'misc', data, mimeType);
-    if (!url) return res.status(500).json({ error: 'Falha ao subir para R2 (ver logs do servidor)' });
-    console.log(`[Upload] OK: ${url}`);
-    res.json({ url, storage: 'r2' });
+
+    const result = await uploadToR2(prefix || 'misc', data, mimeType);
+    if (result.ok) {
+      console.log(`[Upload] OK R2: ${result.url}`);
+      return res.json({ url: result.url, storage: 'r2' });
+    }
+
+    // R2 falhou — fallback inline pra nao bloquear o usuario, mas avisa.
+    console.warn('[Upload] R2 falhou, caindo no fallback inline. Erro:', result.error);
+    const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
+    return res.json({
+      url: `data:${mimeType};base64,${cleanBase64}`,
+      storage: 'inline-fallback',
+      r2Error: result.error,
+      note: 'R2 falhou — imagem salva como base64 no banco. Veja r2Error pra detalhes.'
+    });
   } catch (e: any) {
-    console.error('[Upload] erro:', e?.message || e);
-    res.status(500).json({ error: e.message });
+    console.error('[Upload] erro fatal:', e?.message || e, e?.stack);
+    res.status(500).json({ error: e?.message || 'Erro interno no upload' });
   }
 });
 
@@ -916,11 +939,11 @@ app.post('/api/webhooks/evolution/:event?', verifyEvolutionWebhook, async (req, 
       if (call.name === 'generate_pix') {
         await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
       } else if (call.name === 'register_pix_receipt') {
-        // Sobe a imagem do comprovante pro R2 (fallback: data URI inline)
+        // Sobe a imagem do comprovante pro R2 (fallback: data URI inline se R2 falhar)
         let imageStored: string | null = null;
         if (mediaData?.data) {
-          imageStored = await uploadToR2('receipts', mediaData.data, mediaData.mimeType)
-                     || `data:${mediaData.mimeType};base64,${mediaData.data}`;
+          const r = await uploadToR2('receipts', mediaData.data, mediaData.mimeType);
+          imageStored = r.ok ? r.url : `data:${mediaData.mimeType};base64,${mediaData.data}`;
         }
         await handleRegisterPixReceipt(
           remoteJid,
