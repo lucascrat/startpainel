@@ -492,12 +492,41 @@ app.post('/api/upload', requireAdmin, async (req, res) => {
 app.get('/api/upload/status', requireAdmin, (req, res) => {
   res.json({
     r2Configured,
-    R2_ACCOUNT_ID: R2_ACCOUNT_ID ? `${R2_ACCOUNT_ID.slice(0, 8)}...` : null,
+    R2_ACCOUNT_ID: R2_ACCOUNT_ID ? `${R2_ACCOUNT_ID.slice(0, 8)}... (${R2_ACCOUNT_ID.length} chars)` : null,
     R2_BUCKET: R2_BUCKET || null,
     R2_PUBLIC_BASE: R2_PUBLIC_BASE || null,
-    R2_ACCESS_KEY_ID: R2_ACCESS_KEY_ID ? `${R2_ACCESS_KEY_ID.slice(0, 4)}...` : null,
-    R2_SECRET_ACCESS_KEY_present: !!R2_SECRET_ACCESS_KEY,
+    R2_ACCESS_KEY_ID: R2_ACCESS_KEY_ID ? `${R2_ACCESS_KEY_ID.slice(0, 4)}... (${R2_ACCESS_KEY_ID.length} chars)` : null,
+    R2_SECRET_ACCESS_KEY: R2_SECRET_ACCESS_KEY ? `${R2_SECRET_ACCESS_KEY.slice(0, 4)}... (${R2_SECRET_ACCESS_KEY.length} chars)` : null,
   });
+});
+
+// Teste real de conexao R2 — admin only. Sobe um arquivo minimo e retorna o resultado.
+app.post('/api/r2/test', requireAdmin, async (req, res) => {
+  if (!r2Client) {
+    return res.status(400).json({ ok: false, error: 'R2 nao configurado — verifique as 5 variaveis R2_* no Coolify.' });
+  }
+  const testKey = `_diag/test-${Date.now()}.txt`;
+  try {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: testKey,
+      Body: Buffer.from('startpainel-r2-test'),
+      ContentType: 'text/plain',
+    }));
+    const publicUrl = `${R2_PUBLIC_BASE}/${testKey}`;
+    console.log(`[R2 Test] OK — ${publicUrl}`);
+    res.json({ ok: true, publicUrl, bucket: R2_BUCKET, accountId: R2_ACCOUNT_ID?.slice(0, 8) });
+  } catch (e: any) {
+    const detail = {
+      message: e?.message,
+      name: e?.name,
+      code: e?.Code || e?.code,
+      statusCode: e?.$metadata?.httpStatusCode,
+      requestId: e?.$metadata?.requestId,
+    };
+    console.error('[R2 Test] falhou:', detail);
+    res.status(500).json({ ok: false, error: detail });
+  }
 });
 
 // --- PAYMENT RECEIPTS (admin only) ---
