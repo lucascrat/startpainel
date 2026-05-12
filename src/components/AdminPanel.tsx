@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Customer, CustomerApp } from '../types';
 import { authFetch } from '../lib/auth';
+import { toast } from 'sonner';
 import { 
   Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle, 
   Brain, Save, Key, QrCode, DollarSign, TrendingUp, 
@@ -72,7 +73,7 @@ export default function AdminPanel() {
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [dbStatus, setDbStatus] = useState<{status: string, error?: string}>({status: 'checking'});
-  const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[]}>({summary: {}, recent: []});
+  const [aiUsageData, setAiUsageData] = useState<{summary: any, recent: any[], daily?: any[], byModel?: any[]}>({summary: {}, recent: []});
   // Queue agora vem do backend como objetos completos. workerOnline = PC com 'npm run worker'
   // mandou heartbeat nos ultimos 30s.
   type QueueJob = { id: number; type: string; status: string; payload?: any; error?: string };
@@ -232,7 +233,7 @@ export default function AdminPanel() {
       loadCustomers();
 
       if (autoCreateCms) {
-        alert('Cliente local cadastrado! Iniciando automação no StartPainel para buscar a M3U...');
+        toast.success('Cliente local cadastrado! Iniciando automação no StartPainel para buscar a M3U...');
         try {
           const cmsResponse = await fetch('/api/automations/startpainel/create-client', {
             method: 'POST',
@@ -241,27 +242,27 @@ export default function AdminPanel() {
           });
           const cmsData = await cmsResponse.json();
           if (cmsData.success) {
-            alert(`Sucesso no StartPainel!\nURL M3U copiada para a área de transferência:\n${cmsData.playlistUrl}`);
+            toast.success(`Sucesso no StartPainel!\nURL M3U copiada para a área de transferência:\n${cmsData.playlistUrl}`);
             navigator.clipboard.writeText(cmsData.playlistUrl);
           } else {
-            alert(`Erro na automação do StartPainel: ${cmsData.message}`);
+            toast.error(`Erro na automação do StartPainel: ${cmsData.message}`);
           }
         } catch (err: any) {
-          alert(`Erro na comunicação com o robô: ${err.message}`);
+          toast.error(`Erro na comunicação com o robô: ${err.message}`);
         }
       } else {
-        alert('Cliente cadastrado com sucesso!');
+        toast.success('Cliente cadastrado com sucesso!');
       }
 
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
   const handleAddApp = async () => {
     if (!selectedCustomerId) return;
     if (!appName.trim()) {
-      alert('Por favor, preencha o campo Identificação (ex: TV Sala)');
+      toast.error('Por favor, preencha o campo Identificação (ex: TV Sala)');
       return;
     }
     setIsLoading(true);
@@ -287,13 +288,13 @@ export default function AdminPanel() {
         setIconUrl('');
         setAppSiteUrl('');
         loadCustomers();
-        alert('App cadastrado com sucesso!');
+        toast.success('App cadastrado com sucesso!');
       } else {
         const errData = await response.json();
-        alert(`Erro ao cadastrar app: ${errData.details || errData.error}`);
+        toast.error(`Erro ao cadastrar app: ${errData.details || errData.error}`);
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -314,10 +315,10 @@ export default function AdminPanel() {
           setIconUrl(data.url);
         }
       } else {
-        alert('Erro ao subir imagem');
+        toast.error('Erro ao subir imagem');
       }
     } catch (err) {
-      alert('Erro de conexão ao subir imagem');
+      toast.error('Erro de conexão ao subir imagem');
     } finally {
       setIsLoading(false);
     }
@@ -344,13 +345,13 @@ export default function AdminPanel() {
       if (response.ok) {
         setIsEditingApp(false);
         loadCustomers();
-        alert('App atualizado com sucesso!');
+        toast.success('App atualizado com sucesso!');
       } else {
         const errData = await response.json();
-        alert(`Erro ao atualizar app: ${errData.details || errData.error}`);
+        toast.error(`Erro ao atualizar app: ${errData.details || errData.error}`);
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -392,7 +393,7 @@ export default function AdminPanel() {
       await saveSetting('attendant_name', attendantName);
       await saveSetting('attendant_image', attendantImage);
       await saveSetting('ai_system_prompt', aiSystemPrompt);
-      alert('Configurações salvas!');
+      toast.success('Configurações salvas!');
       loadSettings();
     } catch (error) {} finally { setIsSavingKey(false); }
   };
@@ -409,11 +410,11 @@ export default function AdminPanel() {
         body: JSON.stringify({ message: broadcastMessage })
       });
       if (response.ok) {
-        alert('Disparo iniciado em segundo plano! As mensagens chegarão aos poucos para evitar bloqueios.');
+        toast.success('Disparo iniciado em segundo plano! As mensagens chegarão aos poucos para evitar bloqueios.');
         setBroadcastMessage('');
       }
     } catch (error) {
-      alert('Erro ao iniciar disparo.');
+      toast.error('Erro ao iniciar disparo.');
     } finally { setIsBroadcasting(false); }
   };
 
@@ -441,7 +442,7 @@ export default function AdminPanel() {
 
   const handleRunUltraPlayer = async (username: string, mac: string) => {
     if (!mac) {
-      alert('Este aplicativo precisa de MAC Address para ativação.');
+      toast.error('Este aplicativo precisa de MAC Address para ativação.');
       return;
     }
     
@@ -454,18 +455,18 @@ export default function AdminPanel() {
       });
       const data = await response.json();
       if (data.success) {
-        alert('Ultra Player ativado com sucesso no CMS!');
+        toast.success('Ultra Player ativado com sucesso no CMS!');
       } else {
-        alert(`Erro na automação: ${data.message}`);
+        toast.error(`Erro na automação: ${data.message}`);
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
   const handleRunAutomation = async (auto: any, mac: string, key: string, playlistUrl: string, targetUrl?: string) => {
     if (!mac || !key) {
-      alert('Este aplicativo precisa de MAC e Device Key para esta automação.');
+      toast.error('Este aplicativo precisa de MAC e Device Key para esta automação.');
       return;
     }
     
@@ -478,12 +479,12 @@ export default function AdminPanel() {
       });
       const data = await response.json();
       if (data.success) {
-        alert('Automação iniciada! Verifique o navegador aberto no seu computador.');
+        toast.success('Automação iniciada! Verifique o navegador aberto no seu computador.');
       } else {
-        alert(`Erro na automação: ${data.message}`);
+        toast.error(`Erro na automação: ${data.message}`);
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -493,9 +494,9 @@ export default function AdminPanel() {
     try {
       const response = await fetch(`/api/panel/renew/${username}`, { method: 'POST' });
       const data = await response.json();
-      alert(data.message || data.error);
+      toast.error(data.message || data.error);
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -1039,6 +1040,39 @@ export default function AdminPanel() {
                       <DollarSign className="absolute top-4 right-4 opacity-10" size={48} />
                     </div>
                   </div>
+
+                  {/* Grafico de custo diario (ultimos 30d) */}
+                  {aiUsageData.daily && aiUsageData.daily.length > 0 && (
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <DollarSign size={14} className="text-emerald-500" /> Custo Diário (últimos 30 dias)
+                      </h4>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={aiUsageData.daily}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                          <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d: string) => d?.slice(5)} />
+                          <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v.toFixed(3)}`} />
+                          <Tooltip
+                            contentStyle={{ fontSize: 11, borderRadius: 8 }}
+                            formatter={(v: any) => `$${Number(v).toFixed(5)}`}
+                            labelStyle={{ fontWeight: 'bold' }}
+                          />
+                          <Bar dataKey="cost" fill="#10b981" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                      {aiUsageData.byModel && aiUsageData.byModel.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {aiUsageData.byModel.map((m: any) => (
+                            <div key={m.model} className="bg-slate-50 rounded-xl p-3">
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest truncate" title={m.model}>{m.model}</p>
+                              <p className="text-sm font-black text-slate-800 mt-1">${Number(m.cost || 0).toFixed(4)}</p>
+                              <p className="text-[10px] font-bold text-slate-500">{m.requests} req</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Recent AI Logs */}
                   <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">

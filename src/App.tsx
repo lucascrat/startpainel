@@ -7,6 +7,7 @@ import PublicChat from './components/PublicChat';
 import PaymentReceipts from './components/PaymentReceipts';
 import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users, X, Receipt } from 'lucide-react';
 import { login, getToken, logout } from './lib/auth';
+import { Toaster } from 'sonner';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts'>('chat');
@@ -91,6 +92,7 @@ export default function App() {
           <PublicChat onAdminClick={() => setShowLogin(true)} />
         </main>
         {loginModal}
+        <Toaster position="top-right" richColors />
       </div>
     );
   }
@@ -205,6 +207,7 @@ export default function App() {
           </a>
         </div>
       </footer>
+      <Toaster position="top-right" richColors />
     </div>
   );
 }

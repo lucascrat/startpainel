@@ -50,6 +50,7 @@
     "react-native": "^0.85.3",
     "react-native-web": "^0.21.2",
     "recharts": "^3.8.1",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tough-cookie": "^6.0.1",
     "vite": "^6.2.0"

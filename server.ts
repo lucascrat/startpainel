@@ -105,6 +105,11 @@ async function initDB(retries = 5) {
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS ios_link TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS icon_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
+        // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2) DEFAULT 0`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_renewal TIMESTAMP`,
       ];
       for (const sql of alters) {
         try { await client.query(sql); } catch (e: any) { console.warn('PG: alter falhou:', e.message); }
@@ -1013,15 +1018,35 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', async (req, res) => {
-  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url } = req.body;
-  const result = await pool.query('INSERT INTO customers (username, name, whatsapp, renewal_price, expiration_date, playlist_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [username, name, whatsapp, renewal_price || 49.90, expiration_date, playlist_url]);
+  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
+  const result = await pool.query(
+    `INSERT INTO customers (username, name, whatsapp, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [username, name, whatsapp, renewal_price || 49.90, expiration_date, playlist_url, lines_count || 1, cost_per_credit || 0, amount_paid || 0]
+  );
   res.json(result.rows[0]);
 });
 
 app.put('/api/customers/:id', async (req, res) => {
   const { id } = req.params;
-  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url, status } = req.body;
-  const result = await pool.query('UPDATE customers SET username=$1, name=$2, whatsapp=$3, renewal_price=$4, expiration_date=$5, playlist_url=$6, status=$7, updated_at=NOW() WHERE id=$8 RETURNING *', [username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, id]);
+  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
+  // Faz COALESCE pra preservar campos que o cliente nao enviou (parcial update).
+  const result = await pool.query(
+    `UPDATE customers SET
+       username=COALESCE($1, username),
+       name=COALESCE($2, name),
+       whatsapp=COALESCE($3, whatsapp),
+       renewal_price=COALESCE($4, renewal_price),
+       expiration_date=COALESCE($5, expiration_date),
+       playlist_url=COALESCE($6, playlist_url),
+       status=COALESCE($7, status),
+       lines_count=COALESCE($8, lines_count),
+       cost_per_credit=COALESCE($9, cost_per_credit),
+       amount_paid=COALESCE($10, amount_paid),
+       updated_at=NOW()
+     WHERE id=$11 RETURNING *`,
+    [username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid, id]
+  );
   res.json(result.rows[0]);
 });
 

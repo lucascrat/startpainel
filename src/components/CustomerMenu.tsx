@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Customer, CustomerApp } from '../types';
 import { authFetch } from '../lib/auth';
+import { toast } from 'sonner';
 import {
   Users, Search, Phone, Calendar,
   ChevronRight, Tv, RefreshCw, Smartphone,
@@ -114,12 +115,12 @@ export default function CustomerMenu() {
 
   const handleUploadIcon = async (file: File, isEditing = false) => {
     if (!file.type.startsWith('image/')) {
-      alert('Selecione um arquivo de imagem.');
+      toast.error('Selecione um arquivo de imagem.');
       return;
     }
     const MAX_BYTES = 5 * 1024 * 1024; // 5MB
     if (file.size > MAX_BYTES) {
-      alert(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 5MB.`);
+      toast.error(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 5MB.`);
       return;
     }
     setIsLoading(true);
@@ -148,7 +149,7 @@ export default function CustomerMenu() {
         console.warn('[Upload] R2 falhou, usando fallback inline. Detalhes:', json.r2Error);
         const code = json.r2Error?.code || json.r2Error?.name || 'Erro';
         const msg = json.r2Error?.message || 'sem detalhes';
-        alert(`⚠️ R2 falhou (${code}): ${msg}\n\nImagem salva localmente (data URL) por enquanto. Verifique as credenciais R2 no servidor.`);
+        toast.warning(`R2 falhou (${code}): ${msg}. Imagem salva inline por enquanto.`, { duration: 8000 });
       }
       if (isEditing && viewingApp) {
         setViewingApp({ ...viewingApp, icon_url: url });
@@ -157,7 +158,7 @@ export default function CustomerMenu() {
       }
     } catch (err: any) {
       console.error('[Upload] erro:', err);
-      alert(`Erro ao subir imagem: ${err?.message || err}`);
+      toast.error(`Erro ao subir imagem: ${err?.message || err}`);
     } finally {
       setIsLoading(false);
     }
@@ -166,7 +167,7 @@ export default function CustomerMenu() {
   const handleSaveApp = async () => {
     if (!selectedCustomer) return;
     if (!appForm.appName) {
-      alert('Dê um nome para este acesso (ex: TV Sala)');
+      toast.error('De um nome para este acesso (ex: TV Sala)');
       return;
     }
     setIsLoading(true);
@@ -186,12 +187,12 @@ export default function CustomerMenu() {
         loadCustomers();
         const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
         setSelectedCustomer(updated);
-        alert('App cadastrado com sucesso!');
+        toast.success('App cadastrado com sucesso!');
       } else {
-        alert('Erro ao cadastrar app');
+        toast.error('Erro ao cadastrar app');
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -224,12 +225,12 @@ export default function CustomerMenu() {
           const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
           setSelectedCustomer(updated);
         }
-        alert('App atualizado com sucesso!');
+        toast.success('App atualizado com sucesso!');
       } else {
-        alert('Erro ao atualizar app');
+        toast.error('Erro ao atualizar app');
       }
     } catch (error: any) {
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
 
@@ -290,10 +291,10 @@ export default function CustomerMenu() {
         await loadCustomers();
       } else {
         const err = await response.json();
-        alert(`Erro ao atualizar: ${err.error}`);
+        toast.error(`Erro ao atualizar: ${err.error}`);
       }
     } catch (error) {
-      alert('Erro de conexão com o servidor');
+      toast.error('Erro de conexao com o servidor');
     } finally {
       setSaving(false);
     }
@@ -680,7 +681,7 @@ export default function CustomerMenu() {
                             <button 
                               onClick={() => {
                                 navigator.clipboard.writeText(selectedCustomer.playlist_url!);
-                                alert('Lista copiada!');
+                                toast.success('Lista copiada!');
                               }}
                               className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
                               title="Copiar Lista"
