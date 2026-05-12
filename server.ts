@@ -11,8 +11,7 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { renewClientPuppeteer, createClientAndGetPlaylist, activateUltraPlayer } from './src/services/startpainel-puppeteer.js';
-import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
+// Puppeteer foi movido pro worker.ts (roda no PC local). server.ts so enfileira jobs agora.
 import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
 import jwt from 'jsonwebtoken';
@@ -71,7 +70,31 @@ async function initDB(retries = 5) {
         )`,
         `CREATE TABLE IF NOT EXISTS customer_apps (id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE, app_name TEXT NOT NULL, app_model TEXT, access_type TEXT, mac_address TEXT, device_key TEXT, username TEXT, password TEXT, provider_url TEXT, is_tv BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS pix_charges (txid TEXT PRIMARY KEY, customer_username TEXT, amount DECIMAL(10,2), status TEXT DEFAULT 'ATIVA', processed BOOLEAN DEFAULT false, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
-        `CREATE TABLE IF NOT EXISTS settings (key VARCHAR(255) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+        `CREATE TABLE IF NOT EXISTS settings (key VARCHAR(255) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        // Fila de automacoes — jobs sao executados por um worker externo (PC local) via API.
+        // Producao (Coolify) so enfileira; o worker faz polling, executa Puppeteer com Chrome
+        // visivel e devolve o resultado.
+        `CREATE TABLE IF NOT EXISTS automation_jobs (
+          id SERIAL PRIMARY KEY,
+          type TEXT NOT NULL,
+          payload JSONB DEFAULT '{}'::jsonb,
+          status TEXT DEFAULT 'pending',
+          result JSONB,
+          error TEXT,
+          worker_id TEXT,
+          attempts INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          started_at TIMESTAMP,
+          finished_at TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS automation_jobs_status_idx ON automation_jobs(status, created_at)`,
+        // Worker heartbeats — pra saber se o PC com worker tá online.
+        `CREATE TABLE IF NOT EXISTS worker_heartbeats (
+          worker_id TEXT PRIMARY KEY,
+          last_seen TIMESTAMP DEFAULT NOW(),
+          hostname TEXT,
+          version TEXT
+        )`
       ];
 
       for (const sql of tables) await client.query(sql);
@@ -204,6 +227,119 @@ const _rlCleanupTimer: any = setInterval(() => {
   }
 }, 10 * 60 * 1000);
 _rlCleanupTimer?.unref?.();
+
+// --- AUTOMATION WORKER (PC local executa Puppeteer com Chrome visivel) ---
+// Producao (Coolify) so enfileira jobs; o worker no PC faz polling, executa e devolve resultado.
+const WORKER_TOKEN = process.env.WORKER_TOKEN;
+if (!WORKER_TOKEN) {
+  console.warn('WORKER: WORKER_TOKEN ausente — endpoints /api/worker/* desativados. Configure pra ativar automacoes via PC.');
+}
+function requireWorker(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!WORKER_TOKEN) return res.status(503).json({ error: 'Worker desativado no servidor' });
+  const provided = req.headers['x-worker-token'] as string | undefined;
+  if (provided !== WORKER_TOKEN) return res.status(401).json({ error: 'Worker nao autorizado' });
+  next();
+}
+
+// Enfileira um job e retorna o id. O worker vai pegar via polling.
+async function enqueueJob(type: string, payload: any): Promise<number> {
+  const r = await pool.query(
+    `INSERT INTO automation_jobs (type, payload) VALUES ($1, $2::jsonb) RETURNING id`,
+    [type, JSON.stringify(payload || {})]
+  );
+  return r.rows[0].id;
+}
+
+// Espera o job terminar (ou expira). Retorna o resultado do worker.
+// Se o worker estiver offline, expira em `timeoutMs` e marca o job como failed.
+async function waitForJob(id: number, timeoutMs = 5 * 60 * 1000): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await pool.query('SELECT status, result, error FROM automation_jobs WHERE id = $1', [id]);
+    const job = r.rows[0];
+    if (!job) throw new Error('Job nao encontrado');
+    if (job.status === 'done') {
+      const result = job.result || {};
+      return { success: true, ...result };
+    }
+    if (job.status === 'failed') return { success: false, message: job.error || 'Falhou sem detalhes' };
+    if (job.status === 'cancelled') return { success: false, message: 'Cancelado' };
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  // Timeout — marca como failed pra nao deixar pendente eternamente
+  await pool.query(
+    `UPDATE automation_jobs SET status='failed', error='Timeout — worker offline ou demorou demais', finished_at=NOW() WHERE id=$1 AND status IN ('pending','running')`,
+    [id]
+  );
+  return { success: false, message: 'Worker offline ou demorou demais. Verifique se o PC com worker esta rodando.' };
+}
+
+// Worker: pega proximo job pendente. Atomico via FOR UPDATE SKIP LOCKED.
+app.post('/api/worker/poll', requireWorker, async (req, res) => {
+  try {
+    const { workerId, hostname, version } = req.body || {};
+    if (!workerId) return res.status(400).json({ error: 'workerId obrigatorio' });
+    // Atualiza heartbeat
+    await pool.query(
+      `INSERT INTO worker_heartbeats (worker_id, hostname, version, last_seen)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (worker_id) DO UPDATE SET last_seen = NOW(), hostname = EXCLUDED.hostname, version = EXCLUDED.version`,
+      [workerId, hostname || null, version || null]
+    );
+    // Claim um job pendente
+    const r = await pool.query(`
+      UPDATE automation_jobs
+      SET status='running', started_at=NOW(), worker_id=$1, attempts=attempts+1
+      WHERE id = (
+        SELECT id FROM automation_jobs
+        WHERE status='pending'
+        ORDER BY created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, type, payload, attempts, created_at
+    `, [workerId]);
+    res.json(r.rows[0] || null);
+  } catch (e: any) {
+    console.error('[Worker poll]', e?.message || e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Worker: reporta resultado de um job
+app.post('/api/worker/jobs/:id/complete', requireWorker, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ok, result, error } = req.body || {};
+    const status = ok ? 'done' : 'failed';
+    await pool.query(
+      `UPDATE automation_jobs SET status=$1, result=$2::jsonb, error=$3, finished_at=NOW() WHERE id=$4`,
+      [status, JSON.stringify(result || null), error || null, id]
+    );
+    console.log(`[Worker] Job #${id} ${status}${error ? ': ' + error : ''}`);
+    res.json({ success: true });
+  } catch (e: any) {
+    console.error('[Worker complete]', e?.message || e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Worker: heartbeat avulso (alem do que o poll ja faz). Util pra ping inicial.
+app.post('/api/worker/heartbeat', requireWorker, async (req, res) => {
+  try {
+    const { workerId, hostname, version } = req.body || {};
+    if (!workerId) return res.status(400).json({ error: 'workerId obrigatorio' });
+    await pool.query(
+      `INSERT INTO worker_heartbeats (worker_id, hostname, version, last_seen)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (worker_id) DO UPDATE SET last_seen = NOW(), hostname = EXCLUDED.hostname, version = EXCLUDED.version`,
+      [workerId, hostname || null, version || null]
+    );
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // --- VALIDACAO DO WEBHOOK (Evolution) ---
 const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
@@ -463,10 +599,52 @@ app.get('/api/db-status', (req, res) => {
 
 // (rota /api/ai-usage definida abaixo — esta duplicata foi removida)
 
-// Queue do painel — placeholder estavel pra evitar 404 spam do AdminPanel.
-// Quando houver fila real de renovacoes, plugar aqui.
-app.get('/api/panel/queue', (req, res) => {
-  res.json({ pending: [], processing: null, isBusy: false });
+// Queue do painel — agora retorna a fila real de automacoes + status do worker.
+app.get('/api/panel/queue', async (req, res) => {
+  try {
+    const jobs = await pool.query(
+      `SELECT id, type, status, payload, error, created_at, started_at, finished_at, worker_id
+       FROM automation_jobs
+       WHERE status IN ('pending','running')
+          OR finished_at > NOW() - INTERVAL '1 hour'
+       ORDER BY created_at DESC
+       LIMIT 50`
+    );
+    const workers = await pool.query(
+      `SELECT worker_id, hostname, version, last_seen,
+              EXTRACT(EPOCH FROM (NOW() - last_seen))::int AS seconds_since_last_seen
+       FROM worker_heartbeats
+       ORDER BY last_seen DESC`
+    );
+    const pending = jobs.rows.filter(j => j.status === 'pending');
+    const processing = jobs.rows.find(j => j.status === 'running') || null;
+    const recent = jobs.rows.filter(j => j.status !== 'pending' && j.status !== 'running');
+    // Worker é considerado online se mandou heartbeat nos últimos 30s.
+    const onlineWorkers = workers.rows.filter((w: any) => w.seconds_since_last_seen <= 30);
+    res.json({
+      pending,
+      processing,
+      recent,
+      isBusy: !!processing,
+      workers: workers.rows,
+      workerOnline: onlineWorkers.length > 0,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cancela um job pendente (admin only).
+app.post('/api/panel/queue/:id/cancel', requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `UPDATE automation_jobs SET status='cancelled', error='Cancelado pelo admin', finished_at=NOW()
+       WHERE id=$1 AND status='pending' RETURNING id`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(400).json({ error: 'Job nao esta pendente' });
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // --- UPLOAD para R2 (admin only) ---
@@ -491,20 +669,20 @@ app.post('/api/upload', requireAdmin, async (req, res) => {
     }
 
     const result = await uploadToR2(prefix || 'misc', data, mimeType);
-    if (result.ok) {
+    if (result.ok === true) {
       console.log(`[Upload] OK R2: ${result.url}`);
       return res.json({ url: result.url, storage: 'r2' });
+    } else {
+      // R2 falhou — fallback inline pra nao bloquear o usuario, mas avisa.
+      console.warn('[Upload] R2 falhou, caindo no fallback inline. Erro:', result.error);
+      const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
+      return res.json({
+        url: `data:${mimeType};base64,${cleanBase64}`,
+        storage: 'inline-fallback',
+        r2Error: result.error,
+        note: 'R2 falhou — imagem salva como base64 no banco. Veja r2Error pra detalhes.'
+      });
     }
-
-    // R2 falhou — fallback inline pra nao bloquear o usuario, mas avisa.
-    console.warn('[Upload] R2 falhou, caindo no fallback inline. Erro:', result.error);
-    const cleanBase64 = String(data).replace(/^data:[^;]+;base64,/, '');
-    return res.json({
-      url: `data:${mimeType};base64,${cleanBase64}`,
-      storage: 'inline-fallback',
-      r2Error: result.error,
-      note: 'R2 falhou — imagem salva como base64 no banco. Veja r2Error pra detalhes.'
-    });
   } catch (e: any) {
     console.error('[Upload] erro fatal:', e?.message || e, e?.stack);
     res.status(500).json({ error: e?.message || 'Erro interno no upload' });
@@ -764,11 +942,14 @@ app.post('/api/automations', async (req, res) => {
   res.json(result.rows[0]);
 });
 
-// Manual Run Routes
+// Manual Run Routes — agora enfileiram pro worker (PC local) executar e aguardam o resultado.
+// Se o worker estiver offline, expira em 5min e retorna erro claro pro frontend.
 app.post('/api/panel/extend', async (req, res) => {
   try {
     const { username } = req.body;
-    const result = await renewClientPuppeteer(username);
+    if (!username) return res.status(400).json({ error: 'username obrigatorio' });
+    const jobId = await enqueueJob('renew_client', { username });
+    const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -776,8 +957,12 @@ app.post('/api/panel/extend', async (req, res) => {
 app.post('/api/automations/ibo/run', async (req, res) => {
   try {
     const { mac, key, playlistUrl, targetUrl } = req.body;
+    if (!mac || !key || !playlistUrl) return res.status(400).json({ error: 'mac, key e playlistUrl obrigatorios' });
+    // Busca geminiKey aqui pra nao precisar dar permissao ao worker.
     const geminiKeyRes = await pool.query('SELECT value FROM settings WHERE key = $1', ['gemini_api_key']);
-    const result = await runIboPlayerAutomation(mac, key, playlistUrl, geminiKeyRes.rows[0]?.value, targetUrl);
+    const geminiKey = geminiKeyRes.rows[0]?.value;
+    const jobId = await enqueueJob('ibo_setup', { mac, key, playlistUrl, targetUrl, geminiKey });
+    const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -785,7 +970,9 @@ app.post('/api/automations/ibo/run', async (req, res) => {
 app.post('/api/automations/startpainel/create-client', async (req, res) => {
   try {
     const { username } = req.body;
-    const result = await createClientAndGetPlaylist(username);
+    if (!username) return res.status(400).json({ error: 'username obrigatorio' });
+    const jobId = await enqueueJob('create_client', { username });
+    const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -793,7 +980,9 @@ app.post('/api/automations/startpainel/create-client', async (req, res) => {
 app.post('/api/automations/startpainel/activate-ultra', async (req, res) => {
   try {
     const { username, mac } = req.body;
-    const result = await activateUltraPlayer(username, mac);
+    if (!username || !mac) return res.status(400).json({ error: 'username e mac obrigatorios' });
+    const jobId = await enqueueJob('activate_ultra', { username, mac });
+    const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
