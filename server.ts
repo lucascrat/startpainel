@@ -401,13 +401,42 @@ setTimeout(cleanupOldRecords, 30 * 60 * 1000);
 // --- VALIDACAO DO WEBHOOK (Evolution) ---
 const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
 if (!EVOLUTION_WEBHOOK_SECRET) {
-  console.warn('SECURITY: EVOLUTION_WEBHOOK_SECRET ausente — webhooks /api/webhooks/evolution/* sao publicos.');
+  console.warn('SECURITY: EVOLUTION_WEBHOOK_SECRET ausente — usando evolution_token do DB pra validar webhooks.');
 }
-function verifyEvolutionWebhook(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!EVOLUTION_WEBHOOK_SECRET) return next(); // permissivo se nao configurado
+
+// Cache em memoria do evolution_token (refresh a cada 60s) — usado pra validar webhooks
+// quando EVOLUTION_WEBHOOK_SECRET nao esta setado. Evolution naturalmente envia 'apikey'
+// header com esse valor, entao a gente reaproveita pra autenticacao sem config extra.
+let _evolutionTokenCache: { value: string | null; ts: number } = { value: null, ts: 0 };
+async function getEvolutionTokenCached(): Promise<string | null> {
+  if (Date.now() - _evolutionTokenCache.ts < 60_000) return _evolutionTokenCache.value;
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'evolution_token'");
+    _evolutionTokenCache = { value: r.rows[0]?.value || null, ts: Date.now() };
+  } catch { /* mantem cache antigo */ }
+  return _evolutionTokenCache.value;
+}
+
+async function verifyEvolutionWebhook(req: express.Request, res: express.Response, next: express.NextFunction) {
   const provided = (req.headers['apikey'] || req.headers['x-webhook-secret']) as string | undefined;
-  if (provided && provided === EVOLUTION_WEBHOOK_SECRET) return next();
-  return res.status(401).json({ error: 'Webhook nao autorizado' });
+
+  // Modo 1: secret explicito via env (preferido pra producao com Evolution custom headers)
+  if (EVOLUTION_WEBHOOK_SECRET) {
+    if (provided && provided === EVOLUTION_WEBHOOK_SECRET) return next();
+    return res.status(401).json({ error: 'Webhook nao autorizado (secret invalido)' });
+  }
+
+  // Modo 2: valida usando o proprio token do Evolution (que ele ja envia naturalmente no header apikey)
+  // Vantagem: zero configuracao extra no Evolution. Desvantagem: se o token vazar, atacante consegue
+  // tanto chamar Evolution quanto injetar webhooks.
+  const evoToken = await getEvolutionTokenCached();
+  if (evoToken && provided && provided === evoToken) return next();
+
+  // Modo 3 (fallback permissivo): nem secret nem token configurados — aceita tudo.
+  // So loga warning periodicamente pra nao spammar.
+  if (!evoToken) return next();
+
+  return res.status(401).json({ error: 'Webhook nao autorizado (apikey nao bate com evolution_token)' });
 }
 
 // --- R2 STORAGE ---
