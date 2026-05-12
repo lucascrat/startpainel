@@ -298,27 +298,52 @@ export default function AdminPanel() {
     } finally { setIsLoading(false); }
   };
 
+  // Upload de imagem pro R2 via /api/upload. Backend espera JSON com:
+  //   { data: <base64-puro>, mimeType: <image/*>, prefix: 'icons' }
+  // E exige Bearer token admin — por isso authFetch (nao fetch).
   const handleUploadIcon = async (file: File, isEditing = false) => {
-    const formData = new FormData();
-    formData.append('image', file);
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem.');
+      return;
+    }
+    const MAX_BYTES = 5 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      toast.error(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo 5MB.`);
+      return;
+    }
     setIsLoading(true);
     try {
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
       });
-      const data = await response.json();
-      if (data.url) {
-        if (isEditing && viewingApp) {
-          setViewingApp({ ...viewingApp, icon_url: data.url });
-        } else {
-          setIconUrl(data.url);
-        }
-      } else {
-        toast.error('Erro ao subir imagem');
+      const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+      const res = await authFetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64, mimeType: file.type, prefix: 'icons' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      console.log('[Upload] status=', res.status, 'response=', json);
+      if (!res.ok || !json.url) {
+        throw new Error(json.error || json.message || `HTTP ${res.status}`);
       }
-    } catch (err) {
-      toast.error('Erro de conexão ao subir imagem');
+      const url = json.url as string;
+      if (json.storage === 'inline-fallback' && json.r2Error) {
+        const code = json.r2Error?.code || json.r2Error?.name || 'Erro';
+        const msg = json.r2Error?.message || 'sem detalhes';
+        toast.warning(`R2 falhou (${code}): ${msg}. Imagem salva inline.`, { duration: 8000 });
+      }
+      if (isEditing && viewingApp) {
+        setViewingApp({ ...viewingApp, icon_url: url });
+      } else {
+        setIconUrl(url);
+      }
+    } catch (err: any) {
+      console.error('[Upload] erro:', err);
+      toast.error(`Erro ao subir imagem: ${err?.message || err}`);
     } finally {
       setIsLoading(false);
     }
