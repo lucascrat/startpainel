@@ -49,3 +49,12 @@ temp/
 # Arquivos de debug que podem ser regenerados
 *.tmp
 *.bak
+*.json log files
+logs.json
+tok.json
+apps.json
+envs.json
+deploy*.json
+evo_msgs.json
+uuid.txt
+t.txt
