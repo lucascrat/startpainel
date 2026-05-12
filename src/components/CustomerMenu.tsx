@@ -11,6 +11,43 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format, isAfter, parseISO, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+/**
+ * Formata input de WhatsApp pro padrao brasileiro: +55 (11) 91234-5678.
+ * Aceita qualquer entrada do usuario, normaliza pra digitos e re-formata.
+ * Auto-adiciona prefixo 55 se nao tiver e ainda couber.
+ * O backend sempre compara so digitos, entao o valor formatado funciona.
+ */
+function formatWhatsApp(input: string): string {
+  const d = input.replace(/\D/g, '');
+  if (!d) return '';
+
+  // Determina codigo do pais. Se ja parece ter codigo (>=12 digitos OU comeca com 55), respeita.
+  // Senao, assume Brasil (55).
+  let cc: string, rest: string;
+  if (d.length >= 12 || d.startsWith('55')) {
+    cc = d.slice(0, 2);
+    rest = d.slice(2, 13); // limita a 11 digitos depois do codigo
+  } else {
+    cc = '55';
+    rest = d.slice(0, 11);
+  }
+
+  let out = `+${cc}`;
+  if (rest.length === 0) return out;
+  out += ' (' + rest.slice(0, 2);
+  if (rest.length <= 2) return out;
+  out += ') ';
+  const num = rest.slice(2);
+  if (num.length <= 4) {
+    out += num;
+  } else {
+    // Quebra como N-4 (cobre 8 e 9 digitos): 12345-6789 ou 1234-5678
+    const split = num.length - 4;
+    out += num.slice(0, split) + '-' + num.slice(split);
+  }
+  return out;
+}
+
 export default function CustomerMenu() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -267,7 +304,8 @@ export default function CustomerMenu() {
     setEditForm({
       name: selectedCustomer.name || '',
       username: selectedCustomer.username || '',
-      whatsapp: selectedCustomer.whatsapp || '',
+      // Re-formata WhatsApp pra padronizar (clientes legados cadastrados sem formatacao).
+      whatsapp: selectedCustomer.whatsapp ? formatWhatsApp(selectedCustomer.whatsapp) : '',
       renewal_price: selectedCustomer.renewal_price || '30.00',
       expiration_date: selectedCustomer.expiration_date ? format(parseISO(selectedCustomer.expiration_date), 'yyyy-MM-dd') : '',
       lines_count: selectedCustomer.lines_count || 1,
@@ -521,9 +559,11 @@ export default function CustomerMenu() {
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
-                      <input 
+                      <input
                         value={editForm.whatsapp}
-                        onChange={e => setEditForm({...editForm, whatsapp: e.target.value})}
+                        onChange={e => setEditForm({...editForm, whatsapp: formatWhatsApp(e.target.value)})}
+                        placeholder="+55 (11) 91234-5678"
+                        inputMode="tel"
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
@@ -759,11 +799,12 @@ export default function CustomerMenu() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp</label>
-                    <input 
+                    <input
                       value={newCust.whatsapp}
-                      onChange={e => setNewCust({...newCust, whatsapp: e.target.value})}
+                      onChange={e => setNewCust({...newCust, whatsapp: formatWhatsApp(e.target.value)})}
+                      placeholder="+55 (11) 91234-5678"
+                      inputMode="tel"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                      placeholder="Ex: 5511999999999"
                     />
                   </div>
                   <div className="space-y-1.5">

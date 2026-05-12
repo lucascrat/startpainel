@@ -510,6 +510,98 @@ async function generateAudio(text: string): Promise<{ base64: string; mimeType: 
 }
 
 // --- AI HELPERS ---
+
+// Normaliza um JID/numero pra so digitos. Usa pra fazer lookup do cliente.
+function normalizePhone(jid: string): string {
+  return (jid || '').split('@')[0].replace(/\D/g, '');
+}
+
+// Procura cliente pelo numero do WhatsApp. Compara so os digitos (ignora formatacao).
+// Tambem tenta sem o '9' de celular brasileiro (pra cobrir cadastros legados).
+async function findCustomerByJid(remoteJid: string): Promise<any | null> {
+  const number = normalizePhone(remoteJid);
+  if (!number) return null;
+  // Match exato primeiro
+  let r = await pool.query(
+    "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
+    [number]
+  );
+  if (r.rows[0]) return r.rows[0];
+  // Tenta sem o '9' (celulares antigos cadastrados sem prefixo)
+  // 5511912345678 -> 551112345678
+  if (number.length === 13 && number.startsWith('55')) {
+    const semNove = number.slice(0, 4) + number.slice(5);
+    r = await pool.query(
+      "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
+      [semNove]
+    );
+    if (r.rows[0]) return r.rows[0];
+  }
+  // Tenta com '9' (cadastrado sem mas recebendo com)
+  if (number.length === 12 && number.startsWith('55')) {
+    const comNove = number.slice(0, 4) + '9' + number.slice(4);
+    r = await pool.query(
+      "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
+      [comNove]
+    );
+    if (r.rows[0]) return r.rows[0];
+  }
+  return null;
+}
+
+// Monta um bloco de contexto pro prompt do Gemini com info do cliente (se conhecido).
+async function buildCustomerContext(remoteJid: string, pushName: string): Promise<string> {
+  const customer = await findCustomerByJid(remoteJid);
+  const phone = normalizePhone(remoteJid);
+
+  if (!customer) {
+    return `\n\n=== CONTEXTO ===
+Esta pessoa NAO esta cadastrada como cliente no nosso sistema.
+- Numero WhatsApp: +${phone}
+- Nome do contato (do WhatsApp): ${pushName}
+Trate como prospect/visitante. Pergunte o username se precisar atender uma renovacao/suporte.`;
+  }
+
+  // Carrega apps do cliente pra dar contexto completo
+  const appsRes = await pool.query(
+    'SELECT app_name, app_model, mac_address, device_key, username, is_tv FROM customer_apps WHERE customer_id = $1 ORDER BY created_at DESC',
+    [customer.id]
+  );
+  const apps = appsRes.rows;
+
+  const exp = customer.expiration_date
+    ? new Date(customer.expiration_date).toLocaleDateString('pt-BR')
+    : 'sem data';
+  const diasRestantes = customer.expiration_date
+    ? Math.ceil((new Date(customer.expiration_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+
+  let ctx = `\n\n=== CONTEXTO DO CLIENTE (CADASTRADO NO SISTEMA) ===
+Voce esta atendendo um cliente JA CADASTRADO. Use essas informacoes pra personalizar:
+- Nome: ${customer.name || '(sem nome no cadastro)'}
+- Username: ${customer.username}
+- WhatsApp: ${customer.whatsapp || '+' + phone}
+- Status: ${customer.status}
+- Vencimento: ${exp}${diasRestantes !== null ? ` (${diasRestantes >= 0 ? 'em ' + diasRestantes + ' dias' : 'VENCIDO ha ' + (-diasRestantes) + ' dias'})` : ''}
+- Valor mensal: R$ ${customer.renewal_price || '49,90'}`;
+
+  if (apps.length > 0) {
+    ctx += `\n- Apps cadastrados (${apps.length}):`;
+    for (const a of apps) {
+      ctx += `\n    • ${a.app_name}${a.app_model ? ' (' + a.app_model + ')' : ''}${a.is_tv ? ' [TV]' : ' [Celular]'}`;
+    }
+  }
+
+  ctx += `\n\nINSTRUCOES IMPORTANTES:
+- Cumprimente pelo nome se tiver: "Ola ${customer.name?.split(' ')[0] || 'cliente'}!"
+- NAO peca username/WhatsApp — voce ja tem.
+- Se for renovacao, ja sabe quem renovar. Use o username "${customer.username}" nas tools.
+- Se faltarem poucos dias pro vencimento, ofereca renovacao proativamente.
+- Se ja venceu, foque em renovacao urgente.`;
+
+  return ctx;
+}
+
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -538,6 +630,17 @@ Regras de resposta:
       const dbPrompt = r.rows[0]?.value?.trim();
       if (dbPrompt) systemPrompt = dbPrompt;
     } catch (e) { /* silencioso, usa o default */ }
+
+    // Injeta contexto do cliente (se encontrado pelo numero) — pra IA saber quem ta falando.
+    // Pula pra chat web (visitante anonimo) — userInfo.skipCustomerLookup === true.
+    if (!userInfo?.skipCustomerLookup && remoteJid && !remoteJid.startsWith('web:')) {
+      try {
+        const ctx = await buildCustomerContext(remoteJid, userInfo?.name || 'Cliente');
+        systemPrompt += ctx;
+      } catch (e: any) {
+        console.warn('[AI] falha ao montar contexto do cliente:', e?.message);
+      }
+    }
 
     const contents: any[] = [
       { role: 'user', parts: [{ text: systemPrompt }] },
