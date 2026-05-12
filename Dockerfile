@@ -1,72 +1,48 @@
-# Use Node.js 20 slim as base
-FROM node:20-slim
+# Imagem do servidor de producao (Coolify).
+# Puppeteer NAO roda aqui — automacoes Puppeteer ficam no worker.ts que roda
+# no PC local do operador. Por isso nao precisamos instalar Chromium/X11/etc
+# (saimos de uma imagem de ~2GB pra ~400MB e o build cai de ~3min pra ~1min).
 
-# Install dependencies needed for Puppeteer and Chrome
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    chromium \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libgcc1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    wget \
-    xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set Puppeteer environment variables
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+FROM node:20-slim AS deps
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
+# Instala TODAS as dependencias (dev + prod) — devDeps tem tsx que usamos em runtime.
+RUN npm ci --no-audit --no-fund
 
-# Install dependencies
-RUN npm install
-
-# Copy all files
+# ===== Build do frontend (vite) =====
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Build the frontend
 RUN npm run build
 
-# Expose the application port
+# ===== Runtime =====
+FROM node:20-slim AS runner
+WORKDIR /app
+
+# Tini reaped zombies + sinaliza SIGTERM corretamente pro Express.
+RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Roda como user nao-root.
+RUN groupadd -r app && useradd -r -g app app
+
+# Copia deps + build do estagio anterior. node_modules ja vem com devDeps
+# porque server.ts roda via tsx (que esta em devDependencies).
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package*.json ./
+COPY server.ts ./
+COPY src ./src
+COPY tsconfig.json ./
+COPY index.html ./
+COPY public ./public
+
+RUN chown -R app:app /app
+USER app
+
+ENV NODE_ENV=production
 EXPOSE 3000
 
-# Set environment variable to production
-ENV NODE_ENV=production
-
-# Start the application using tsx (as defined in package.json start script)
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["npm", "start"]

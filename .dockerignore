@@ -1,10 +1,54 @@
 node_modules
 dist
 .git
-.env
-.gemini_key_internal
+.gitignore
+
+# Envs (Coolify injeta via env vars)
+.env*
+env*.json
+env_*.json
+temp_env.json
+
+# Segredos e certificados
+*.p12
+*.pem
+*.key
+*.pfx
+*.crt
+*.cer
+certs/
+
+# Coolify exports (nao precisam estar no container)
+databases.json
+servers.json
+server_info.json
+other_apps.json
+db_config.json
+project.json
+
+# Stuff que nao vai pra container
+README.md
 *.docx
+*.md
+scripts/
+scratch/
+debug-*.png
+worker.ts
 *.bak
-temp_cert.p12
-homologacao-*.p12
-producao-*.p12
+*.tmp
+
+# Expo / mobile stuff que nao usamos no servidor
+app.json
+app_config.json
+babel.config.js
+metadata.json
+
+# Test files
+test-*.ts
+check-*.ts
+*.test.ts
+.expo/
+
+# OS junk
+.DS_Store
+Thumbs.db
