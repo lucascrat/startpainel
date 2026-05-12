@@ -94,7 +94,27 @@ async function initDB(retries = 5) {
           last_seen TIMESTAMP DEFAULT NOW(),
           hostname TEXT,
           version TEXT
-        )`
+        )`,
+        // Catálogo público de apps que o atendimento pode sugerir/enviar pro cliente.
+        // Diferente de customer_apps (que e por cliente cadastrado), este e o catalogo
+        // mestre que a IA consulta pra sugerir downloads e pedir prints.
+        `CREATE TABLE IF NOT EXISTS app_catalog (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          display_order INTEGER DEFAULT 0,
+          description TEXT,
+          app_image_url TEXT,
+          example_image_url TEXT,
+          example_instruction TEXT,
+          android_link TEXT,
+          ios_link TEXT,
+          web_link TEXT,
+          device_type TEXT DEFAULT 'todos',
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS app_catalog_active_order_idx ON app_catalog(is_active, display_order)`
       ];
 
       for (const sql of tables) await client.query(sql);
@@ -753,6 +773,51 @@ Voce esta atendendo um cliente JA CADASTRADO. Use essas informacoes pra personal
   return ctx;
 }
 
+// Catalogo de apps que a IA pode oferecer pro cliente — fonte de verdade pra sugestoes.
+// Cacheia em memoria por 60s pra nao bater no DB a cada mensagem.
+let _appCatalogCache: { value: any[]; ts: number } = { value: [], ts: 0 };
+async function getAppCatalogCached(): Promise<any[]> {
+  if (Date.now() - _appCatalogCache.ts < 60_000 && _appCatalogCache.value.length > 0) {
+    return _appCatalogCache.value;
+  }
+  try {
+    const r = await pool.query(
+      `SELECT id, name, display_order, description, app_image_url, example_image_url,
+              example_instruction, android_link, ios_link, web_link, device_type
+       FROM app_catalog WHERE is_active = true
+       ORDER BY display_order ASC, name ASC`
+    );
+    _appCatalogCache = { value: r.rows, ts: Date.now() };
+    return r.rows;
+  } catch {
+    return _appCatalogCache.value; // se DB falhar, usa cache antigo
+  }
+}
+
+// Monta um bloco do prompt listando os apps disponiveis. A IA usa pra decidir qual sugerir.
+async function buildAppCatalogContext(): Promise<string> {
+  const apps = await getAppCatalogCached();
+  if (apps.length === 0) return '';
+
+  let ctx = '\n\n=== CATALOGO DE APPS DISPONIVEIS ===\n';
+  ctx += 'Use as tools `send_app_info` (mandar imagem + link de download) e `request_screenshot` (pedir print de uma area especifica do app) sempre que apropriado.\n';
+  ctx += 'A ordem abaixo e por prioridade: ofereca o primeiro primeiro. Se o cliente recusar, sugira o proximo.\n\n';
+  for (const a of apps) {
+    ctx += `[id=${a.id}] ${a.name} (${a.device_type})${a.description ? ' — ' + a.description : ''}\n`;
+    if (a.android_link || a.ios_link || a.web_link) {
+      const links = [a.android_link && 'Android', a.ios_link && 'iOS', a.web_link && 'Web'].filter(Boolean);
+      ctx += `   links: ${links.join(', ')}\n`;
+    }
+    if (a.example_instruction) ctx += `   exemplo: ${a.example_instruction}\n`;
+  }
+  ctx += `\nQUANDO USAR:\n`;
+  ctx += `- Cliente novo / sem cadastro perguntando como assistir: ofereca o primeiro app com send_app_info.\n`;
+  ctx += `- Cliente pedindo ajuda pra configurar: use request_screenshot pra pedir print da tela certa.\n`;
+  ctx += `- Cliente disse que ja tem o app X mas nao funciona: use request_screenshot do mesmo app.\n`;
+  ctx += `- Se o cliente nao se da bem com um app, sugira o proximo da lista.\n`;
+  return ctx;
+}
+
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -793,6 +858,13 @@ Regras de resposta:
       }
     }
 
+    // Catalogo de apps disponiveis pra IA sugerir
+    try {
+      systemPrompt += await buildAppCatalogContext();
+    } catch (e: any) {
+      console.warn('[AI] falha ao montar catalogo de apps:', e?.message);
+    }
+
     const contents: any[] = [
       { role: 'user', parts: [{ text: systemPrompt }] },
       { role: 'model', parts: [{ text: 'Entendido! Pronta para ajudar. 😊' }] },
@@ -811,7 +883,11 @@ Regras de resposta:
           { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } },
           { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
           { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } },
-          { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }
+          { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } },
+          // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
+          { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
+          // App catalog — pede print de uma area especifica do app
+          { name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } }
         ]
       }] as any
     });
@@ -985,6 +1061,85 @@ app.post('/api/r2/test', requireAdmin, async (req, res) => {
     console.error('[R2 Test] falhou:', detail);
     res.status(500).json({ ok: false, error: detail });
   }
+});
+
+// --- APP CATALOG ---
+// Catalogo de apps que a IA pode sugerir pro cliente (instalacao + screenshots).
+// Listagem publica (pra IA poder consultar via /api/public sem auth), mutacoes admin-only.
+app.get('/api/app-catalog', async (req, res) => {
+  try {
+    const onlyActive = req.query.activeOnly === 'true' || req.query.activeOnly === '1';
+    const result = await pool.query(
+      `SELECT * FROM app_catalog ${onlyActive ? "WHERE is_active = true" : ''}
+       ORDER BY display_order ASC, name ASC`
+    );
+    res.json(result.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Payload normalization — aceita camelCase ou snake_case do frontend.
+function normalizeAppCatalogPayload(b: any) {
+  return {
+    name:                b.name ?? null,
+    display_order:       Number(b.display_order ?? b.displayOrder ?? 0) || 0,
+    description:         b.description ?? null,
+    app_image_url:       b.app_image_url ?? b.appImageUrl ?? null,
+    example_image_url:   b.example_image_url ?? b.exampleImageUrl ?? null,
+    example_instruction: b.example_instruction ?? b.exampleInstruction ?? null,
+    android_link:        b.android_link ?? b.androidLink ?? null,
+    ios_link:            b.ios_link ?? b.iosLink ?? null,
+    web_link:            b.web_link ?? b.webLink ?? null,
+    device_type:         b.device_type ?? b.deviceType ?? 'todos',
+    is_active:           b.is_active ?? b.isActive ?? true,
+  };
+}
+
+app.post('/api/app-catalog', requireAdmin, async (req, res) => {
+  try {
+    const a = normalizeAppCatalogPayload(req.body || {});
+    if (!a.name) return res.status(400).json({ error: 'name e obrigatorio' });
+    const result = await pool.query(
+      `INSERT INTO app_catalog (name, display_order, description, app_image_url, example_image_url,
+                                example_instruction, android_link, ios_link, web_link, device_type, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active]
+    );
+    res.json(result.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
+  try {
+    const a = normalizeAppCatalogPayload(req.body || {});
+    const result = await pool.query(
+      `UPDATE app_catalog SET
+         name = COALESCE($2, name),
+         display_order = COALESCE($3, display_order),
+         description = COALESCE($4, description),
+         app_image_url = COALESCE($5, app_image_url),
+         example_image_url = COALESCE($6, example_image_url),
+         example_instruction = COALESCE($7, example_instruction),
+         android_link = COALESCE($8, android_link),
+         ios_link = COALESCE($9, ios_link),
+         web_link = COALESCE($10, web_link),
+         device_type = COALESCE($11, device_type),
+         is_active = COALESCE($12, is_active),
+         updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [req.params.id, a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
+    res.json(result.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/app-catalog/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM app_catalog WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // --- PAYMENT RECEIPTS (admin only) ---
@@ -1449,6 +1604,10 @@ app.post('/api/webhooks/evolution/:event?',
           call.args.paid_at,
           imageStored
         );
+      } else if (call.name === 'send_app_info') {
+        await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
+      } else if (call.name === 'request_screenshot') {
+        await handleRequestScreenshot(remoteJid, call.args.app_id, call.args.custom_instruction);
       }
     }
   } catch (err: any) { console.error('[Webhook Error]', err); }
@@ -1512,6 +1671,115 @@ async function handlePixGenerationTool(remoteJid: string, pushName: string, user
     const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
     await evo.sendMedia(remoteJid, qrcode.imagemQrcode, `Copia e Cola: ${qrcode.qrcode}`, 'pix.png');
   } catch (e) {}
+}
+
+// Helper: instancia o EvolutionService com config do banco
+async function getEvolutionService(): Promise<EvolutionService> {
+  const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+  const config: any = {};
+  settings.rows.forEach(r => config[r.key] = r.value);
+  return new EvolutionService({
+    apiUrl: config.evolution_api_url,
+    token: config.evolution_token,
+    instance: config.evolution_instance,
+  });
+}
+
+// Helper: baixa uma URL publica e converte pra base64 (pra enviar via Evolution sendMedia,
+// que precisa de base64 no body). Funciona tanto pra URL R2 quanto pra data URI inline.
+async function urlToBase64(url: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    if (url.startsWith('data:')) {
+      // ja e data URI: extrai mime e base64
+      const match = url.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) return { mimeType: match[1], base64: match[2] };
+      return null;
+    }
+    const r = await fetch(url);
+    if (!r.ok) {
+      console.warn(`[urlToBase64] HTTP ${r.status} ao baixar ${url}`);
+      return null;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    const mimeType = r.headers.get('content-type') || 'image/jpeg';
+    return { base64: buf.toString('base64'), mimeType };
+  } catch (e: any) {
+    console.error('[urlToBase64] erro:', e?.message);
+    return null;
+  }
+}
+
+// Tool handler: envia info de um app do catalogo pro cliente.
+// Manda a imagem do app + caption com links de download.
+async function handleSendAppInfo(remoteJid: string, appId: number, customMessage?: string) {
+  try {
+    const r = await pool.query('SELECT * FROM app_catalog WHERE id = $1 AND is_active = true', [appId]);
+    const app = r.rows[0];
+    if (!app) {
+      console.warn(`[Tool send_app_info] app ${appId} nao encontrado/inativo`);
+      return;
+    }
+    // Monta o texto: mensagem custom (se houver) + nome + links
+    const lines = [customMessage?.trim() || `📱 *${app.name}*`].filter(Boolean);
+    if (app.description) lines.push(app.description);
+    const links: string[] = [];
+    if (app.android_link) links.push(`Android: ${app.android_link}`);
+    if (app.ios_link) links.push(`iOS: ${app.ios_link}`);
+    if (app.web_link) links.push(`Web: ${app.web_link}`);
+    if (links.length > 0) {
+      lines.push('');
+      lines.push('📥 *Baixar:*');
+      lines.push(...links);
+    }
+    const caption = lines.join('\n');
+
+    const evo = await getEvolutionService();
+    if (app.app_image_url) {
+      const img = await urlToBase64(app.app_image_url);
+      if (img) {
+        await evo.sendMedia(remoteJid, img.base64, caption, `${app.name}.${img.mimeType.split('/')[1] || 'jpg'}`);
+        console.log(`[Tool] send_app_info: enviou ${app.name} pro ${remoteJid}`);
+        return;
+      }
+      // se imagem nao baixou, manda so texto
+      console.warn(`[Tool send_app_info] imagem ${app.app_image_url} nao baixou, enviando so texto`);
+    }
+    await evo.sendMessage(remoteJid, caption);
+    console.log(`[Tool] send_app_info: enviou ${app.name} (texto-only) pro ${remoteJid}`);
+  } catch (e: any) {
+    console.error('[Tool send_app_info] erro:', e?.message);
+  }
+}
+
+// Tool handler: pede print de uma area especifica do app, mostrando imagem de exemplo.
+async function handleRequestScreenshot(remoteJid: string, appId: number, customInstruction?: string) {
+  try {
+    const r = await pool.query('SELECT * FROM app_catalog WHERE id = $1 AND is_active = true', [appId]);
+    const app = r.rows[0];
+    if (!app) {
+      console.warn(`[Tool request_screenshot] app ${appId} nao encontrado/inativo`);
+      return;
+    }
+    const lines = [
+      `📸 *Preciso de um print do ${app.name}*`,
+      customInstruction?.trim() || app.example_instruction || 'Me manda print da tela igual essa imagem 👇',
+    ];
+    const caption = lines.join('\n');
+
+    const evo = await getEvolutionService();
+    if (app.example_image_url) {
+      const img = await urlToBase64(app.example_image_url);
+      if (img) {
+        await evo.sendMedia(remoteJid, img.base64, caption, `exemplo-${app.name}.${img.mimeType.split('/')[1] || 'jpg'}`);
+        console.log(`[Tool] request_screenshot: enviou exemplo de ${app.name} pro ${remoteJid}`);
+        return;
+      }
+    }
+    await evo.sendMessage(remoteJid, caption);
+    console.log(`[Tool] request_screenshot: enviou instrucao de ${app.name} (sem imagem) pro ${remoteJid}`);
+  } catch (e: any) {
+    console.error('[Tool request_screenshot] erro:', e?.message);
+  }
 }
 
 async function startServer() {
