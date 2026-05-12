@@ -6,11 +6,21 @@ export interface EvolutionConfig {
   token: string;
 }
 
-// Evolution v2 espera SO DIGITOS no campo `number` do body (sem @s.whatsapp.net).
-// Mandar o JID completo causa 400 Bad Request ("number" failed validation).
-// Strip o sufixo se vier, depois normaliza pra so digitos.
-function toDigits(number: string): string {
-  return (number || '').split('@')[0].replace(/\D/g, '');
+// Normaliza o destinatario pro formato que Evolution v2 espera no campo `number`:
+// - `5511999@s.whatsapp.net` -> `5511999` (so digitos — Evolution valida como numero)
+// - `180882665136281@lid`    -> `180882665136281@lid` (LID = identidade mascarada
+//                                                      do WhatsApp; nao e numero,
+//                                                      Evolution resolve internamente)
+// - `123@g.us`               -> `123@g.us` (grupo, mantem intacto)
+// - sem @                     -> so digitos (assume telefone)
+function normalizeRecipient(number: string): string {
+  if (!number) return '';
+  // LID / grupo / broadcast: manter intacto, Evolution v2 sabe rotear.
+  if (number.includes('@lid') || number.includes('@g.us') || number.includes('@broadcast')) {
+    return number;
+  }
+  // s.whatsapp.net ou sem sufixo: extrair so digitos.
+  return number.split('@')[0].replace(/\D/g, '');
 }
 
 // Loga o erro detalhado do Evolution — `response.message` e um array de validacoes
@@ -43,7 +53,7 @@ export class EvolutionService {
     try {
       const url = `${this.config.apiUrl}/message/sendText/${this.config.instance}`;
       const response = await axios.post(url, {
-        number: toDigits(number),
+        number: normalizeRecipient(number),
         text: text,
         delay: 1200,
         linkPreview: true
@@ -62,7 +72,7 @@ export class EvolutionService {
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
       // v2 aceita campos flat OU dentro de mediaMessage; flat e mais confiavel.
       const response = await axios.post(url, {
-        number: toDigits(number),
+        number: normalizeRecipient(number),
         mediatype: mediaType,
         caption: caption,
         media: cleanBase64,
@@ -82,7 +92,7 @@ export class EvolutionService {
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
 
       const response = await axios.post(url, {
-        number: toDigits(number),
+        number: normalizeRecipient(number),
         audio: cleanBase64,
         delay: 1000
       }, { headers: this.headers });
