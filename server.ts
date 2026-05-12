@@ -341,6 +341,58 @@ app.post('/api/worker/heartbeat', requireWorker, async (req, res) => {
   }
 });
 
+// --- WATCHDOG DE JOBS ORFAOS ---
+// Se um job ficou 'running' por mais de 15min sem o worker reportar resultado,
+// considera-se que o worker crashou e o job vira 'failed' (em vez de ficar eternamente).
+// Roda a cada 2min.
+const JOB_TIMEOUT_MS = 15 * 60 * 1000;
+async function reapOrphanJobs() {
+  try {
+    const r = await pool.query(`
+      UPDATE automation_jobs
+      SET status='failed',
+          error=COALESCE(error,'') || ' [watchdog: worker travou ou crashou apos pegar o job]',
+          finished_at=NOW()
+      WHERE status='running'
+        AND started_at < NOW() - INTERVAL '15 minutes'
+      RETURNING id, type, worker_id
+    `);
+    if (r.rows.length > 0) {
+      console.warn(`[Watchdog] Marcou ${r.rows.length} job(s) orfaos como failed:`,
+        r.rows.map(j => `#${j.id}(${j.type})`).join(', '));
+    }
+  } catch (e: any) {
+    console.error('[Watchdog] erro:', e?.message);
+  }
+}
+setInterval(reapOrphanJobs, 2 * 60 * 1000).unref?.();
+// Roda uma vez no boot pra cobrir jobs que ficaram presos antes do restart.
+setTimeout(reapOrphanJobs, 10_000);
+
+// --- LIMPEZA PERIODICA (retencao de logs) ---
+// Mantem o DB enxuto: deleta jobs antigos, mensagens, ai_usage_logs e heartbeats inativos.
+async function cleanupOldRecords() {
+  try {
+    const results = await Promise.allSettled([
+      pool.query(`DELETE FROM automation_jobs WHERE status IN ('done','failed','cancelled') AND finished_at < NOW() - INTERVAL '30 days'`),
+      pool.query(`DELETE FROM messages WHERE created_at < NOW() - INTERVAL '180 days'`),
+      pool.query(`DELETE FROM ai_usage_logs WHERE created_at < NOW() - INTERVAL '365 days'`),
+      pool.query(`DELETE FROM worker_heartbeats WHERE last_seen < NOW() - INTERVAL '7 days'`),
+    ]);
+    const counts = results.map((r, i) => {
+      const label = ['jobs','messages','ai_usage','heartbeats'][i];
+      if (r.status === 'fulfilled') return `${label}=${r.value.rowCount || 0}`;
+      return `${label}=ERR`;
+    });
+    console.log(`[Cleanup] ${counts.join(' ')}`);
+  } catch (e: any) {
+    console.error('[Cleanup] erro:', e?.message);
+  }
+}
+// Roda 1x por dia. Primeiro run 30min apos o boot (evita peak no startup).
+setInterval(cleanupOldRecords, 24 * 60 * 60 * 1000).unref?.();
+setTimeout(cleanupOldRecords, 30 * 60 * 1000);
+
 // --- VALIDACAO DO WEBHOOK (Evolution) ---
 const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
 if (!EVOLUTION_WEBHOOK_SECRET) {
@@ -504,9 +556,71 @@ async function generateEdgeTTS(text: string): Promise<{ base64: string; mimeType
   }
 }
 
-// Tenta Gemini primeiro (mais natural), cai pra EdgeTTS (grátis) se falhar.
+// --- TTS CACHE (R2) ---
+// Frases identicas geram o mesmo audio. Em vez de regenerar (custa $$ no Gemini),
+// guarda no R2 com hash do texto+voz como key. Cache em memoria com map<hash, url>.
+// O cache em DB persistiria entre restarts, mas mapa em memoria ja resolve 99% dos casos.
+const ttsUrlCache = new Map<string, string>();
+const TTS_CACHE_MAX = 500;
+
+function hashText(text: string, voice: string): string {
+  return crypto.createHash('sha256').update(`${voice}::${text}`).digest('hex').slice(0, 16);
+}
+
+// Baixa um arquivo do R2 (URL publica) e retorna base64. Usa pra reaproveitar audio cacheado.
+async function fetchR2AsBase64(url: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const mimeType = r.headers.get('content-type') || 'audio/wav';
+    return { base64: buf.toString('base64'), mimeType };
+  } catch {
+    return null;
+  }
+}
+
+// Tenta Gemini primeiro (mais natural), cai pra EdgeTTS (gratis) se falhar.
+// Com cache: se ja gerou esse texto+voz antes, busca no R2 em vez de chamar a API.
 async function generateAudio(text: string): Promise<{ base64: string; mimeType: string } | null> {
-  return (await generateGeminiTTS(text)) || (await generateEdgeTTS(text));
+  const t = (text || '').trim();
+  if (!t) return null;
+  const hash = hashText(t, GEMINI_TTS_VOICE);
+
+  // Cache hit em memoria
+  const cachedUrl = ttsUrlCache.get(hash);
+  if (cachedUrl) {
+    const cached = await fetchR2AsBase64(cachedUrl);
+    if (cached) {
+      console.log(`[TTS Cache] HIT ${hash} (${t.slice(0, 40)}...)`);
+      return cached;
+    }
+    // Cache invalido, segue gerando
+    ttsUrlCache.delete(hash);
+  }
+
+  // Gera (Gemini -> EdgeTTS fallback)
+  const audio = (await generateGeminiTTS(t)) || (await generateEdgeTTS(t));
+  if (!audio) return null;
+
+  // Sobe pro R2 (se disponivel) e guarda URL no cache
+  if (r2Configured) {
+    try {
+      const result = await uploadToR2('tts-cache', audio.base64, audio.mimeType);
+      if (result.ok === true) {
+        // Limita tamanho do cache em memoria (FIFO grosso)
+        if (ttsUrlCache.size >= TTS_CACHE_MAX) {
+          const firstKey = ttsUrlCache.keys().next().value;
+          if (firstKey) ttsUrlCache.delete(firstKey);
+        }
+        ttsUrlCache.set(hash, result.url);
+        console.log(`[TTS Cache] MISS -> cached ${hash} ${result.url}`);
+      }
+    } catch (e: any) {
+      console.warn('[TTS Cache] falha ao cachear:', e?.message);
+    }
+  }
+  return audio;
 }
 
 // --- AI HELPERS ---
@@ -753,7 +867,10 @@ app.post('/api/panel/queue/:id/cancel', requireAdmin, async (req, res) => {
 // --- UPLOAD para R2 (admin only) ---
 // Comportamento: tenta R2 primeiro; se falhar, faz fallback pra base64 inline pra nao bloquear o usuario.
 // Retorna detalhes do erro R2 no header pra debug, mas nao quebra o fluxo.
-app.post('/api/upload', requireAdmin, async (req, res) => {
+app.post('/api/upload',
+  requireAdmin,
+  rateLimit({ windowMs: 60_000, max: 30, key: clientIp, message: 'Muitos uploads. Aguarde 1 minuto.' }),
+  async (req, res) => {
   try {
     const { data, mimeType, prefix } = req.body || {};
     if (!data || !mimeType) {
@@ -1092,9 +1209,36 @@ app.post('/api/automations/startpainel/activate-ultra', async (req, res) => {
 
 // AI Usage Stats
 app.get('/api/ai-usage', async (req, res) => {
-  const stats = await pool.query('SELECT COUNT(*) as total_requests, SUM(prompt_tokens) as total_prompt_tokens, SUM(candidates_tokens) as total_candidates_tokens, SUM(estimated_cost) as total_estimated_cost FROM ai_usage_logs');
-  const recent = await pool.query('SELECT * FROM ai_usage_logs ORDER BY created_at DESC LIMIT 10');
-  res.json({ summary: stats.rows[0], recent: recent.rows });
+  try {
+    const stats = await pool.query('SELECT COUNT(*) as total_requests, SUM(prompt_tokens) as total_prompt_tokens, SUM(candidates_tokens) as total_candidates_tokens, SUM(estimated_cost) as total_estimated_cost FROM ai_usage_logs');
+    const recent = await pool.query('SELECT * FROM ai_usage_logs ORDER BY created_at DESC LIMIT 10');
+    // Serie diaria dos ultimos 30 dias — pra grafico no admin
+    const daily = await pool.query(`
+      SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS date,
+             COUNT(*)::int AS requests,
+             SUM(prompt_tokens)::int AS prompt_tokens,
+             SUM(candidates_tokens)::int AS candidates_tokens,
+             SUM(estimated_cost)::float AS cost
+      FROM ai_usage_logs
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `);
+    // Breakdown por modelo
+    const byModel = await pool.query(`
+      SELECT model, COUNT(*)::int as requests, SUM(estimated_cost)::float as cost
+      FROM ai_usage_logs
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY model
+      ORDER BY cost DESC
+    `);
+    res.json({
+      summary: stats.rows[0],
+      recent: recent.rows,
+      daily: daily.rows,
+      byModel: byModel.rows,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // Public Chat (visitor-facing widget on the website)
@@ -1155,7 +1299,11 @@ app.post('/api/public-chat',
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
-app.post('/api/webhooks/evolution/:event?', verifyEvolutionWebhook, async (req, res) => {
+app.post('/api/webhooks/evolution/:event?',
+  // Rate limit por IP — mesmo com secret valido, evita flood acidental.
+  rateLimit({ windowMs: 60_000, max: 120, key: clientIp, message: 'Webhook rate limit excedido.' }),
+  verifyEvolutionWebhook,
+  async (req, res) => {
   let remoteJid = '';
   let pushName = 'Cliente';
   try {

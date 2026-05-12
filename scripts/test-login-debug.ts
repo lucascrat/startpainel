@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
-import { renewClientPuppeteer } from './src/services/startpainel-puppeteer.js';
+import { renewClientPuppeteer } from '../src/services/startpainel-puppeteer.js';
 
 async function test() {
   console.log('--- TESTE DE CONEXÃO STARTPAINEL ---');

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { renewClientPuppeteer } from './src/services/startpainel-puppeteer.js';
+import { renewClientPuppeteer } from '../src/services/startpainel-puppeteer.js';
 import fs from 'fs';
 
 async function debug() {

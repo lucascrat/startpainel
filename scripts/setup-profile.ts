@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { renewClientPuppeteerVisible } from './src/services/startpainel-puppeteer.js';
+import { renewClientPuppeteerVisible } from '../src/services/startpainel-puppeteer.js';
 
 async function setup() {
   console.log('--- CONFIGURAÇÃO DE PERFIL HUMANO ---');

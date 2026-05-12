@@ -1,8 +1,51 @@
+# Dependencies & build output
 node_modules/
 build/
 dist/
 coverage/
+.expo/
+
+# OS junk
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+
+# Env files (qualquer arquivo de env, em qualquer formato)
 .env*
 !.env.example
+env*.json
+env.json
+temp_env.json
+
+# Segredos diversos — chaves, certificados, exports
+*.p12
+*.pem
+*.key
+*.pfx
+*.crt
+*.cer
+certs/
+
+# Dumps de configuracao do Coolify (contem IDs internos / metadata sensivel)
+databases.json
+servers.json
+server_info.json
+other_apps.json
+db_config.json
+project.json
+
+# Scripts adhoc / scratch — nao subir
+scratch/
+debug-*.png
+debug-*.jpg
+debug-*.html
+tmp/
+temp/
+
+# Arquivos de debug que podem ser regenerados
+*.tmp
+*.bak
