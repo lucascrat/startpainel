@@ -1,36 +1,23 @@
 @echo off
 REM ============================================================
-REM  StartPainel Suporte — Para o worker (mantem tunel rodando)
+REM  StartPainel Suporte — Para todos os workers (mantem tunel)
 REM ============================================================
-REM  Por que NAO para o tunel:
-REM   O cloudflared e instalado como servico do Windows e fica de pe
-REM   24/7 — voce so quer parar o worker (que abre Chrome visivel).
-REM
-REM  Se quiser parar o tunel tambem, rode como admin:
-REM   net stop cloudflared
+REM  Usa PowerShell em vez de wmic (deprecated no Win11).
+REM  Mata apenas processos node.exe cuja linha de comando contem
+REM  'worker.ts' — nao toca em node.exe do VSCode/Cursor.
 REM ============================================================
 
 title Parando StartPainel Worker
 color 0E
 
 echo.
-echo  Parando worker do StartPainel...
+echo  Procurando workers ativos...
 echo.
 
-set FOUND=0
-for /f "tokens=2 delims=," %%P in ('wmic process where "name='node.exe' and commandline like '%%worker.ts%%'" get processid /format:csv 2^>nul ^| findstr /r "[0-9]"') do (
-  echo   Matando PID %%P
-  taskkill /F /PID %%P >nul 2>&1
-  set FOUND=1
-)
-
-if %FOUND% EQU 0 (
-  echo  Nenhum worker rodando.
-) else (
-  echo  Worker parado.
-)
+powershell -NoProfile -Command ^
+  "$killed = 0; $procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*worker.ts*' }; if (-not $procs) { Write-Host '   Nenhum worker rodando.' -ForegroundColor Yellow } else { foreach ($p in $procs) { Write-Host ('   Matando PID ' + $p.ProcessId + ' (' + $p.CommandLine.Substring(0, [Math]::Min(70, $p.CommandLine.Length)) + '...)') -ForegroundColor Cyan; Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue; $killed++ }; Write-Host ('   Total parados: ' + $killed) -ForegroundColor Green }"
 
 echo.
 echo  ^(Tunel Cloudflare continua ativo — e um servico do Windows^)
 echo.
-timeout /t 3 >nul
+timeout /t 4 >nul

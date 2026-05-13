@@ -50,17 +50,11 @@ if %ERRORLEVEL% EQU 0 (
 
 :worker
 
-REM --- 2. Limpa workers antigos ---
+REM --- 2. Limpa workers antigos (PowerShell, evita wmic deprecated) ---
 echo.
 echo  [2/3] Limpando workers antigos do node...
-tasklist /fi "IMAGENAME eq node.exe" /fo csv 2>nul | findstr /i "node.exe" >nul
-if %ERRORLEVEL% EQU 0 (
-  REM Mata so processos cujo command line tem 'worker.ts' (nao mata vscode etc)
-  for /f "tokens=2 delims=," %%P in ('wmic process where "name='node.exe' and commandline like '%%worker.ts%%'" get processid /format:csv 2^>nul ^| findstr /r "[0-9]"') do (
-    echo        matando PID %%P
-    taskkill /F /PID %%P >nul 2>&1
-  )
-)
+powershell -NoProfile -Command ^
+  "$procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*worker.ts*' }; foreach ($p in $procs) { Write-Host ('       matando PID ' + $p.ProcessId); Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }"
 echo        OK.
 
 REM --- 3. Verifica que o projeto esta em ordem ---
