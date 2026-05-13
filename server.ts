@@ -932,7 +932,24 @@ ${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}`;
   if (apps.length === 0) {
     ctx += `\n- Cliente sem app cadastrado: sugira instalacao usando o catalogo (send_app_info).`;
   } else {
-    ctx += `\n- Cliente JA tem ${apps.length} app(s) instalado(s). Se ele tiver problema, use request_screenshot pra pedir print da tela certa do app dele (procure no catalogo o app com nome similar ao app_model dele).`;
+    // Lista resumida dos apps pra IA usar na saudacao inicial
+    const appBullets = apps.map(a => {
+      const tipo = a.is_tv ? 'TV' : 'celular/PC';
+      const modelo = a.app_model || a.app_name;
+      return `${modelo} (${tipo})`;
+    });
+    const appListInline = appBullets.join(', ');
+
+    ctx += `\n- Cliente JA tem ${apps.length} app(s) instalado(s): ${appListInline}.`;
+    ctx += `\n- 👉 QUANDO ele mandar SAUDACAO GENERICA (ex: "oi", "ola", "bom dia", "boa tarde", "tudo bem", "fala") SEM problema especifico:
+    * Cumprimente pelo nome.
+    * Liste os apps que ele tem com nome e dispositivo.
+    * Pergunte se ele precisa de ajuda ou reparo em algum.
+    * Exemplo: "Oi ${firstName}! 👋 Vi aqui que voce tem ${appListInline}. Precisa de algo? Atualizacao de lista, ativacao, suporte em algum desses apps?"
+- 👉 QUANDO ele mandar problema/pedido ESPECIFICO (ex: "lista parou", "nao abre canais", "quero renovar"):
+    * NAO repita a lista de apps — vai direto pra resolucao.
+    * Identifique qual app baseado no contexto da reclamacao.
+- 👉 Se ele tiver problema generico em um app, use request_screenshot pra pedir print da tela certa (procure no catalogo o app com nome similar ao app_model dele).`;
 
     // Se tem IBO PRO, sugere a tool de reparo automatico
     const hasIboPro = apps.some(a => {
