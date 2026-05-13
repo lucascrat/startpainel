@@ -130,6 +130,67 @@ export async function solvePinModal(page: Page, pin: string, opts: { timeoutMs?:
 }
 
 /**
+ * Detecta se a pagina atual e a tela de login do iboproapp
+ * (acontece quando a sessao expira ou o sistema desloga por conflito de MAC).
+ */
+async function isOnLoginPage(page: Page): Promise<boolean> {
+  return await page.evaluate(() => {
+    // Heuristicas combinadas pra ter alta confianca
+    const txt = document.body.innerText.toLowerCase();
+    const hasLoginTitle = txt.includes('login to add your playlist') || txt.includes('mac address') && txt.includes('device key');
+    const hasMacInput = !!document.querySelector('input[placeholder*=":"][placeholder*="a"]'); // ex placeholder MAC
+    const hasLoginBtn = Array.from(document.querySelectorAll('button')).some(b =>
+      (b.textContent || '').trim().toUpperCase() === 'LOGIN'
+    );
+    return (hasLoginTitle || hasMacInput) && hasLoginBtn;
+  });
+}
+
+/**
+ * Faz re-login se a pagina atual e a tela de login.
+ * Retorna true se desbloqueou (ou nem precisou), false se nao conseguiu sair de la.
+ */
+async function ensureLoggedIn(page: Page, mac: string, deviceKey: string): Promise<boolean> {
+  if (!await isOnLoginPage(page)) return true;
+
+  console.warn('[IBO Pro] ⚠️ Detectada tela de LOGIN no meio do fluxo. Refazendo login...');
+  const inputs = await page.$$('input');
+  if (inputs.length < 2) {
+    console.error('[IBO Pro] Tela de login mas sem inputs?');
+    return false;
+  }
+
+  await inputs[0].click({ clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type(mac, { delay: 100 });
+  await new Promise(r => setTimeout(r, 500));
+
+  await inputs[1].click({ clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type(deviceKey, { delay: 100 });
+  await new Promise(r => setTimeout(r, 500));
+
+  // Clica no LOGIN
+  const loginBtnHandle = await page.evaluateHandle(() => {
+    const btns = Array.from(document.querySelectorAll('button, a'));
+    return btns.find(b => (b.textContent || '').toUpperCase().includes('LOGIN'));
+  });
+  if (loginBtnHandle && loginBtnHandle.asElement()) {
+    const box = await (loginBtnHandle.asElement() as any).boundingBox();
+    if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+
+  await new Promise(r => setTimeout(r, 5000));
+  const stillOnLogin = await isOnLoginPage(page);
+  if (stillOnLogin) {
+    console.error('[IBO Pro] ❌ Re-login falhou — continua na tela de login');
+    return false;
+  }
+  console.log('[IBO Pro] ✅ Re-login OK');
+  return true;
+}
+
+/**
  * Verifica se o form de Edit (Update Playlist) esta visivel na tela —
  * inputs com placeholder/name relativos a Name/URL/m3u/Favorite.
  * Usado pra decidir se o PIN destrancou e abriu o form, ou se ainda
@@ -234,9 +295,25 @@ export async function runIBOProAutomation(mac: string, deviceKey: string, playli
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
         await new Promise(r => setTimeout(r, 4000));
-        
+
+        // Sessao pode ter caido (conflito de MAC com outro device, timeout).
+        // Se voltou pra login, refaz e tenta de novo.
+        if (!await ensureLoggedIn(page, mac, deviceKey)) {
+          throw new Error('Sessao do iboproapp caiu e nao consegui re-logar.');
+        }
+        // Re-clica Edit apos re-login
+        const reLoggedNow = await isOnLoginPage(page);
+        if (!reLoggedNow) {
+          // Se nao tava mais em login (ou ja era), garante que clicamos Edit
+          await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, a'));
+            const edit = btns.find(b => b.textContent?.toLowerCase().trim() === 'edit' && (b as HTMLElement).offsetParent !== null);
+            if (edit) (edit as HTMLElement).click();
+          });
+          await new Promise(r => setTimeout(r, 3000));
+        }
+
         // --- DESTRAVA DE PIN (helper isolado e testavel) ---
-        // PIN configurado pelo usuario na criacao da playlist protegida.
         const PIN_PROTECTED_PLAYLIST = '654321';
 
         // Tenta resolver o PIN. Timeout 20s — IBO Pro as vezes demora pra renderizar
@@ -299,59 +376,108 @@ export async function runIBOProAutomation(mac: string, deviceKey: string, playli
     await page.screenshot({ path: modalPath });
     console.log(`[IBO Pro] Debug do modal salvo: ${modalPath}`);
 
-    // 3. PREENCHER FORMULARIO (Descoberta Dinâmica + Digitação Real)
-    console.log('[IBO Pro] Localizando campos dinamicamente...');
-    
-    const fillSuccess = await page.evaluate(async (url) => {
-      const allInputs = Array.from(document.querySelectorAll('input'));
-      // No Edit, os campos já podem ter valor, então o placeholder pode estar escondido ou ser diferente
-      // Vamos buscar por placeholder OU por labels próximas se possível, ou simplesmente pela ordem
+    // 3. PREENCHER FORMULARIO — sequencia ordenada pra cada estado da UI
+    console.log('[IBO Pro] Localizando Name + URL...');
+
+    // 3a. Pega coordenadas SO de Name e URL (sempre visiveis)
+    const baseFields = await page.evaluate(() => {
+      const allInputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
       const nameInp = allInputs.find(i => i.placeholder?.includes('Favorite') || i.placeholder?.includes('Name') || i.name?.includes('name'));
       const urlInp = allInputs.find(i => i.placeholder?.includes('m3u') || i.placeholder?.includes('URL') || i.name?.includes('url'));
-      const protectCb = allInputs.find(i => i.type === 'checkbox' || i.id?.includes('protect') || i.name?.includes('protect'));
-      const pins = allInputs.filter(i => i.placeholder?.includes('PIN') || i.type === 'password');
-
-      if (!nameInp || !urlInp) return false;
-
-      // Devolve as coordenadas para o Puppeteer digitar de verdade
+      if (!nameInp || !urlInp) return null;
       return {
         nameCoords: nameInp.getBoundingClientRect().toJSON(),
         urlCoords: urlInp.getBoundingClientRect().toJSON(),
-        protectCoords: protectCb ? protectCb.getBoundingClientRect().toJSON() : null,
-        pinCoords: pins.map(p => p.getBoundingClientRect().toJSON())
       };
-    }, playlistUrl);
+    });
+    if (!baseFields) throw new Error('Não foi possível localizar os campos de Nome ou URL no modal.');
+    const { nameCoords, urlCoords } = baseFields as any;
 
-    if (!fillSuccess) throw new Error('Não foi possível localizar os campos de Nome ou URL no modal.');
-
-    const { nameCoords, urlCoords, protectCoords, pinCoords } = fillSuccess as any;
-
-    // Digita Nome
+    // 3b. Digita Nome
     await page.mouse.click(nameCoords.x + nameCoords.width / 2, nameCoords.y + nameCoords.height / 2, { clickCount: 3 });
     await page.keyboard.press('Backspace');
-    await page.keyboard.type('Lista Principal', { delay: 100 });
-    await new Promise(r => setTimeout(r, 500));
+    await page.keyboard.type('Lista Principal', { delay: 80 });
+    await new Promise(r => setTimeout(r, 400));
 
-    // Digita URL
+    // 3c. Digita URL
     await page.mouse.click(urlCoords.x + urlCoords.width / 2, urlCoords.y + urlCoords.height / 2, { clickCount: 3 });
     await page.keyboard.press('Backspace');
-    await page.keyboard.type(playlistUrl, { delay: 50 });
-    await new Promise(r => setTimeout(r, 500));
+    await page.keyboard.type(playlistUrl, { delay: 40 });
+    await new Promise(r => setTimeout(r, 400));
 
-    // Ativa Checkbox de Proteção se existir
-    if (protectCoords) {
-      console.log('[IBO Pro] Ativando "Protect this playlist"...');
-      await page.mouse.click(protectCoords.x + protectCoords.width / 2, protectCoords.y + protectCoords.height / 2);
-      await new Promise(r => setTimeout(r, 1000));
+    // 3d. MARCA O CHECKBOX "Protect this playlist"
+    // O IBO Pro usa checkbox customizado (provavelmente <input type="checkbox"> oculto
+    // com um label visual). Solucao: procurar pelo TEXTO "Protect this playlist" e
+    // clicar no elemento clicavel mais proximo (label ou container).
+    console.log('[IBO Pro] Marcando checkbox "Protect this playlist"...');
+    const checkboxClicked = await page.evaluate(() => {
+      // 1. Procura input type=checkbox real
+      const inputs = Array.from(document.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+      const realCheckbox = inputs.find(i => {
+        const wrapper = i.closest('label, div, span');
+        const txt = (wrapper?.textContent || '').toLowerCase();
+        return txt.includes('protect this playlist');
+      });
+      if (realCheckbox) {
+        if (!realCheckbox.checked) {
+          realCheckbox.click(); // dispara change/click events
+        }
+        return { strategy: 'real_checkbox', alreadyChecked: realCheckbox.checked };
+      }
+
+      // 2. Procura por label/span/div com texto "Protect this playlist" e clica
+      const all = Array.from(document.querySelectorAll('label, span, div, p')) as HTMLElement[];
+      const labelEl = all.find(el => {
+        const txt = el.textContent?.trim().toLowerCase() || '';
+        // Match exato ou começa com (pra evitar pegar texto longo que contem)
+        return txt === 'protect this playlist' || txt.startsWith('protect this playlist');
+      });
+      if (labelEl) {
+        labelEl.click();
+        return { strategy: 'label_text', alreadyChecked: false };
+      }
+
+      return null;
+    });
+
+    if (!checkboxClicked) {
+      console.warn('[IBO Pro] ⚠️ Checkbox "Protect this playlist" nao encontrado.');
+    } else {
+      console.log(`[IBO Pro] ✅ Checkbox marcado via ${(checkboxClicked as any).strategy}`);
+      await new Promise(r => setTimeout(r, 1200)); // espera UI atualizar (campos PIN podem aparecer/habilitar)
     }
 
-    // Digita PINs (654321)
-    console.log(`[IBO Pro] Preenchendo PIN em ${pinCoords.length} campos...`);
-    for (const coords of pinCoords) {
-      await page.mouse.click(coords.x + coords.width / 2, coords.y + coords.height / 2, { clickCount: 3 });
-      await page.keyboard.press('Backspace');
-      await page.keyboard.type('654321', { delay: 100 });
-      await new Promise(r => setTimeout(r, 500));
+    // 3e. RE-LOCALIZA os campos PIN — agora podem ter aparecido ou virado enabled
+    // depois do checkbox. Detecta pelo LABEL associado ("PIN" / "Confirm PIN")
+    // ou pela proximidade visual, em vez de placeholder (que pode estar vazio).
+    console.log('[IBO Pro] Localizando campos PIN e Confirm PIN...');
+    const pinFields = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+      // Filtra apenas inputs VISIVEIS e que não sejam o Name/URL/checkbox
+      const visible = inputs.filter(i => {
+        const r = i.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        if (i.type === 'checkbox' || i.type === 'hidden') return false;
+        // Excluir Name e URL pelos placeholders conhecidos
+        const p = (i.placeholder || '').toLowerCase();
+        if (p.includes('favorite') || p.includes('name') || p.includes('m3u') || p.includes('url')) return false;
+        return true;
+      });
+
+      // Os 2 campos restantes são PIN e Confirm PIN (na ordem)
+      return visible.slice(0, 2).map(inp => inp.getBoundingClientRect().toJSON());
+    });
+
+    if (pinFields.length === 0) {
+      console.warn('[IBO Pro] ⚠️ Nenhum campo PIN visivel — checkbox provavelmente nao foi marcado.');
+    } else {
+      console.log(`[IBO Pro] Preenchendo PIN 654321 em ${pinFields.length} campo(s)...`);
+      for (const coords of pinFields) {
+        await page.mouse.click(coords.x + coords.width / 2, coords.y + coords.height / 2, { clickCount: 3 });
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type('654321', { delay: 80 });
+        await new Promise(r => setTimeout(r, 400));
+      }
     }
 
     // Print de "Prova Real" antes de salvar

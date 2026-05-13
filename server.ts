@@ -933,6 +933,16 @@ ${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}`;
     ctx += `\n- Cliente sem app cadastrado: sugira instalacao usando o catalogo (send_app_info).`;
   } else {
     ctx += `\n- Cliente JA tem ${apps.length} app(s) instalado(s). Se ele tiver problema, use request_screenshot pra pedir print da tela certa do app dele (procure no catalogo o app com nome similar ao app_model dele).`;
+
+    // Se tem IBO PRO, sugere a tool de reparo automatico
+    const hasIboPro = apps.some(a => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('IBO PRO') || n.includes('IBO PRO');
+    });
+    if (hasIboPro) {
+      ctx += `\n- 🔧 Cliente tem IBO PRO instalado. Se ele reclamar de "lista parou", "nao abre canais", "desativou", "precisa atualizar" → use a tool *repair_ibo_pro_playlist* com username "${customer.username}". O bot vai logar no iboproapp.com e atualizar a lista dele automaticamente em ~1-2min.`;
+    }
   }
 
   if (customer.status === 'expired') {
@@ -1110,6 +1120,18 @@ NUNCA:
                 device_type: { type: "STRING", description: "tv | celular | pc" },
               },
               required: ["full_name", "desired_username", "app_id"],
+            },
+          },
+          // Reparo da lista do IBO Pro — quando cliente reclama "lista nao funciona"
+          {
+            name: "repair_ibo_pro_playlist",
+            description: "Atualiza/repara automaticamente a lista (playlist M3U) do cliente no app iboproapp.com. Use quando: (1) cliente reclama que 'lista parou', 'nao abre canais', 'desativou', 'precisa atualizar lista' E o app dele e IBO PRO. O sistema pega a URL M3U cadastrada do cliente, faz login no iboproapp.com com MAC+Key dele, edita a lista, marca como protegida com PIN 654321 e salva. Demora cerca de 1-2min. Avise o cliente que vai atualizar e que ele vai ver a lista voltar logo.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+              },
+              required: ["username"],
             },
           },
         ]
@@ -2005,6 +2027,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'create_test_account') {
           const ok = await handleCreateTestAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'repair_ibo_pro_playlist') {
+          const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
+          if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
@@ -2408,6 +2433,110 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     return true; // mensagem inicial ja foi enviada
   } catch (e: any) {
     console.error('[Tool create_test_account] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Tool handler: dispara automacao IBO Pro pra atualizar a lista do cliente.
+ *
+ * Fluxo:
+ *   1. Avisa cliente "vou atualizar sua lista, aguarda 1-2min..."
+ *   2. Background: busca dados do cliente (M3U + MAC + Key do app IBO PRO)
+ *      e enfileira job ibo_pro_setup pro worker
+ *   3. Quando termina, manda mensagem final (sucesso ou erro)
+ *
+ * Mesmo padrao do handleCreateTestAccount — fire-and-forget pra nao travar
+ * o webhook handler por minutos.
+ */
+async function handleRepairIboProPlaylist(remoteJid: string, username: string): Promise<boolean> {
+  try {
+    if (!username) {
+      console.warn('[Tool repair_ibo_pro_playlist] sem username');
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Preciso saber qual seu usuario pra atualizar a lista. Pode me confirmar?');
+        return true;
+      } catch { return false; }
+    }
+
+    // Valida que o cliente tem app IBO PRO + M3U cadastrados ANTES de avisar
+    // (evita avisar "vou atualizar" e depois "falhou" se faltam dados basicos)
+    const custRes = await pool.query('SELECT id, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, `😕 Nao achei seu cadastro pelo usuario "${username}". Pode confirmar?`);
+        return true;
+      } catch { return false; }
+    }
+    if (!customer.playlist_url) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Vi seu cadastro mas falta sua URL de lista. Vou chamar o operador pra resolver.');
+        return true;
+      } catch { return false; }
+    }
+
+    const appsRes = await pool.query(
+      `SELECT app_name, app_model, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const iboApp = appsRes.rows.find((a: any) => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('IBO PRO') || n.includes('IBO PRO');
+    });
+    if (!iboApp || !iboApp.mac_address || !iboApp.device_key) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Pra atualizar preciso do MAC e Device Key do seu IBO Pro. Pode me passar?');
+        return true;
+      } catch { return false; }
+    }
+
+    // Avisa cliente que vai demorar
+    const evo = await getEvolutionService();
+    await evo.sendMessage(
+      remoteJid,
+      `🔧 Vou atualizar sua lista no IBO Pro agora.\n\nMAC: ${iboApp.mac_address}\n\nIsso leva uns 1-2min. Quando terminar, vou te avisar e ja vai voltar a funcionar. 🎬`
+    );
+
+    // Dispara o job em background — nao espera, senao trava o webhook por minutos
+    (async () => {
+      try {
+        const jobId = await enqueueJob('ibo_pro_setup', {
+          mac: iboApp.mac_address,
+          key: iboApp.device_key,
+          playlistUrl: customer.playlist_url,
+        });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(
+            remoteJid,
+            `✅ Pronto! Sua lista foi atualizada no IBO Pro. Abre o app ai na sua tela que ja vai estar funcionando. 🎬\n\nSe precisar de algo, e so chamar.`
+          );
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Nao consegui atualizar agora: ${result?.message || 'erro tecnico'}.\n\nVou avisar o operador pra resolver pessoalmente.`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool repair_ibo_pro_playlist] background falhou:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Tive um problema tecnico ao atualizar. O operador ja foi avisado e te chama logo.');
+        } catch {}
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool repair_ibo_pro_playlist] erro:', e?.message);
     return false;
   }
 }
