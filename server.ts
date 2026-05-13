@@ -1633,28 +1633,49 @@ app.post('/api/webhooks/evolution/:event?',
        await pool.query('INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)', [aiResult.text, 'ai', 'text', remoteJid, pushName]);
     }
 
+    // Executa as tools que a IA chamou. Conta quantas tiveram efeito (enviaram algo
+    // pro cliente). Se NENHUMA enviou nada E a IA nao gerou texto, manda fallback —
+    // senao o cliente fica em silencio (caso comum: IA chama send_app_info com app_id
+    // que nao existe no catalogo).
+    let toolsThatSent = 0;
     for (const call of aiResult.functionCalls) {
-      if (call.name === 'generate_pix') {
-        await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
-      } else if (call.name === 'register_pix_receipt') {
-        // Sobe a imagem do comprovante pro R2 (fallback: data URI inline se R2 falhar)
-        let imageStored: string | null = null;
-        if (mediaData?.data) {
-          const r = await uploadToR2('receipts', mediaData.data, mediaData.mimeType);
-          imageStored = r.ok ? r.url : `data:${mediaData.mimeType};base64,${mediaData.data}`;
+      console.log(`[Webhook] IA chamou tool: ${call.name}`, JSON.stringify(call.args || {}).slice(0, 200));
+      try {
+        if (call.name === 'generate_pix') {
+          await handlePixGenerationTool(remoteJid, pushName, call.args.username, call.args.amount);
+          toolsThatSent++;
+        } else if (call.name === 'register_pix_receipt') {
+          let imageStored: string | null = null;
+          if (mediaData?.data) {
+            const r = await uploadToR2('receipts', mediaData.data, mediaData.mimeType);
+            imageStored = r.ok ? r.url : `data:${mediaData.mimeType};base64,${mediaData.data}`;
+          }
+          await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored);
+          // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
+          // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
+        } else if (call.name === 'send_app_info') {
+          const ok = await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'request_screenshot') {
+          const ok = await handleRequestScreenshot(remoteJid, call.args.app_id, call.args.custom_instruction);
+          if (ok) toolsThatSent++;
+        } else {
+          console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
-        await handleRegisterPixReceipt(
-          remoteJid,
-          pushName,
-          call.args.payer_name,
-          call.args.amount,
-          call.args.paid_at,
-          imageStored
-        );
-      } else if (call.name === 'send_app_info') {
-        await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
-      } else if (call.name === 'request_screenshot') {
-        await handleRequestScreenshot(remoteJid, call.args.app_id, call.args.custom_instruction);
+      } catch (e: any) {
+        console.error(`[Webhook] tool ${call.name} falhou:`, e?.message || e);
+      }
+    }
+
+    // Fallback: IA so chamou tools mas nenhuma enviou nada visivel pro cliente.
+    // Envia um texto generico pro cliente nao ficar no escuro.
+    if (!aiResult.text && aiResult.functionCalls.length > 0 && toolsThatSent === 0) {
+      console.warn('[Webhook] IA chamou tool(s) mas nenhuma enviou resposta — mandando fallback');
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Desculpa, tive um probleminha pra responder essa. Pode me dizer o que voce precisa?');
+      } catch (e: any) {
+        console.error('[Webhook] sendMessage fallback falhou:', e?.message);
       }
     }
   } catch (err: any) { console.error('[Webhook Error]', err); }
@@ -1758,15 +1779,21 @@ async function urlToBase64(url: string): Promise<{ base64: string; mimeType: str
 
 // Tool handler: envia info de um app do catalogo pro cliente.
 // Manda a imagem do app + caption com links de download.
-async function handleSendAppInfo(remoteJid: string, appId: number, customMessage?: string) {
+// Retorna true se conseguiu enviar algo pro cliente; false caso contrario (caller
+// pode usar pra mandar fallback). O fallback "app nao encontrado" e enviado aqui
+// mesmo pra IA nao precisar lidar com erro.
+async function handleSendAppInfo(remoteJid: string, appId: number, customMessage?: string): Promise<boolean> {
   try {
     const r = await pool.query('SELECT * FROM app_catalog WHERE id = $1 AND is_active = true', [appId]);
     const app = r.rows[0];
     if (!app) {
-      console.warn(`[Tool send_app_info] app ${appId} nao encontrado/inativo`);
-      return;
+      console.warn(`[Tool send_app_info] app ${appId} nao encontrado/inativo — pedindo desculpas ao cliente`);
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Ops, um momento — vou te passar a info correta. Pode me dizer pra qual aparelho voce quer assistir (TV, celular, PC)?');
+        return true;
+      } catch { return false; }
     }
-    // Monta o texto: mensagem custom (se houver) + nome + links
     const lines = [customMessage?.trim() || `📱 *${app.name}*`].filter(Boolean);
     if (app.description) lines.push(app.description);
     const links: string[] = [];
@@ -1786,26 +1813,30 @@ async function handleSendAppInfo(remoteJid: string, appId: number, customMessage
       if (img) {
         await evo.sendMedia(remoteJid, img.base64, caption, `${app.name}.${img.mimeType.split('/')[1] || 'jpg'}`);
         console.log(`[Tool] send_app_info: enviou ${app.name} pro ${remoteJid}`);
-        return;
+        return true;
       }
-      // se imagem nao baixou, manda so texto
       console.warn(`[Tool send_app_info] imagem ${app.app_image_url} nao baixou, enviando so texto`);
     }
     await evo.sendMessage(remoteJid, caption);
     console.log(`[Tool] send_app_info: enviou ${app.name} (texto-only) pro ${remoteJid}`);
+    return true;
   } catch (e: any) {
     console.error('[Tool send_app_info] erro:', e?.message);
+    return false;
   }
 }
 
-// Tool handler: pede print de uma area especifica do app, mostrando imagem de exemplo.
-async function handleRequestScreenshot(remoteJid: string, appId: number, customInstruction?: string) {
+async function handleRequestScreenshot(remoteJid: string, appId: number, customInstruction?: string): Promise<boolean> {
   try {
     const r = await pool.query('SELECT * FROM app_catalog WHERE id = $1 AND is_active = true', [appId]);
     const app = r.rows[0];
     if (!app) {
-      console.warn(`[Tool request_screenshot] app ${appId} nao encontrado/inativo`);
-      return;
+      console.warn(`[Tool request_screenshot] app ${appId} nao encontrado/inativo — pedindo desculpas`);
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Um momento — me diz qual app voce esta usando que eu te ajudo melhor.');
+        return true;
+      } catch { return false; }
     }
     const lines = [
       `📸 *Preciso de um print do ${app.name}*`,
@@ -1819,13 +1850,15 @@ async function handleRequestScreenshot(remoteJid: string, appId: number, customI
       if (img) {
         await evo.sendMedia(remoteJid, img.base64, caption, `exemplo-${app.name}.${img.mimeType.split('/')[1] || 'jpg'}`);
         console.log(`[Tool] request_screenshot: enviou exemplo de ${app.name} pro ${remoteJid}`);
-        return;
+        return true;
       }
     }
     await evo.sendMessage(remoteJid, caption);
     console.log(`[Tool] request_screenshot: enviou instrucao de ${app.name} (sem imagem) pro ${remoteJid}`);
+    return true;
   } catch (e: any) {
     console.error('[Tool request_screenshot] erro:', e?.message);
+    return false;
   }
 }
 
