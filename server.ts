@@ -767,18 +767,61 @@ async function buildCustomerContext(remoteJid: string, pushName: string): Promis
   const customer = await findCustomerByJid(remoteJid);
   const phone = normalizePhone(remoteJid);
 
-  // === Cliente NAO cadastrado ===
+  // === Cliente NAO cadastrado — fluxo de prospeccao + escolha de app ===
   if (!customer) {
-    return `\n\n=== CONTEXTO DO CONTATO ===
-Esta pessoa NAO esta cadastrada como cliente no nosso sistema.
-- Numero WhatsApp: +${phone}
-- Nome no WhatsApp: ${pushName}
+    // Carrega ordem do catalogo pra IA saber em que ordem oferecer os apps.
+    const catalog = await getAppCatalogCached();
+    let appList = '';
+    if (catalog.length > 0) {
+      appList = '\n\nORDEM DOS APPS A SUGERIR (testa um por vez, do primeiro ao ultimo):';
+      catalog.forEach((a, i) => {
+        appList += `\n  ${i + 1}º — [id=${a.id}] ${a.name} (${a.device_type})${a.description ? ' — ' + a.description : ''}`;
+      });
+    }
 
-ESTRATEGIA:
-- Trate como prospect/visitante interessado.
-- Apresente nossos planos brevemente e ofereca um app pra teste (use a tool send_app_info com o app de display_order=0 do catalogo).
-- Se ele quiser virar cliente, pegue: nome completo, qual aparelho usa (TV/celular), forma de pagamento.
-- NUNCA invente que ele e cliente.`;
+    return `\n\n=== CONTEXTO DO CONTATO (NOVO — NAO CADASTRADO) ===
+Esta pessoa NAO esta cadastrada como cliente.
+- Numero WhatsApp: +${phone}
+- Nome no WhatsApp: ${pushName}${appList}
+
+FLUXO DE ATENDIMENTO (siga esses passos na ordem):
+
+PASSO 1 — DESCOBRIR O APARELHO:
+- Pergunte: "Em qual aparelho voce quer assistir? Smart TV, celular ou PC?"
+- Aguarde a resposta antes de continuar.
+
+PASSO 2 — SUGERIR O 1o APP DA LISTA:
+- Ofereca o PRIMEIRO app do catalogo (display_order menor) compativel com o aparelho dele.
+- Use SEMPRE a tool send_app_info com o app_id correspondente. NUNCA invente um app_id — use apenas IDs da lista acima.
+- Pergunte se ele encontra esse app na loja/celular dele.
+
+PASSO 3 — SE NAO ACHAR, OFERECER O PROXIMO:
+- Se ele disser "nao achei" ou "nao tem" ou "nao encontrei": ofereca o PROXIMO app da lista (o 2o).
+- Continue oferecendo um por um na ordem ate ele achar.
+- NUNCA pule a ordem. Se ele acabou de tentar o 2o, o proximo e o 3o.
+
+PASSO 4 — APP ENCONTRADO, COLETAR DADOS DE ATIVACAO:
+Quando ele disser "achei" / "instalei" / "abri o app":
+- Use a tool request_screenshot com o app_id que ele instalou — vai mandar imagem mostrando onde ficam o MAC e o Device Key.
+- Peca em texto: "Otimo! Pra ativar pra voce, me manda o MAC e o Device Key que aparecem na tela inicial do app."
+- Importante: APENAS DEPOIS de send_app_info ter sido aceito, peca os dados.
+
+PASSO 5 — RECEBER OS DADOS:
+Quando ele mandar o MAC (formato XX:XX:XX:XX:XX:XX) e/ou Device Key:
+- Confirme os dados que voce leu, repetindo eles.
+- Peca o nome completo dele pra cadastrar.
+- Avise que vai gerar o Pix pra ele pagar e ativar.
+
+PASSO 6 — GERAR PIX:
+- Apos coletar nome + MAC + Key + nome do app escolhido, fale o valor (R$ 49,90/mes para 1 linha).
+- Use generate_pix com username = nome simplificado dele (ex: "Joao24h"), amount = 49.90.
+- Avise: "Assim que o pagamento cair (pode mandar print do comprovante aqui), eu ativo o app na sua TV automaticamente. 🎬"
+
+REGRAS:
+- NUNCA finja que ele ja e cliente.
+- NUNCA gere Pix antes de ter o MAC + Key + nome + app escolhido.
+- SEMPRE use send_app_info com IDs reais do catalogo (lista acima).
+- Se ele mandar foto de comprovante antes de ter cadastro, peca os dados primeiro.`;
   }
 
   // === Cliente CADASTRADO — busca tudo em paralelo ===
@@ -1030,7 +1073,26 @@ NUNCA:
           // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
           { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
           // App catalog — pede print de uma area especifica do app
-          { name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } }
+          { name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } },
+          // Cadastro de NOVO CLIENTE — chama no fim do fluxo de prospeccao
+          {
+            name: "register_new_customer",
+            description: "Cadastra um cliente NOVO (que nao estava no sistema) com os dados que voce coletou. Use APENAS apos ter: (1) nome completo, (2) app escolhido com app_id do catalogo, (3) MAC e/ou Device Key. Apos cadastrar, gere o Pix com generate_pix.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                full_name: { type: "STRING", description: "Nome completo do cliente (ex: 'Joao Silva')" },
+                desired_username: { type: "STRING", description: "Username sugerido pro cadastro (ex: 'joao24h'). Letras/numeros, sem espacos." },
+                app_id: { type: "NUMBER", description: "ID do app do catalogo que o cliente vai usar (pega da lista do system prompt)" },
+                mac_address: { type: "STRING", description: "MAC do aparelho (formato XX:XX:XX:XX:XX:XX). Opcional se for tipo user/pass." },
+                device_key: { type: "STRING", description: "Device Key do app. Opcional." },
+                app_username: { type: "STRING", description: "Username do app (se for login user/pass). Opcional." },
+                app_password: { type: "STRING", description: "Senha do app (se for login user/pass). Opcional." },
+                device_type: { type: "STRING", description: "tv | celular | pc" },
+              },
+              required: ["full_name", "desired_username", "app_id"],
+            },
+          },
         ]
       }] as any
     });
@@ -1802,6 +1864,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'request_screenshot') {
           const ok = await handleRequestScreenshot(remoteJid, call.args.app_id, call.args.custom_instruction);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'register_new_customer') {
+          const ok = await handleRegisterNewCustomer(remoteJid, pushName, call.args);
+          if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
@@ -2001,6 +2066,124 @@ async function handleRequestScreenshot(remoteJid: string, appId: number, customI
     return true;
   } catch (e: any) {
     console.error('[Tool request_screenshot] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Cadastra um cliente novo que a IA coletou via fluxo de prospeccao.
+ *
+ * Cria entrada em `customers` (status=pending até pagamento), associa o WhatsApp,
+ * e cadastra um `customer_apps` ja preenchido com MAC/Key/etc — pra quando voce
+ * for ativar pelo painel admin, o app ja esta la pronto.
+ *
+ * Status do customer fica 'pending' (NAO active) — vira active quando voce confirmar
+ * pagamento ou rodar a automacao de ativacao. Isso evita "clientes fantasmas" que
+ * pediram mas nunca pagaram.
+ *
+ * Envia confirmacao ao cliente listando os dados que registrou.
+ */
+async function handleRegisterNewCustomer(remoteJid: string, pushName: string, args: any): Promise<boolean> {
+  try {
+    const fullName: string = (args.full_name || pushName || '').trim();
+    const username: string = (args.desired_username || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const appId = Number(args.app_id);
+    const mac = (args.mac_address || '').trim();
+    const key = (args.device_key || '').trim();
+    const appUser = (args.app_username || '').trim();
+    const appPass = (args.app_password || '').trim();
+    const deviceType = (args.device_type || '').trim().toLowerCase();
+
+    if (!fullName || !username || !appId) {
+      console.warn('[Tool register_new_customer] dados insuficientes:', { fullName: !!fullName, username: !!username, appId });
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Faltam algumas informacoes pra finalizar. Pode confirmar seu nome completo e o app que voce instalou?');
+        return true;
+      } catch { return false; }
+    }
+
+    // Busca o app no catalogo pra puxar o nome/modelo
+    const catRes = await pool.query('SELECT * FROM app_catalog WHERE id = $1', [appId]);
+    const catalogApp = catRes.rows[0];
+    if (!catalogApp) {
+      console.warn(`[Tool register_new_customer] app_id ${appId} nao existe no catalogo`);
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Tive um problema pra identificar o app. Pode me dizer de novo qual app voce esta usando?');
+        return true;
+      } catch { return false; }
+    }
+
+    // Garante username unico no banco (sufixo numerico se ja existir)
+    let finalUsername = username;
+    let suffix = 1;
+    while (true) {
+      const existing = await pool.query('SELECT id FROM customers WHERE username = $1', [finalUsername]);
+      if (!existing.rows[0]) break;
+      finalUsername = `${username}${suffix}`;
+      suffix++;
+      if (suffix > 99) { finalUsername = `${username}${Date.now() % 10000}`; break; }
+    }
+
+    const isTv = deviceType === 'tv' || catalogApp.device_type === 'tv';
+
+    // Cria customer (status=pending — ativa quando o admin confirmar pagamento)
+    const custRes = await pool.query(
+      `INSERT INTO customers (username, name, whatsapp, status, lines_count)
+       VALUES ($1, $2, $3, 'pending', 1) RETURNING id`,
+      [finalUsername, fullName, '+' + normalizePhone(remoteJid)]
+    );
+    const customerId = custRes.rows[0].id;
+
+    // Cria customer_app com os dados coletados
+    const accessType = mac || key ? 'mac_key' : 'user_pass';
+    await pool.query(
+      `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, device_key, username, password, android_link, ios_link, is_tv)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        customerId,
+        catalogApp.name,                    // app_name (ex: "FUN PLAY")
+        catalogApp.name,                    // app_model
+        accessType,
+        mac || null,
+        key || null,
+        appUser || null,
+        appPass || null,
+        catalogApp.android_link || null,
+        catalogApp.ios_link || null,
+        isTv,
+      ]
+    );
+
+    console.log(`[Tool] register_new_customer: cadastrou ${finalUsername} (${fullName}) com app ${catalogApp.name}`);
+
+    // Confirma pro cliente
+    const lines = [
+      `✅ *Pedido registrado!* Dados que anotei:`,
+      `Nome: ${fullName}`,
+      `Login do plano: ${finalUsername}`,
+      `App: ${catalogApp.name}`,
+    ];
+    if (mac) lines.push(`MAC: ${mac}`);
+    if (key) lines.push(`Device Key: ${key}`);
+    if (appUser) lines.push(`Usuario do app: ${appUser}`);
+    lines.push('');
+    lines.push('Agora vou te mandar o Pix da primeira mensalidade. Assim que confirmar o pagamento, ativo o app na sua tela. 🎬');
+
+    try {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, lines.join('\n'));
+    } catch (e: any) {
+      console.error('[Tool register_new_customer] envio confirmacao falhou:', e?.message);
+    }
+    return true;
+  } catch (e: any) {
+    console.error('[Tool register_new_customer] erro:', e?.message);
+    try {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Tive um problema pra registrar agora. Pode tentar de novo daqui a pouco?');
+    } catch {}
     return false;
   }
 }
