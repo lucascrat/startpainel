@@ -23,6 +23,7 @@ import {
   renewClientPuppeteer,
   createClientAndGetPlaylist,
   activateUltraPlayer,
+  activateFunPlay,
 } from './src/services/startpainel-puppeteer.js';
 import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
 
@@ -51,6 +52,7 @@ const handlers: Record<string, JobHandler> = {
   renew_client: ({ username }) => renewClientPuppeteer(username),
   create_client: ({ username }) => createClientAndGetPlaylist(username),
   activate_ultra: ({ username, mac }) => activateUltraPlayer(username, mac),
+  activate_funplay: ({ username, mac }) => activateFunPlay(username, mac),
   ibo_setup: ({ mac, key, playlistUrl, targetUrl }) =>
     // GEMINI_API_KEY do worker.env — nao recebe via payload pra nao expor no banco.
     runIboPlayerAutomation(mac, key, playlistUrl, process.env.GEMINI_API_KEY, targetUrl),

@@ -396,10 +396,23 @@ export async function createClientAndGetPlaylist(username: string): Promise<Rene
   }
 }
 
-export async function activateUltraPlayer(username: string, mac: string): Promise<RenewalResult> {
+/**
+ * Ativa um player no painel CMS pra um cliente:
+ *   1. Login no cms.startpainel.cc
+ *   2. Clientes -> pesquisa username -> Visualizar
+ *   3. Botao "Ativar Player"
+ *   4. No modal: dropdown seleciona `playerName` (matching por texto, case-insensitive)
+ *   5. Input do MAC
+ *   6. Confirma com botao "Ativar Player" / "Salvar" / "Confirmar"
+ *
+ * Wrappers (compatibilidade com codigo existente):
+ *   - activateUltraPlayer(u,m) -> activatePlayer(u,m,'Ultra Player')
+ *   - activateFunPlay(u,m)     -> activatePlayer(u,m,'Fun Play')
+ */
+export async function activatePlayer(username: string, mac: string, playerName: string): Promise<RenewalResult> {
   let browser: Browser | null = null;
   try {
-    console.log(`\n[Puppeteer] === Iniciando ativação do Ultra Player para: ${username} ===`);
+    console.log(`\n[Puppeteer] === Ativando "${playerName}" para: ${username} (MAC: ${mac}) ===`);
     browser = await launchBrowser(false); // Visible for monitoring
     const page = await browser.newPage();
     
@@ -456,30 +469,35 @@ export async function activateUltraPlayer(username: string, mac: string): Promis
 
     await new Promise(r => setTimeout(r, 2000)); // wait for modal
 
-    // 5. Select Ultra Player
-    console.log('[Puppeteer] Selecionando Ultra Player e preenchendo MAC...');
-    
-    // Select dropdown
+    // 5. Select player no dropdown
+    console.log(`[Puppeteer] Selecionando "${playerName}" no dropdown e preenchendo MAC...`);
+
+    // Select dropdown — match por substring case-insensitive do texto da option
     const selectSelectors = ['select[name="player"]', 'select[name="app"]', 'select'];
     let selected = false;
+    const playerNameLower = playerName.toLowerCase();
     for (const sel of selectSelectors) {
       try {
         const selectEl = await page.$(sel);
         if (selectEl) {
-          await page.evaluate((selector) => {
+          const ok = await page.evaluate((selector, needle) => {
             const select = document.querySelector(selector) as HTMLSelectElement;
+            if (!select) return false;
             for (let i = 0; i < select.options.length; i++) {
-              if (select.options[i].text.toLowerCase().includes('ultra player')) {
+              if (select.options[i].text.toLowerCase().includes(needle)) {
                 select.selectedIndex = i;
                 select.dispatchEvent(new Event('change'));
-                break;
+                return true;
               }
             }
-          }, sel);
-          selected = true;
-          break;
+            return false;
+          }, sel, playerNameLower);
+          if (ok) { selected = true; break; }
         }
       } catch(e) {}
+    }
+    if (!selected) {
+      throw new Error(`Player "${playerName}" nao encontrado no dropdown. Confira o nome no painel.`);
     }
 
     // Input MAC
@@ -517,13 +535,13 @@ export async function activateUltraPlayer(username: string, mac: string): Promis
 
     return {
       success: true,
-      message: `Ultra Player ativado com sucesso para ${username} (MAC: ${mac})!`
+      message: `${playerName} ativado com sucesso para ${username} (MAC: ${mac})!`
     };
 
   } catch (error: any) {
-    console.error('[Puppeteer] Erro na ativação do Ultra Player:', error.message);
-    return { 
-      success: false, 
+    console.error(`[Puppeteer] Erro na ativacao do ${playerName}:`, error.message);
+    return {
+      success: false,
       message: `Erro: ${error.message}`
     };
   } finally {
@@ -531,4 +549,14 @@ export async function activateUltraPlayer(username: string, mac: string): Promis
       // await browser.close();
     }
   }
+}
+
+// Wrappers de compatibilidade (cada player tem seu nome no dropdown do CMS).
+// Se o painel mudar o nome exato no futuro, basta editar a string aqui.
+export async function activateUltraPlayer(username: string, mac: string): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Ultra Player');
+}
+
+export async function activateFunPlay(username: string, mac: string): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Fun Play');
 }

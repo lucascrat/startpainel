@@ -1418,6 +1418,16 @@ app.post('/api/automations/startpainel/activate-ultra', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/automations/startpainel/activate-funplay', async (req, res) => {
+  try {
+    const { username, mac } = req.body;
+    if (!username || !mac) return res.status(400).json({ error: 'username e mac obrigatorios' });
+    const jobId = await enqueueJob('activate_funplay', { username, mac });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // AI Usage Stats
 app.get('/api/ai-usage', async (req, res) => {
   try {
