@@ -1057,7 +1057,8 @@ PRIORIDADES (na ordem):
 NUNCA:
 - Invente preço, vencimento ou data — use APENAS o que está no CONTEXTO.
 - Diga "não tenho acesso a..." — você tem TUDO no contexto.
-- Repita perguntas que o cliente já respondeu na conversa.`;
+- Repita perguntas que o cliente já respondeu na conversa.
+- Repita uma TOOL que voce ja chamou nesta conversa SE o cliente apenas agradeceu, confirmou que funcionou ou esta fazendo conversa social. As tools (create_test_account, repair_ibo_pro_playlist, generate_pix, register_new_customer) so devem ser chamadas quando o cliente PEDE algo NOVO ativamente. Quando ele diz "obrigado", "deu certo", "funcionou", "valeu" — apenas responda com texto agradecendo de volta, NUNCA dispare a tool de novo.`;
 
     let systemPrompt = DEFAULT_PROMPT;
     try {
@@ -1143,7 +1144,7 @@ NUNCA:
           // Reparo da lista do IBO Pro — quando cliente reclama "lista nao funciona"
           {
             name: "repair_ibo_pro_playlist",
-            description: "Atualiza/repara automaticamente a lista (playlist M3U) do cliente no app iboproapp.com. Use quando: (1) cliente reclama que 'lista parou', 'nao abre canais', 'desativou', 'precisa atualizar lista' E o app dele e IBO PRO. O sistema pega a URL M3U cadastrada do cliente, faz login no iboproapp.com com MAC+Key dele, edita a lista, marca como protegida com PIN 654321 e salva. Demora cerca de 1-2min. Avise o cliente que vai atualizar e que ele vai ver a lista voltar logo.",
+            description: "Atualiza/repara automaticamente a lista (playlist M3U) do cliente no app iboproapp.com. \n\nUSE QUANDO: cliente RECLAMA ativamente — 'lista parou', 'nao abre canais', 'desativou', 'precisa atualizar a lista', 'da erro pra abrir', 'fica carregando' — E o app dele e IBO PRO.\n\nNAO USE NUNCA QUANDO: (a) cliente esta AGRADECENDO ('obrigado', 'deu certo', 'funcionou', 'valeu', 'top', 'show'); (b) cliente esta confirmando que esta funcionando ('agora foi', 'voltou', 'esta ok', 'consegui'); (c) conversa social ('oi', 'bom dia', 'tudo bem'); (d) voce ja chamou essa tool nesta conversa nos ultimos minutos. Nesses casos so responda com TEXTO de boas-vindas/agradecimento, NUNCA chame a tool de novo.",
             parameters: {
               type: "OBJECT",
               properties: {
@@ -2454,19 +2455,44 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
 }
 
 /**
+ * Anti-spam: registra quando a tool repair_ibo_pro_playlist foi executada
+ * pra cada cliente. Se chamada de novo dentro de REPAIR_COOLDOWN_MS, retorna
+ * mensagem amigavel em vez de re-executar.
+ *
+ * Cenario classico: IA repara → cliente agradece "deu certo" → IA chama de novo
+ * por engano. Esse cooldown evita o loop.
+ */
+const _lastRepair = new Map<string, number>();
+const REPAIR_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos
+
+/**
  * Tool handler: dispara automacao IBO Pro pra atualizar a lista do cliente.
  *
  * Fluxo:
- *   1. Avisa cliente "vou atualizar sua lista, aguarda 1-2min..."
- *   2. Background: busca dados do cliente (M3U + MAC + Key do app IBO PRO)
+ *   1. Checa cooldown — se rodou ha <5min, manda mensagem de confirmacao em vez
+ *      de re-executar (evita IA disparar de novo quando cliente so agradece)
+ *   2. Avisa cliente "vou atualizar sua lista, aguarda 1-2min..."
+ *   3. Background: busca dados do cliente (M3U + MAC + Key do app IBO PRO)
  *      e enfileira job ibo_pro_setup pro worker
- *   3. Quando termina, manda mensagem final (sucesso ou erro)
+ *   4. Quando termina, manda mensagem final (sucesso ou erro)
  *
  * Mesmo padrao do handleCreateTestAccount — fire-and-forget pra nao travar
  * o webhook handler por minutos.
  */
 async function handleRepairIboProPlaylist(remoteJid: string, username: string): Promise<boolean> {
   try {
+    // Anti-spam: se ja rodou recente, nao re-executa
+    const lastRun = _lastRepair.get(remoteJid);
+    if (lastRun && (Date.now() - lastRun) < REPAIR_COOLDOWN_MS) {
+      const minutesAgo = Math.round((Date.now() - lastRun) / 60_000);
+      console.log(`[Tool repair_ibo_pro_playlist] BLOQUEADO — ja rodou ha ${minutesAgo}min pro ${remoteJid}`);
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, `😊 Acabei de atualizar sua lista ha ${minutesAgo} minuto(s)! Se ainda nao funcionou, abre o app e fecha de novo. Aguarda mais uns segundinhos e tenta.`);
+        return true;
+      } catch { return false; }
+    }
+
     if (!username) {
       console.warn('[Tool repair_ibo_pro_playlist] sem username');
       try {
@@ -2511,6 +2537,9 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
         return true;
       } catch { return false; }
     }
+
+    // Marca timestamp ANTES de avisar/disparar pra cobrir corrida com mensagens proximas
+    _lastRepair.set(remoteJid, Date.now());
 
     // Avisa cliente que vai demorar
     const evo = await getEvolutionService();
