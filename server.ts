@@ -720,55 +720,176 @@ async function findCustomerByJid(remoteJid: string): Promise<any | null> {
   return null;
 }
 
-// Monta um bloco de contexto pro prompt do Gemini com info do cliente (se conhecido).
+// Formata BRL pra exibir bonito ("R$ 49,90")
+function formatBRL(value: any): string {
+  const n = Number(value);
+  if (!isFinite(n)) return 'R$ 0,00';
+  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+// Formata data brasileira ("13/05/2026")
+function formatDate(d: any): string {
+  if (!d) return 'sem data';
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return 'sem data';
+  return date.toLocaleDateString('pt-BR');
+}
+
+// Conta dias entre hoje e uma data — positivo no futuro, negativo no passado.
+function daysFromNow(d: any): number | null {
+  if (!d) return null;
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return null;
+  return Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
+// Mascara MAC ou Key pra dica/segurança no log (mostra primeiros + ultimos chars)
+function maskValue(v: string | null | undefined, keep = 4): string {
+  if (!v) return '-';
+  if (v.length <= keep * 2) return v;
+  return v.slice(0, keep) + '…' + v.slice(-keep);
+}
+
+/**
+ * Monta o contexto completo do cliente pra IA. Inclui:
+ * - Dados pessoais (nome, WhatsApp, username)
+ * - Status, vencimento (com dias absolutos e categorizado: vencido/critico/ok)
+ * - Financeiro (valor, custo, lucro, total pago)
+ * - Lista completa de apps do cliente (MAC, key, username, password, links) — info real
+ * - Historico de pagamentos recentes (ultimos 3 comprovantes)
+ * - Renovacao (ultima data)
+ * - Instrucoes contextuais (o que fazer baseado no estado)
+ *
+ * Tudo aqui vai DIRETO no system prompt do Gemini. A IA passa a operar como um
+ * atendente que ja CONHECE o cliente — nao pergunta o que ja sabe.
+ */
 async function buildCustomerContext(remoteJid: string, pushName: string): Promise<string> {
   const customer = await findCustomerByJid(remoteJid);
   const phone = normalizePhone(remoteJid);
 
+  // === Cliente NAO cadastrado ===
   if (!customer) {
-    return `\n\n=== CONTEXTO ===
+    return `\n\n=== CONTEXTO DO CONTATO ===
 Esta pessoa NAO esta cadastrada como cliente no nosso sistema.
 - Numero WhatsApp: +${phone}
-- Nome do contato (do WhatsApp): ${pushName}
-Trate como prospect/visitante. Pergunte o username se precisar atender uma renovacao/suporte.`;
+- Nome no WhatsApp: ${pushName}
+
+ESTRATEGIA:
+- Trate como prospect/visitante interessado.
+- Apresente nossos planos brevemente e ofereca um app pra teste (use a tool send_app_info com o app de display_order=0 do catalogo).
+- Se ele quiser virar cliente, pegue: nome completo, qual aparelho usa (TV/celular), forma de pagamento.
+- NUNCA invente que ele e cliente.`;
   }
 
-  // Carrega apps do cliente pra dar contexto completo
-  const appsRes = await pool.query(
-    'SELECT app_name, app_model, mac_address, device_key, username, is_tv FROM customer_apps WHERE customer_id = $1 ORDER BY created_at DESC',
-    [customer.id]
-  );
+  // === Cliente CADASTRADO — busca tudo em paralelo ===
+  const [appsRes, receiptsRes] = await Promise.all([
+    pool.query(
+      `SELECT app_name, app_model, access_type, mac_address, device_key, username, password,
+              provider_url, android_link, ios_link, app_site_url, is_tv, created_at
+       FROM customer_apps WHERE customer_id = $1 ORDER BY created_at DESC`,
+      [customer.id]
+    ),
+    pool.query(
+      `SELECT payer_name, amount, paid_at, status, created_at
+       FROM payment_receipts
+       WHERE customer_id = $1 OR remote_jid = $2
+       ORDER BY created_at DESC LIMIT 3`,
+      [customer.id, remoteJid]
+    ),
+  ]);
   const apps = appsRes.rows;
+  const receipts = receiptsRes.rows;
 
-  const exp = customer.expiration_date
-    ? new Date(customer.expiration_date).toLocaleDateString('pt-BR')
-    : 'sem data';
-  const diasRestantes = customer.expiration_date
-    ? Math.ceil((new Date(customer.expiration_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    : null;
+  const dias = daysFromNow(customer.expiration_date);
+  let situacao = 'ok';
+  let situacaoEmoji = '✅';
+  if (dias === null) { situacao = 'sem data de vencimento'; situacaoEmoji = '❓'; }
+  else if (dias < 0) { situacao = `VENCIDO ha ${-dias} dia(s)`; situacaoEmoji = '🚨'; }
+  else if (dias === 0) { situacao = 'VENCE HOJE'; situacaoEmoji = '⚠️'; }
+  else if (dias <= 3) { situacao = `VENCE EM ${dias} dia(s) — critico`; situacaoEmoji = '⏰'; }
+  else if (dias <= 7) { situacao = `vence em ${dias} dia(s)`; situacaoEmoji = '📆'; }
+  else { situacao = `vence em ${dias} dia(s)`; situacaoEmoji = '✅'; }
 
-  let ctx = `\n\n=== CONTEXTO DO CLIENTE (CADASTRADO NO SISTEMA) ===
-Voce esta atendendo um cliente JA CADASTRADO. Use essas informacoes pra personalizar:
-- Nome: ${customer.name || '(sem nome no cadastro)'}
-- Username: ${customer.username}
+  const firstName = customer.name?.split(' ')[0] || 'cliente';
+
+  let ctx = `\n\n=== CONTEXTO DO CLIENTE (CADASTRADO) ===
+${situacaoEmoji} ${firstName} — ${situacao}
+
+DADOS PESSOAIS:
+- Nome completo: ${customer.name || '(nao cadastrado)'}
+- Primeiro nome: ${firstName}
+- Username (login): ${customer.username}
 - WhatsApp: ${customer.whatsapp || '+' + phone}
-- Status: ${customer.status}
-- Vencimento: ${exp}${diasRestantes !== null ? ` (${diasRestantes >= 0 ? 'em ' + diasRestantes + ' dias' : 'VENCIDO ha ' + (-diasRestantes) + ' dias'})` : ''}
-- Valor mensal: R$ ${customer.renewal_price || '49,90'}`;
 
+PLANO:
+- Status atual: ${customer.status}
+- Vencimento: ${formatDate(customer.expiration_date)} (${situacao})
+- Ultima renovacao: ${customer.last_renewal ? formatDate(customer.last_renewal) : 'sem registro'}
+- Valor mensal: ${formatBRL(customer.renewal_price)}
+- Linhas contratadas: ${customer.lines_count || 1}
+- Custo por linha (interno): ${formatBRL(customer.cost_per_credit || 0)}
+- Total ja pago: ${formatBRL(customer.amount_paid || 0)}
+${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}`;
+
+  // === APPS DO CLIENTE (info SENSITIVA — MAC/key/senha) ===
   if (apps.length > 0) {
-    ctx += `\n- Apps cadastrados (${apps.length}):`;
-    for (const a of apps) {
-      ctx += `\n    • ${a.app_name}${a.app_model ? ' (' + a.app_model + ')' : ''}${a.is_tv ? ' [TV]' : ' [Celular]'}`;
-    }
+    ctx += `\n\nAPPS DESTE CLIENTE (${apps.length}):`;
+    apps.forEach((a, i) => {
+      const tipo = a.is_tv ? 'Smart TV' : 'Celular/PC';
+      const modelo = a.app_model ? ` — ${a.app_model}` : '';
+      ctx += `\n  [${i + 1}] ${a.app_name}${modelo} (${tipo})`;
+      if (a.access_type === 'mac_key' || a.mac_address || a.device_key) {
+        if (a.mac_address) ctx += `\n       MAC: ${a.mac_address}`;
+        if (a.device_key) ctx += `\n       Device Key: ${a.device_key}`;
+      }
+      if (a.access_type === 'user_pass' || a.username || a.password) {
+        if (a.username) ctx += `\n       Usuario do app: ${a.username}`;
+        if (a.password) ctx += `\n       Senha do app: ${a.password}`;
+      }
+      if (a.provider_url) ctx += `\n       URL do provedor: ${a.provider_url}`;
+      if (a.android_link || a.ios_link) {
+        const links = [a.android_link && 'Android', a.ios_link && 'iOS'].filter(Boolean).join(', ');
+        ctx += `\n       Disponivel em: ${links}`;
+      }
+    });
+    ctx += `\n\nIMPORTANTE: esses dados (MAC, Key, senhas) sao do PROPRIO CLIENTE. Pode passar pra ele quando perguntar.`;
+  } else {
+    ctx += `\n\nAPPS DESTE CLIENTE: NENHUM cadastrado ainda. Se ele precisa instalar, use send_app_info pra sugerir do catalogo.`;
   }
 
-  ctx += `\n\nINSTRUCOES IMPORTANTES:
-- Cumprimente pelo nome se tiver: "Ola ${customer.name?.split(' ')[0] || 'cliente'}!"
-- NAO peca username/WhatsApp — voce ja tem.
-- Se for renovacao, ja sabe quem renovar. Use o username "${customer.username}" nas tools.
-- Se faltarem poucos dias pro vencimento, ofereca renovacao proativamente.
-- Se ja venceu, foque em renovacao urgente.`;
+  // === HISTORICO DE PAGAMENTOS ===
+  if (receipts.length > 0) {
+    ctx += `\n\nULTIMOS PAGAMENTOS:`;
+    receipts.forEach((r: any) => {
+      const data = r.paid_at ? formatDate(r.paid_at) : formatDate(r.created_at);
+      const statusBr = r.status === 'approved' ? 'aprovado' : r.status === 'pending_review' ? 'em analise' : r.status === 'rejected' ? 'rejeitado' : r.status;
+      ctx += `\n  - ${formatBRL(r.amount)} em ${data} (${statusBr})${r.payer_name ? ' por ' + r.payer_name : ''}`;
+    });
+  }
+
+  // === ESTRATEGIA CONTEXTUAL ===
+  ctx += `\n\nESTRATEGIA PRA ESSA CONVERSA:
+- Cumprimente pelo primeiro nome ("Oi ${firstName}!").
+- NUNCA peca dados que voce ja tem aqui (nome, WhatsApp, username, MAC, key).`;
+
+  if (dias !== null && dias < 0) {
+    ctx += `\n- 🚨 PRIORIDADE MAXIMA: plano VENCIDO ha ${-dias} dia(s). Ofereca renovacao logo na primeira mensagem.
+- Use o tool generate_pix com username "${customer.username}" e valor R$ ${customer.renewal_price || 49.90}.`;
+  } else if (dias !== null && dias <= 3) {
+    ctx += `\n- ⏰ Plano vence em ${dias} dia(s). Mencione e ofereca renovacao se ele nao tocar no assunto.`;
+  } else if (dias !== null && dias <= 7) {
+    ctx += `\n- Plano vence em ${dias} dia(s). Pode mencionar de leve se a conversa derivar.`;
+  }
+
+  if (apps.length === 0) {
+    ctx += `\n- Cliente sem app cadastrado: sugira instalacao usando o catalogo (send_app_info).`;
+  } else {
+    ctx += `\n- Cliente JA tem ${apps.length} app(s) instalado(s). Se ele tiver problema, use request_screenshot pra pedir print da tela certa do app dele (procure no catalogo o app com nome similar ao app_model dele).`;
+  }
+
+  if (customer.status === 'expired') {
+    ctx += `\n- Status do cadastro: EXPIRED. Confirme se ele renovou; se sim, registre o pagamento.`;
+  }
 
   return ctx;
 }
@@ -826,19 +947,41 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-    const DEFAULT_PROMPT = `Você é a atendente oficial do StartPainel. Ajude os clientes a renovar, consultar vencimento e configurar apps.
+    const DEFAULT_PROMPT = `Você é a atendente oficial do StartPainel — IPTV/streaming. Atende clientes via WhatsApp.
 
-Você é multimodal:
-- ENTENDE: texto, áudio e imagens.
-- RESPONDE: o sistema converte automaticamente sua resposta em áudio quando ela é curta (até 220 caracteres) ou quando o cliente enviou áudio. Você NUNCA precisa avisar que "não pode mandar áudio" — pode sim, é automático. Apenas escreva sua resposta normalmente; se ficar curta, vai virar áudio sozinha.
+PERSONALIDADE:
+- Cordial, prestativa, direta. Estilo WhatsApp: breve, claro, emojis quando apropriado.
+- NÃO se apresenta como "IA" nem pede desculpas por ser robô — você é a atendente.
+- Trata o cliente com naturalidade humana (pode dizer "vou ver aqui", "deixa eu conferir", etc).
 
-Regras de resposta:
-- Quando receber áudio, transcreva mentalmente e responda ao conteúdo falado.
-- Quando receber imagem, analise o que está mostrando.
-- Se a imagem for um COMPROVANTE DE PIX (tem valor em R$, data, hora, nome do pagador, banco), extraia os dados e use a tool 'register_pix_receipt' com payer_name (quem pagou), amount (valor numérico), paid_at (data e hora no formato ISO 8601 'YYYY-MM-DDTHH:mm:ss'). Após registrar, responda confirmando o recebimento e a renovação do plano.
-- Se a imagem NÃO for comprovante (print de erro, foto do app, etc.), apenas analise normalmente.
-- Se o cliente pedir explicitamente uma resposta em áudio, apenas mantenha a resposta curta (frase única) e ela já virá em áudio.
-- Sempre responda em português, estilo WhatsApp: breve, claro, com emojis quando apropriado.`;
+MULTIMODAL:
+- ENTENDE texto, áudio e imagens. Quando receber áudio, transcreva mentalmente e responda ao conteúdo.
+- RESPONDE: o sistema converte SUA resposta em áudio automaticamente se ela for curta (≤220 chars) OU se o cliente mandou áudio. Você NUNCA precisa dizer "não posso mandar áudio" — pode sim. Só escreva normal.
+- Se cliente PEDIR áudio: mantenha sua resposta curta numa frase só.
+
+USE OS DADOS DO CLIENTE (seção CONTEXTO DO CLIENTE abaixo):
+- O sistema te dá NOME, vencimento, valor, apps instalados, MAC/key dos apps, histórico de pagamentos. USE TUDO.
+- NUNCA pergunte algo que você já sabe (nome, WhatsApp, username, dados dos apps dele).
+- Cumprimente sempre pelo PRIMEIRO NOME.
+- Se ele perguntar "qual meu MAC" / "qual meu vencimento" / "quanto eu pago" → responda direto.
+
+TOOLS DISPONÍVEIS (use proativamente):
+- generate_pix(username, amount): gera Pix pra renovação. Use o username e renewal_price do CONTEXTO.
+- register_pix_receipt(payer_name, amount, paid_at): use quando receber FOTO de comprovante Pix (tem valor R$, data, banco). Após registrar, confirme recebimento.
+- send_app_info(app_id, message): manda imagem + link de download de um app do catálogo. Use pra cliente NOVO ou que quer trocar de app.
+- request_screenshot(app_id, custom_instruction): pede print de uma tela específica do app (pra pegar MAC/Key/erro). Use o app_id que BATA com o app que o cliente USA.
+
+PRIORIDADES (na ordem):
+1. Renovação se vencido / a vencer em ≤3d → ofereça Pix proativamente.
+2. Comprovante de pagamento na foto → registre via register_pix_receipt.
+3. Pedido de ajuda com app → request_screenshot.
+4. Cliente novo / sem cadastro → send_app_info do app prioritário (display_order=0).
+5. Dúvida normal → responda com os dados do CONTEXTO.
+
+NUNCA:
+- Invente preço, vencimento ou data — use APENAS o que está no CONTEXTO.
+- Diga "não tenho acesso a..." — você tem TUDO no contexto.
+- Repita perguntas que o cliente já respondeu na conversa.`;
 
     let systemPrompt = DEFAULT_PROMPT;
     try {
