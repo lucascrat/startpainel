@@ -1001,6 +1001,7 @@ export default function CustomerMenu() {
                           <option>IBO PLAYER</option>
                           <option>IBO PRO</option>
                           <option>ULTRA PLAYER</option>
+                          <option>FUN PLAY</option>
                           <option>QUICKPLAYER</option>
                           <option>LAZER PLAYER</option>
                           <option>SMARTERS PLAYER LITE</option>

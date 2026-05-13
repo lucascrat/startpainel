@@ -465,29 +465,53 @@ export default function AdminPanel() {
     } catch (error) {}
   };
 
-  const handleRunUltraPlayer = async (username: string, mac: string) => {
+  // Generaliza ativacao de player no CMS (Ultra Player, Fun Play, etc).
+  // Worker no PC abre Chrome visivel, navega no CMS e ativa.
+  const handleActivatePlayer = async (
+    username: string,
+    mac: string,
+    playerType: 'ultra' | 'funplay',
+    playerLabel: string,
+  ) => {
     if (!mac) {
       toast.error('Este aplicativo precisa de MAC Address para ativação.');
       return;
     }
-    
     setIsLoading(true);
+    const endpoint = playerType === 'funplay'
+      ? '/api/automations/startpainel/activate-funplay'
+      : '/api/automations/startpainel/activate-ultra';
+    // Toast persistente avisando que o robo vai abrir Chrome no PC. Substituido pelo
+    // resultado quando o job terminar (5min max). NAO usa await — fire-and-forget
+    // visualmente, mas a promise abaixo decide o toast final.
+    const pending = toast.loading(`Ativando ${playerLabel}... olhe seu Chrome 👀 (até 5min)`);
     try {
-      const response = await fetch('/api/automations/startpainel/activate-ultra', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, mac })
+        body: JSON.stringify({ username, mac }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      toast.dismiss(pending);
       if (data.success) {
-        toast.success('Ultra Player ativado com sucesso no CMS!');
+        toast.success(`${playerLabel} ativado com sucesso no CMS!`);
       } else {
-        toast.error(`Erro na automação: ${data.message}`);
+        // Mensagem ja vem amigavel do worker (ex: 'Cliente X nao encontrado no painel CMS')
+        toast.error(data.message || 'Falha na automação.');
       }
     } catch (error: any) {
+      toast.dismiss(pending);
       toast.error(`Erro: ${error.message}`);
-    } finally { setIsLoading(false); }
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  // Wrappers de retrocompat — usados pelo botao existente.
+  const handleRunUltraPlayer = (username: string, mac: string) =>
+    handleActivatePlayer(username, mac, 'ultra', 'Ultra Player');
+  const handleRunFunPlay = (username: string, mac: string) =>
+    handleActivatePlayer(username, mac, 'funplay', 'Fun Play');
 
   const handleRunAutomation = async (auto: any, mac: string, key: string, playlistUrl: string, targetUrl?: string) => {
     if (!mac || !key) {
@@ -986,6 +1010,7 @@ export default function AdminPanel() {
                         <select value={autoType} onChange={e => setAutoType(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                           <option value="ibo_player">IBO Player (MAC/Key + Captcha)</option>
                           <option value="ultra_player">Ultra Player (Ativação CMS)</option>
+                          <option value="fun_play">Fun Play (Ativação CMS)</option>
                           <option value="startpainel_cms">StartPainel (Criar Cliente)</option>
                           <option value="generic">Genérico (Login Simples)</option>
                         </select>
@@ -1343,13 +1368,27 @@ export default function AdminPanel() {
 
                           {!isEditingApp && viewingApp.app_model === 'ULTRA PLAYER' && (
                             <div className="col-span-2">
-                              <button 
+                              <button
                                 onClick={() => handleRunUltraPlayer(customers.find(c => Number(c.id) === selectedCustomerId)?.username || '', viewingApp.mac_address || '')}
                                 disabled={isLoading}
                                 className="w-full bg-rose-600 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-100 flex items-center justify-center gap-2"
                               >
                                 {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
                                 Ativar Ultra Player (Robô)
+                              </button>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Ativa o MAC no StartPainel CMS automaticamente</p>
+                            </div>
+                          )}
+
+                          {!isEditingApp && viewingApp.app_model === 'FUN PLAY' && (
+                            <div className="col-span-2">
+                              <button
+                                onClick={() => handleRunFunPlay(customers.find(c => Number(c.id) === selectedCustomerId)?.username || '', viewingApp.mac_address || '')}
+                                disabled={isLoading}
+                                className="w-full bg-amber-600 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-700 transition-all shadow-lg shadow-amber-100 flex items-center justify-center gap-2"
+                              >
+                                {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
+                                Ativar Fun Play (Robô)
                               </button>
                               <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Ativa o MAC no StartPainel CMS automaticamente</p>
                             </div>
