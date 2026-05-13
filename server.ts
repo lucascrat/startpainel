@@ -800,28 +800,33 @@ PASSO 3 — SE NAO ACHAR, OFERECER O PROXIMO:
 - Continue oferecendo um por um na ordem ate ele achar.
 - NUNCA pule a ordem. Se ele acabou de tentar o 2o, o proximo e o 3o.
 
-PASSO 4 — APP ENCONTRADO, COLETAR DADOS DE ATIVACAO:
+PASSO 4 — APP ENCONTRADO, COLETAR MAC:
 Quando ele disser "achei" / "instalei" / "abri o app":
-- Use a tool request_screenshot com o app_id que ele instalou — vai mandar imagem mostrando onde ficam o MAC e o Device Key.
-- Peca em texto: "Otimo! Pra ativar pra voce, me manda o MAC e o Device Key que aparecem na tela inicial do app."
-- Importante: APENAS DEPOIS de send_app_info ter sido aceito, peca os dados.
+- Use a tool request_screenshot com o app_id que ele instalou — vai mandar imagem mostrando onde fica o MAC na tela inicial.
+- Peca em texto: "Otimo! Me manda o MAC que aparece na tela inicial do app (algo tipo XX:XX:XX:XX:XX:XX)."
 
-PASSO 5 — RECEBER OS DADOS:
-Quando ele mandar o MAC (formato XX:XX:XX:XX:XX:XX) e/ou Device Key:
-- Confirme os dados que voce leu, repetindo eles.
-- Peca o nome completo dele pra cadastrar.
-- Avise que vai gerar o Pix pra ele pagar e ativar.
+PASSO 5 — OFERECER TESTE GRATIS DE 6 HORAS:
+Quando ele mandar o MAC:
+- Pergunte se ele quer fazer um *teste gratis de 6 horas* pra ver a qualidade antes de pagar.
+- Se ele aceitar: chame IMEDIATAMENTE a tool *create_test_account* com:
+  * player_name = nome exato do app que ele instalou (Ultra Player / Fun Play / Lazer Play / X-Cloud / See Play)
+  * mac = MAC que ele forneceu
+- A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando!
+- Se ele NAO quiser teste e ja quiser comprar: va pro PASSO 6.
 
-PASSO 6 — GERAR PIX:
-- Apos coletar nome + MAC + Key + nome do app escolhido, fale o valor (R$ 49,90/mes para 1 linha).
-- Use generate_pix com username = nome simplificado dele (ex: "Joao24h"), amount = 49.90.
-- Avise: "Assim que o pagamento cair (pode mandar print do comprovante aqui), eu ativo o app na sua TV automaticamente. 🎬"
+PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
+- Quando ele confirmar que gostou do teste OU quiser virar cliente fixo:
+  * Peca o nome completo dele.
+  * Use a tool *register_new_customer* com full_name, desired_username, app_id, mac.
+  * Em seguida use *generate_pix* com username + valor R$ 49,90.
+- Avise: "Assim que confirmar o pagamento, ja transformo seu teste em conta definitiva. 🎬"
 
 REGRAS:
-- NUNCA finja que ele ja e cliente.
-- NUNCA gere Pix antes de ter o MAC + Key + nome + app escolhido.
-- SEMPRE use send_app_info com IDs reais do catalogo (lista acima).
-- Se ele mandar foto de comprovante antes de ter cadastro, peca os dados primeiro.`;
+- TESTE GRATIS = ferramenta create_test_account (cria + ativa em 30s, cliente assiste na hora)
+- PLANO PAGO = register_new_customer + generate_pix (sequencia)
+- NUNCA gere Pix antes de ter MAC + nome.
+- SEMPRE use send_app_info com IDs reais do catalogo.
+- Se o cliente mandar foto de comprovante antes do cadastro, peca os dados primeiro.`;
   }
 
   // === Cliente CADASTRADO — busca tudo em paralelo ===
@@ -1074,6 +1079,20 @@ NUNCA:
           { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
           // App catalog — pede print de uma area especifica do app
           { name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } },
+          // Teste GRATIS de 6h — cria cliente no CMS + ativa player com MAC em uma acao
+          {
+            name: "create_test_account",
+            description: "Cria uma conta de TESTE gratuita de 6 horas pro cliente novo. Faz 2 coisas no CMS: (1) cadastra novo cliente com plano 'COMPLETO - TESTE 6 HORAS', (2) ativa o player escolhido com o MAC dele. Use APENAS quando voce JA TEM: o nome do app que o cliente instalou (player_name) e o MAC do aparelho. Apos chamar, o cliente comeca a assistir em ~30s. Avise ele que sao 6 horas de teste gratis.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                player_name: { type: "STRING", description: "Nome do player que o cliente instalou. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'X-Cloud', 'See Play'. Use exatamente o nome do app que o cliente confirmou que abriu." },
+                mac: { type: "STRING", description: "MAC do aparelho que apareceu na tela do app (formato XX:XX:XX:XX:XX:XX)" },
+                username: { type: "STRING", description: "Username sugerido pra conta (opcional — se nao passar, gera 'Teste<numero>')" },
+              },
+              required: ["player_name", "mac"],
+            },
+          },
           // Cadastro de NOVO CLIENTE — chama no fim do fluxo de prospeccao
           {
             name: "register_new_customer",
@@ -1662,6 +1681,48 @@ app.post('/api/automations/startpainel/activate-funplay', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Endpoints para os outros players (mesma mecanica). Mantemos cada um separado pra
+// o painel admin chamar facilmente, e mapeia 1:1 no worker (activate_xxx).
+app.post('/api/automations/startpainel/activate-lazerplay', async (req, res) => {
+  try {
+    const { username, mac } = req.body;
+    if (!username || !mac) return res.status(400).json({ error: 'username e mac obrigatorios' });
+    const result = await waitForJob(await enqueueJob('activate_lazerplay', { username, mac }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/automations/startpainel/activate-xcloud', async (req, res) => {
+  try {
+    const { username, mac } = req.body;
+    if (!username || !mac) return res.status(400).json({ error: 'username e mac obrigatorios' });
+    const result = await waitForJob(await enqueueJob('activate_xcloud', { username, mac }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/automations/startpainel/activate-seeplay', async (req, res) => {
+  try {
+    const { username, mac } = req.body;
+    if (!username || !mac) return res.status(400).json({ error: 'username e mac obrigatorios' });
+    const result = await waitForJob(await enqueueJob('activate_seeplay', { username, mac }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Cria cliente TESTE (6h) no CMS ja com o MAC ativado no player escolhido.
+// Util pra novo lead: 1 acao -> cliente cadastrado + player funcionando.
+app.post('/api/automations/startpainel/create-test', async (req, res) => {
+  try {
+    const { username, mac, playerName } = req.body;
+    if (!mac || !playerName) {
+      return res.status(400).json({ error: 'mac e playerName obrigatorios (username opcional — gera automatico se vazio)' });
+    }
+    const result = await waitForJob(await enqueueJob('create_test', { username: username || '', mac, playerName }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // AI Usage Stats
 app.get('/api/ai-usage', async (req, res) => {
   try {
@@ -1866,6 +1927,9 @@ app.post('/api/webhooks/evolution/:event?',
           if (ok) toolsThatSent++;
         } else if (call.name === 'register_new_customer') {
           const ok = await handleRegisterNewCustomer(remoteJid, pushName, call.args);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'create_test_account') {
+          const ok = await handleCreateTestAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
@@ -2184,6 +2248,92 @@ async function handleRegisterNewCustomer(remoteJid: string, pushName: string, ar
       const evo = await getEvolutionService();
       await evo.sendMessage(remoteJid, '😕 Tive um problema pra registrar agora. Pode tentar de novo daqui a pouco?');
     } catch {}
+    return false;
+  }
+}
+
+/**
+ * Tool handler: cria teste gratis de 6h no CMS + ativa o player com MAC.
+ * Tudo em um unico job que vai pro worker no PC.
+ *
+ * Fluxo da experiencia do cliente:
+ *   1. IA chama essa tool quando tem player + MAC do cliente novo
+ *   2. Cliente recebe "🎬 Estou criando seu teste de 6h gratis. Aguarde uns 30s..."
+ *   3. Worker no PC abre Chrome, faz tudo no CMS (cliente novo + ativa player)
+ *   4. Quando termina: cliente recebe "✅ Pronto! Abre o app que ja vai funcionar"
+ *      (se falhar: "❌ Tive um problema — vou chamar o operador humano")
+ *
+ * Como nao podemos esperar (o worker pode demorar minutos), envia mensagem
+ * de inicio sincronamente, dispara o job em background com .then() callback
+ * que manda a mensagem final.
+ */
+async function handleCreateTestAccount(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const playerName: string = (args.player_name || '').trim();
+    const mac: string = (args.mac || '').trim();
+    const username: string = (args.username || '').trim();
+
+    if (!playerName || !mac) {
+      console.warn('[Tool create_test_account] dados incompletos:', { playerName: !!playerName, mac: !!mac });
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Pra criar o teste preciso confirmar: qual o app exato que voce instalou e qual o MAC que aparece nele?');
+        return true;
+      } catch { return false; }
+    }
+
+    // Valida que e um dos players suportados (caso a IA invente um nome)
+    const validPlayers = ['ultra player', 'fun play', 'lazer play', 'x-cloud', 'xcloud', 'see play'];
+    const playerLower = playerName.toLowerCase();
+    if (!validPlayers.some(p => playerLower.includes(p.replace('-', '')) || playerLower.includes(p))) {
+      console.warn(`[Tool create_test_account] player invalido: "${playerName}"`);
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, `😕 Nao reconheco o player "${playerName}". Os disponiveis sao: Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play. Qual deles voce instalou?`);
+        return true;
+      } catch { return false; }
+    }
+
+    // Avisa o cliente que vai demorar uns segundos
+    const evo = await getEvolutionService();
+    await evo.sendMessage(
+      remoteJid,
+      `🎬 Show! Estou criando seu teste GRATIS de 6 horas no ${playerName} com MAC ${mac}.\n\nAguarda uns 30 segundinhos que o app ja vai funcionar na tua tela...`
+    );
+
+    // Dispara o job em BACKGROUND — nao espera, senao o webhook handler segura
+    // tudo por minutos. Quando terminar, callback notifica o cliente.
+    (async () => {
+      try {
+        const jobId = await enqueueJob('create_test', { username, mac, playerName });
+        // waitForJob bloqueia ate 5min — esta dentro de IIFE async, nao trava o handler principal
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          const finalUser = result.username || username || 'cliente';
+          await evo2.sendMessage(
+            remoteJid,
+            `✅ *Seu teste esta ativo!*\n\nUsuario: *${finalUser}*\nApp: ${playerName}\nMAC: ${mac}\n\n⏰ Voce tem *6 horas* pra testar tudo. Abre o ${playerName} ai na sua tela e ja vai estar funcionando!\n\nGostou? Me chama aqui que ativo seu plano definitivo. 🎬`
+          );
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Tive um problema pra ativar agora: ${result?.message || 'erro desconhecido'}\n\nVou chamar o operador pra resolver pra voce em alguns minutos. Pode aguardar?`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool create_test_account] background falhou:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Encontrei um problema tecnico. Vou avisar o operador pra te ajudar pessoalmente — ele te chama logo logo.');
+        } catch {}
+      }
+    })();
+
+    return true; // mensagem inicial ja foi enviada
+  } catch (e: any) {
+    console.error('[Tool create_test_account] erro:', e?.message);
     return false;
   }
 }

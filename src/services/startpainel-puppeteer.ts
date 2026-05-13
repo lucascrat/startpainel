@@ -588,3 +588,279 @@ export async function activateUltraPlayer(username: string, mac: string): Promis
 export async function activateFunPlay(username: string, mac: string): Promise<RenewalResult> {
   return activatePlayer(username, mac, 'Fun Play');
 }
+
+export async function activateLazerPlay(username: string, mac: string): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Lazer Play');
+}
+
+export async function activateXCloud(username: string, mac: string): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'X-Cloud');
+}
+
+export async function activateSeePlay(username: string, mac: string): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'See Play');
+}
+
+/**
+ * Cria um cliente de TESTE (6 horas) no CMS e ja ativa o player com o MAC.
+ * Fluxo no CMS https://cms.startpainel.cc/:
+ *   1. /clients/new -> Step 1: nome de usuario -> Proximo
+ *   2. Step 2: Plano "COMPLETO - TESTE 6 HORAS" -> Proximo
+ *   3. Step 3: Criar Cliente -> redireciona pra pagina do cliente
+ *   4. Clica em "Ativar Player" -> modal abre
+ *   5. Dropdown: seleciona o player (Ultra Player / Fun Play / etc)
+ *   6. Input MAC -> preenche
+ *   7. Confirma com "Ativar Player" do modal
+ *
+ * @param username sugestao de username. Se vazio, gera "Teste<timestamp>".
+ * @param mac MAC do aparelho do cliente (XX:XX:XX:XX:XX:XX)
+ * @param playerName nome do player no dropdown (ex: "Ultra Player")
+ * @returns { success, message, username, playerName, mac }
+ */
+export async function createTestClientAndActivatePlayer(
+  username: string,
+  mac: string,
+  playerName: string,
+): Promise<RenewalResult & { username?: string; playerName?: string; mac?: string }> {
+  let browser: Browser | null = null;
+  // Username unico — se nao veio um, gera baseado em timestamp pra evitar colisao no CMS
+  const finalUsername = (username && username.trim()) || `Teste${Date.now().toString().slice(-7)}`;
+
+  try {
+    console.log(`\n[Puppeteer] === Teste 6h: criando ${finalUsername} + ativando ${playerName} (MAC: ${mac}) ===`);
+    browser = await launchBrowser(false);
+    const page = await browser.newPage();
+
+    if (!await loginToPanel(page)) {
+      return { success: false, message: 'Nao foi possivel acessar o painel (Login/Captcha).' };
+    }
+
+    // === STEP 1: novo cliente ===
+    console.log('[Puppeteer] Indo para /clients/new...');
+    await page.goto(`${BASE_URL}/clients/new`, { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Tipo IPTV (default — geralmente ja vem selecionado, garantimos)
+    console.log('[Puppeteer] Selecionando tipo IPTV...');
+    await page.evaluate(() => {
+      const radios = Array.from(document.querySelectorAll('input[type="radio"]')) as HTMLInputElement[];
+      const iptv = radios.find(r => (r.value || '').toLowerCase() === 'iptv' || r.id?.toLowerCase().includes('iptv'));
+      if (iptv && !iptv.checked) iptv.click();
+    });
+
+    // Preenche nome de usuario (primeiro input de texto visivel)
+    console.log(`[Puppeteer] Preenchendo username: ${finalUsername}`);
+    await page.waitForSelector('input[type="text"]', { timeout: 10000 });
+    await page.evaluate((val) => {
+      const inputs = Array.from(document.querySelectorAll('input[type="text"]')) as HTMLInputElement[];
+      // pega o primeiro visivel
+      const visible = inputs.find(i => i.offsetParent !== null && !i.placeholder?.toLowerCase().includes('search'));
+      if (visible) {
+        visible.value = '';
+        visible.focus();
+      }
+    }, finalUsername);
+    const userInputs = await page.$$('input[type="text"]');
+    if (userInputs[0]) {
+      await userInputs[0].click({ clickCount: 3 });
+      await userInputs[0].type(finalUsername, { delay: 80 });
+    }
+
+    // Botao Proximo (passo 1)
+    await clickButtonByText(page, ['proximo', 'próximo']);
+    await new Promise(r => setTimeout(r, 1500));
+
+    // === STEP 2: plano ===
+    console.log('[Puppeteer] Selecionando plano "COMPLETO - TESTE 6 HORAS"...');
+    // Tenta dropdown nativo primeiro (mais confiavel)
+    const planSelected = await page.evaluate(() => {
+      const selects = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
+      for (const select of selects) {
+        for (let i = 0; i < select.options.length; i++) {
+          const txt = select.options[i].text.toUpperCase();
+          // Match preferencial: "COMPLETO - TESTE 6 HORAS" (com adulto)
+          if (txt.includes('COMPLETO') && txt.includes('TESTE') && txt.includes('6 HORAS') && !txt.includes('SEM ADULTO')) {
+            select.selectedIndex = i;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return select.options[i].text;
+          }
+        }
+      }
+      // Fallback: qualquer plano de teste 6 horas
+      for (const select of selects) {
+        for (let i = 0; i < select.options.length; i++) {
+          const txt = select.options[i].text.toUpperCase();
+          if (txt.includes('TESTE') && txt.includes('6 HORAS')) {
+            select.selectedIndex = i;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return select.options[i].text;
+          }
+        }
+      }
+      return null;
+    });
+
+    if (!planSelected) {
+      // Tenta Select2 (dropdown estilizado): clica e digita
+      console.log('[Puppeteer] Plano nativo nao funcionou, tentando Select2...');
+      const dropdowns = await page.$$('.select2-selection');
+      if (dropdowns[0]) {
+        await dropdowns[0].click();
+        await new Promise(r => setTimeout(r, 800));
+        const search = await page.$('.select2-search__field, input.select2-search__field');
+        if (search) {
+          await search.type('TESTE 6 HORAS', { delay: 50 });
+          await new Promise(r => setTimeout(r, 800));
+          await page.keyboard.press('Enter');
+        }
+      }
+    } else {
+      console.log(`[Puppeteer] Plano selecionado: ${planSelected}`);
+    }
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Proximo (passo 2)
+    await clickButtonByText(page, ['proximo', 'próximo']);
+    await new Promise(r => setTimeout(r, 1500));
+
+    // === STEP 3: criar cliente ===
+    console.log('[Puppeteer] Confirmando criacao do cliente...');
+    await clickButtonByText(page, ['criar cliente', 'criar', 'confirmar', 'finalizar']);
+
+    // Aguarda redirect pra pagina do cliente recem-criado (/clients/12345)
+    console.log('[Puppeteer] Aguardando redirect...');
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 2500));
+
+    // Confirma que estamos na pagina do cliente (url tem /clients/<id>)
+    const currentUrl = page.url();
+    console.log(`[Puppeteer] URL apos criacao: ${currentUrl}`);
+    if (!/\/clients\/\d+/.test(currentUrl)) {
+      // Fallback: ir pra lista e procurar o cliente
+      console.log('[Puppeteer] Sem redirect direto, buscando o cliente na lista...');
+      await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+      await new Promise(r => setTimeout(r, 1500));
+      await page.waitForSelector('input[type="search"]', { timeout: 10000 });
+      await page.click('input[type="search"]', { clickCount: 3 });
+      await page.type('input[type="search"]', finalUsername, { delay: 80 });
+      await new Promise(r => setTimeout(r, 1500));
+      await page.evaluate(() => {
+        const link = document.querySelector('a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"]') as HTMLElement;
+        if (link) link.click();
+      });
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // === STEP 4: clicar em "Ativar Player" ===
+    console.log('[Puppeteer] Clicando em "Ativar Player"...');
+    const clickedActivate = await clickButtonByText(page, ['ativar player']);
+    if (!clickedActivate) {
+      throw new Error('Botao "Ativar Player" nao encontrado na pagina do cliente.');
+    }
+    await new Promise(r => setTimeout(r, 2000));
+
+    // === STEP 5: selecionar player no dropdown do modal ===
+    console.log(`[Puppeteer] Selecionando "${playerName}" no dropdown...`);
+    const playerNameLower = playerName.toLowerCase();
+    const playerSelected = await page.evaluate((needle) => {
+      const selects = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
+      for (const select of selects) {
+        for (let i = 0; i < select.options.length; i++) {
+          if (select.options[i].text.toLowerCase().includes(needle)) {
+            select.selectedIndex = i;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return select.options[i].text;
+          }
+        }
+      }
+      return null;
+    }, playerNameLower);
+    if (!playerSelected) {
+      throw new Error(`Player "${playerName}" nao encontrado no dropdown do modal.`);
+    }
+    console.log(`[Puppeteer] Player selecionado: ${playerSelected}`);
+
+    // === STEP 6: preencher MAC ===
+    console.log(`[Puppeteer] Preenchendo MAC: ${mac}`);
+    await new Promise(r => setTimeout(r, 800));
+    const macSelectors = ['input[name="mac"]', 'input[name="mac_address"]', 'input[placeholder*="MAC"]', 'input[placeholder*="00:1A"]'];
+    let macTyped = false;
+    for (const sel of macSelectors) {
+      const macInput = await page.$(sel);
+      if (macInput) {
+        const visible = await page.evaluate(el => {
+          const s = window.getComputedStyle(el);
+          return s.display !== 'none' && s.visibility !== 'hidden';
+        }, macInput);
+        if (visible) {
+          await page.evaluate((s) => {
+            const el = document.querySelector(s) as HTMLInputElement;
+            if (el) el.value = '';
+          }, sel);
+          await page.type(sel, mac, { delay: 80 });
+          macTyped = true;
+          break;
+        }
+      }
+    }
+    if (!macTyped) throw new Error('Input MAC nao encontrado no modal.');
+
+    // === STEP 7: confirmar ativacao ===
+    console.log('[Puppeteer] Confirmando ativacao no modal...');
+    const modalButtons = await page.$$('.modal button, [role="dialog"] button');
+    let confirmClicked = false;
+    for (const btn of modalButtons) {
+      const text = await page.evaluate(el => el.textContent, btn);
+      if (text?.toLowerCase().includes('ativar player') ||
+          text?.toLowerCase().includes('salvar') ||
+          text?.toLowerCase().includes('confirmar')) {
+        await btn.click();
+        confirmClicked = true;
+        break;
+      }
+    }
+    if (!confirmClicked) {
+      throw new Error('Botao confirmar do modal nao encontrado.');
+    }
+
+    await new Promise(r => setTimeout(r, 5000));
+    console.log(`[Puppeteer] ✅ Teste 6h criado e ${playerName} ativado pra ${finalUsername}`);
+
+    return {
+      success: true,
+      message: `Cliente teste "${finalUsername}" criado e ${playerName} ativado com MAC ${mac}!`,
+      username: finalUsername,
+      playerName,
+      mac,
+    };
+
+  } catch (error: any) {
+    console.error('[Puppeteer] Erro no teste 6h:', error.message);
+    return {
+      success: false,
+      message: `Erro: ${error.message}`,
+      username: finalUsername,
+    };
+  } finally {
+    if (browser) {
+      // keep browser open pra debug
+    }
+  }
+}
+
+// Helper compartilhado: procura botao com texto matching (case-insensitive substring)
+// e clica. Retorna true se achou e clicou, false caso contrario.
+async function clickButtonByText(page: Page, needles: string[]): Promise<boolean> {
+  const buttons = await page.$$('button, a.btn');
+  for (const btn of buttons) {
+    const text = (await page.evaluate(el => el.textContent, btn))?.toLowerCase() || '';
+    for (const n of needles) {
+      if (text.includes(n.toLowerCase())) {
+        await btn.click();
+        return true;
+      }
+    }
+  }
+  return false;
+}
