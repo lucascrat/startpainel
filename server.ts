@@ -688,36 +688,36 @@ function normalizePhone(jid: string): string {
 }
 
 // Procura cliente pelo numero do WhatsApp. Compara so os digitos (ignora formatacao).
-// Tambem tenta sem o '9' de celular brasileiro (pra cobrir cadastros legados).
-async function findCustomerByJid(remoteJid: string): Promise<any | null> {
-  const number = normalizePhone(remoteJid);
-  if (!number) return null;
-  // Match exato primeiro
-  let r = await pool.query(
-    "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
-    [number]
+// Aceita ate 2 JIDs (remoteJid + remoteJidAlt) pra cobrir o caso do WhatsApp moderno
+// que envia mensagens com JID @lid (identidade mascarada) e o numero REAL fica no
+// campo remoteJidAlt. Sem o alt, clientes com @lid NUNCA seriam reconhecidos.
+async function findCustomerByJid(remoteJid: string, altJid?: string | null): Promise<any | null> {
+  // Tenta cada JID, e pra cada um as variacoes do '9' brasileiro
+  const candidates: string[] = [];
+  for (const jid of [remoteJid, altJid].filter(Boolean) as string[]) {
+    const n = normalizePhone(jid);
+    if (!n || candidates.includes(n)) continue;
+    candidates.push(n);
+    // Variacao sem '9' (celular antigo cadastrado sem)
+    if (n.length === 13 && n.startsWith('55')) {
+      const semNove = n.slice(0, 4) + n.slice(5);
+      if (!candidates.includes(semNove)) candidates.push(semNove);
+    }
+    // Variacao com '9'
+    if (n.length === 12 && n.startsWith('55')) {
+      const comNove = n.slice(0, 4) + '9' + n.slice(4);
+      if (!candidates.includes(comNove)) candidates.push(comNove);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Uma unica query usando ANY pra checar todos os candidatos de vez
+  const r = await pool.query(
+    `SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = ANY($1::text[]) LIMIT 1`,
+    [candidates]
   );
-  if (r.rows[0]) return r.rows[0];
-  // Tenta sem o '9' (celulares antigos cadastrados sem prefixo)
-  // 5511912345678 -> 551112345678
-  if (number.length === 13 && number.startsWith('55')) {
-    const semNove = number.slice(0, 4) + number.slice(5);
-    r = await pool.query(
-      "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
-      [semNove]
-    );
-    if (r.rows[0]) return r.rows[0];
-  }
-  // Tenta com '9' (cadastrado sem mas recebendo com)
-  if (number.length === 12 && number.startsWith('55')) {
-    const comNove = number.slice(0, 4) + '9' + number.slice(4);
-    r = await pool.query(
-      "SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
-      [comNove]
-    );
-    if (r.rows[0]) return r.rows[0];
-  }
-  return null;
+  return r.rows[0] || null;
 }
 
 // Formata BRL pra exibir bonito ("R$ 49,90")
@@ -763,9 +763,10 @@ function maskValue(v: string | null | undefined, keep = 4): string {
  * Tudo aqui vai DIRETO no system prompt do Gemini. A IA passa a operar como um
  * atendente que ja CONHECE o cliente — nao pergunta o que ja sabe.
  */
-async function buildCustomerContext(remoteJid: string, pushName: string): Promise<string> {
-  const customer = await findCustomerByJid(remoteJid);
-  const phone = normalizePhone(remoteJid);
+async function buildCustomerContext(remoteJid: string, pushName: string, altJid?: string | null): Promise<string> {
+  const customer = await findCustomerByJid(remoteJid, altJid);
+  // Pra exibir o numero, prefere o alt (real) se disponivel
+  const phone = normalizePhone(altJid || remoteJid);
 
   // === Cliente NAO cadastrado — fluxo de prospeccao + escolha de app ===
   if (!customer) {
@@ -1069,7 +1070,7 @@ NUNCA:
     // Pula pra chat web (visitante anonimo) — userInfo.skipCustomerLookup === true.
     if (!userInfo?.skipCustomerLookup && remoteJid && !remoteJid.startsWith('web:')) {
       try {
-        const ctx = await buildCustomerContext(remoteJid, userInfo?.name || 'Cliente');
+        const ctx = await buildCustomerContext(remoteJid, userInfo?.name || 'Cliente', userInfo?.altJid);
         systemPrompt += ctx;
       } catch (e: any) {
         console.warn('[AI] falha ao montar contexto do cliente:', e?.message);
@@ -1942,9 +1943,12 @@ app.post('/api/webhooks/evolution/:event?',
     if (eventName !== 'messages.upsert') return;
     const msg = data.data.message;
     remoteJid = data.data.key.remoteJid;
+    // WhatsApp moderno: quando JID e @lid (identidade mascarada), o numero real vai em
+    // key.remoteJidAlt (@s.whatsapp.net). Capturamos pra fazer lookup do cliente certo.
+    const altJid: string | null = data.data.key.remoteJidAlt || null;
     if (data.data.key.fromMe) return;
     pushName = data.data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
-    console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid})`);
+    console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid}${altJid ? ' alt=' + altJid : ''})`);
 
     let text = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || msg?.videoMessage?.caption || msg?.message?.conversation || '';
     const isImage = !!msg?.imageMessage;
@@ -1986,9 +1990,9 @@ app.post('/api/webhooks/evolution/:event?',
        }
     }
 
-    console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'})...`);
+    console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'})...`);
     const aiT0 = Date.now();
-    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName }, mediaData);
+    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName, altJid }, mediaData);
     console.log(`[Webhook] IA respondeu em ${Date.now() - aiT0}ms: text=${aiResult.text?.length || 0}chars, tools=${aiResult.functionCalls?.length || 0}`);
     if (aiResult.text) {
        const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
@@ -2029,7 +2033,7 @@ app.post('/api/webhooks/evolution/:event?',
             const r = await uploadToR2('receipts', mediaData.data, mediaData.mimeType);
             imageStored = r.ok ? r.url : `data:${mediaData.mimeType};base64,${mediaData.data}`;
           }
-          await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored);
+          await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored, altJid);
           // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
           // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
         } else if (call.name === 'send_app_info') {
@@ -2075,20 +2079,15 @@ async function handleRegisterPixReceipt(
   payerName: string,
   amount: number,
   paidAt: string,
-  imageDataUri: string | null
+  imageDataUri: string | null,
+  altJid?: string | null
 ) {
   try {
-    // Procura cliente por número de WhatsApp (normaliza só dígitos).
-    const number = (remoteJid || '').split('@')[0].replace(/\D/g, '');
+    // Reusa findCustomerByJid que ja faz match com remoteJidAlt (@lid)
     let customerId: number | null = null;
     let customerUsername: string | null = null;
-    if (number) {
-      const r = await pool.query(
-        "SELECT id, username FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = $1 LIMIT 1",
-        [number]
-      );
-      if (r.rows[0]) { customerId = r.rows[0].id; customerUsername = r.rows[0].username; }
-    }
+    const c = await findCustomerByJid(remoteJid, altJid);
+    if (c) { customerId = c.id; customerUsername = c.username; }
 
     let parsedDate: Date | null = null;
     try { const d = new Date(paidAt); if (!isNaN(d.getTime())) parsedDate = d; } catch {}
@@ -2108,7 +2107,7 @@ async function handleRegisterPixReceipt(
       );
       console.log(`[Receipt] cliente ${customerUsername} renovado por +30 dias`);
     } else {
-      console.warn(`[Receipt] sem cliente vinculado a ${number} — renovacao manual necessaria`);
+      console.warn(`[Receipt] sem cliente vinculado a ${remoteJid}${altJid ? ' (alt ' + altJid + ')' : ''} — renovacao manual necessaria`);
     }
   } catch (e: any) {
     console.error('[Receipt] erro:', e?.message || e);
