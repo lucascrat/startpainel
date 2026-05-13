@@ -1643,9 +1643,17 @@ app.post('/api/automations/ibo/run', async (req, res) => {
   try {
     const { mac, key, playlistUrl, targetUrl } = req.body;
     if (!mac || !key || !playlistUrl) return res.status(400).json({ error: 'mac, key e playlistUrl obrigatorios' });
-    // NOTA: geminiKey nao vai mais no payload — o worker tem GEMINI_API_KEY no .env local
-    // (evita expor a key em automation_jobs.payload, que e visivel no banco).
     const jobId = await enqueueJob('ibo_setup', { mac, key, playlistUrl, targetUrl });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/automations/ibopro/run', async (req, res) => {
+  try {
+    const { mac, key, playlistUrl } = req.body;
+    if (!mac || !key || !playlistUrl) return res.status(400).json({ error: 'mac, key e playlistUrl obrigatorios' });
+    const jobId = await enqueueJob('ibo_pro_setup', { mac, key, playlistUrl });
     const result = await waitForJob(jobId);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1719,6 +1727,72 @@ app.post('/api/automations/startpainel/create-test', async (req, res) => {
       return res.status(400).json({ error: 'mac e playerName obrigatorios (username opcional — gera automatico se vazio)' });
     }
     const result = await waitForJob(await enqueueJob('create_test', { username: username || '', mac, playerName }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Atualiza/repara a lista do cliente no iboproapp.com automaticamente.
+ *
+ * O caller passa SO O USERNAME do cliente — o endpoint busca tudo no DB:
+ *   1. customers.playlist_url do cliente
+ *   2. customer_apps com app_model = 'IBO PRO' (ou parecido) — pega MAC + Device Key
+ *
+ * Depois enfileira o job ibo_pro_setup com (mac, key, playlistUrl).
+ * Util pra IA chamar quando cliente reporta "lista nao funciona" no IBO Pro,
+ * e pro botao do AdminPanel "Atualizar IBO Pro (Robô)".
+ */
+app.post('/api/automations/iboproapp/setup', async (req, res) => {
+  try {
+    const { username, customerId, mac: macOverride, key: keyOverride, playlistUrl: urlOverride } = req.body;
+
+    // Caminho 1: caller passou tudo direto (sem precisar de lookup no DB)
+    if (macOverride && keyOverride && urlOverride) {
+      const result = await waitForJob(await enqueueJob('ibo_pro_setup', {
+        mac: macOverride, key: keyOverride, playlistUrl: urlOverride,
+      }));
+      return res.json(result);
+    }
+
+    // Caminho 2: lookup pelo cliente
+    if (!username && !customerId) {
+      return res.status(400).json({ error: 'Passa username (ou customerId), OU mac+key+playlistUrl direto.' });
+    }
+
+    const custRes = await pool.query(
+      customerId
+        ? 'SELECT id, username, playlist_url FROM customers WHERE id = $1'
+        : 'SELECT id, username, playlist_url FROM customers WHERE username = $1',
+      [customerId || username]
+    );
+    const customer = custRes.rows[0];
+    if (!customer) return res.status(404).json({ error: `Cliente "${username || customerId}" nao encontrado.` });
+    if (!customer.playlist_url) {
+      return res.status(400).json({ error: `Cliente "${customer.username}" nao tem playlist_url cadastrada. Cadastre primeiro.` });
+    }
+
+    // Procura o app IBO PRO desse cliente — match flexivel no app_model/app_name
+    const appsRes = await pool.query(
+      `SELECT app_name, app_model, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const iboApp = appsRes.rows.find((a: any) => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('IBO PRO') || n.includes('IBO PRO');
+    });
+    if (!iboApp) {
+      return res.status(400).json({ error: `Cliente "${customer.username}" nao tem app cadastrado como "IBO PRO".` });
+    }
+    if (!iboApp.mac_address || !iboApp.device_key) {
+      return res.status(400).json({ error: `App IBO PRO do cliente "${customer.username}" precisa ter MAC e Device Key cadastrados.` });
+    }
+
+    const result = await waitForJob(await enqueueJob('ibo_pro_setup', {
+      mac: iboApp.mac_address,
+      key: iboApp.device_key,
+      playlistUrl: customer.playlist_url,
+    }));
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

@@ -5,6 +5,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import os from 'os';
 import path from 'path';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Força o carregamento do .env do diretório atual
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -33,10 +34,10 @@ export interface RenewalResult {
   playlistUrl?: string;
 }
 
-async function launchBrowser(headless = true): Promise<Browser> {
+export async function launchBrowser(headless = true): Promise<Browser> {
   console.log(`[Puppeteer Stealth] Launching with: ${CHROME_PATH}`);
   
-  const userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'PuppeteerProfile');
+  const userDataDir = process.env.PUPPETEER_USER_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'PuppeteerProfile');
   
   return puppeteer.launch({
     executablePath: CHROME_PATH,
@@ -53,7 +54,7 @@ async function launchBrowser(headless = true): Promise<Browser> {
   }) as unknown as Browser;
 }
 
-async function loginToPanel(page: Page): Promise<boolean> {
+export async function loginToPanel(page: Page): Promise<boolean> {
   const loginUrl = `${BASE_URL}/login`;
   console.log(`[Puppeteer] Acessando painel...`);
   
@@ -664,10 +665,13 @@ export async function createTestClientAndActivatePlayer(
     if (userInputs[0]) {
       await userInputs[0].click({ clickCount: 3 });
       await userInputs[0].type(finalUsername, { delay: 80 });
+      await new Promise(r => setTimeout(r, 800)); // Espera o painel validar o input
     }
 
     // Botao Proximo (passo 1)
-    await clickButtonByText(page, ['proximo', 'próximo']);
+    console.log('[Puppeteer] Clicando em Proximo...');
+    const step1Ok = await clickButtonByText(page, ['proximo', 'próximo']);
+    if (!step1Ok) throw new Error('Botao "Próximo" do passo 1 nao encontrado ou nao clicavel.');
     await new Promise(r => setTimeout(r, 1500));
 
     // === STEP 2: plano ===
@@ -724,17 +728,63 @@ export async function createTestClientAndActivatePlayer(
     await new Promise(r => setTimeout(r, 1500));
 
     // === STEP 3: criar cliente ===
-    console.log('[Puppeteer] Confirmando criacao do cliente...');
-    await clickButtonByText(page, ['criar cliente', 'criar', 'confirmar', 'finalizar']);
+    console.log('[Puppeteer] Confirmando criacao do cliente (Passo Final)...');
+    
+    // Debug: tira print da tela antes de clicar
+    const debugPath = path.join(process.cwd(), 'scratch', `debug_step3_${Date.now()}.png`);
+    await page.screenshot({ path: debugPath });
+    console.log(`[Puppeteer] Debug screenshot salvo em: ${debugPath}`);
 
-    // Aguarda redirect pra pagina do cliente recem-criado (/clients/12345)
-    console.log('[Puppeteer] Aguardando redirect...');
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2500));
+    // Tenta localizar o botao especifico "Criar Cliente" e clicar com o mouse
+    const createBtnSelector = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a, input'));
+      const target = btns.find(b => {
+        const txt = (b.textContent || (b as any).value || '').toLowerCase();
+        return txt.includes('criar cliente');
+      }) as HTMLElement;
+      if (target) {
+        target.id = 'target_create_btn';
+        return '#target_create_btn';
+      }
+      return null;
+    });
 
-    // Confirma que estamos na pagina do cliente (url tem /clients/<id>)
-    const currentUrl = page.url();
-    console.log(`[Puppeteer] URL apos criacao: ${currentUrl}`);
+    if (createBtnSelector) {
+      console.log('[Puppeteer] Botao encontrado. Clicando 2x para garantir...');
+      await page.click(createBtnSelector, { clickCount: 2, delay: 200 });
+      await page.keyboard.press('Enter'); // Backup
+    } else {
+      console.warn('[Puppeteer] Botao "Criar Cliente" nao encontrado pelo seletor alvo. Tentando helper...');
+      await clickButtonByText(page, ['criar cliente', 'criar', 'confirmar', 'finalizar']);
+    }
+
+    // Aguarda processamento
+    console.log('[Puppeteer] Aguardando processamento da criacao...');
+    await new Promise(r => setTimeout(r, 5000));
+    
+    let currentUrl = page.url();
+    console.log(`[Puppeteer] URL apos tentativa: ${currentUrl}`);
+    
+    // Se ainda estiver na tela de criacao, tenta um ultimo clique forçado
+    if (currentUrl.includes('/clients/new')) {
+       console.log('[Puppeteer] Tentativa de clique forçado final...');
+       await page.evaluate(() => {
+         const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+         const createBtn = btns.find(b => b.textContent?.toLowerCase().includes('criar') || (b as any).value?.toLowerCase().includes('criar')) as HTMLElement;
+         if (createBtn) createBtn.click();
+       });
+       await new Promise(r => setTimeout(r, 3000));
+       currentUrl = page.url();
+    }
+
+    if (currentUrl.includes('/clients/new')) {
+       console.error('[Puppeteer] Erro: Permaneceu na pagina de criacao. Possivel erro de validacao.');
+       const errorMsg = await page.evaluate(() => {
+          const alert = document.querySelector('.alert, .text-danger, [class*="error"]');
+          return alert ? alert.textContent?.trim() : 'Sem mensagem de erro visivel';
+       });
+       console.error(`[Puppeteer] Mensagem do painel: ${errorMsg}`);
+    }
     if (!/\/clients\/\d+/.test(currentUrl)) {
       // Fallback: ir pra lista e procurar o cliente
       console.log('[Puppeteer] Sem redirect direto, buscando o cliente na lista...');
@@ -743,20 +793,40 @@ export async function createTestClientAndActivatePlayer(
       await page.waitForSelector('input[type="search"]', { timeout: 10000 });
       await page.click('input[type="search"]', { clickCount: 3 });
       await page.type('input[type="search"]', finalUsername, { delay: 80 });
-      await new Promise(r => setTimeout(r, 1500));
-      await page.evaluate(() => {
-        const link = document.querySelector('a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"]') as HTMLElement;
-        if (link) link.click();
-      });
+      await new Promise(r => setTimeout(r, 2000));
+      
+      const found = await page.evaluate((uname) => {
+        const rows = Array.from(document.querySelectorAll('tbody tr'));
+        const targetRow = rows.find(tr => tr.textContent?.includes(uname));
+        if (targetRow) {
+          const viewBtn = targetRow.querySelector('a[href*="/view"], a[title*="Visualizar"], .fa-eye') as HTMLElement;
+          if (viewBtn) {
+            viewBtn.click();
+            return true;
+          }
+        }
+        return false;
+      }, finalUsername);
+
+      if (!found) throw new Error(`Cliente ${finalUsername} criado mas nao encontrado na lista.`);
+      
       await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
       await new Promise(r => setTimeout(r, 2000));
     }
 
     // === STEP 4: clicar em "Ativar Player" ===
+    console.log(`[Puppeteer] URL atual: ${page.url()}`);
     console.log('[Puppeteer] Clicando em "Ativar Player"...');
-    const clickedActivate = await clickButtonByText(page, ['ativar player']);
+    let clickedActivate = false;
+    for (let i = 0; i < 5; i++) {
+      clickedActivate = await clickButtonByText(page, ['ativar player']);
+      if (clickedActivate) break;
+      console.log(`[Puppeteer] Tentativa ${i+1}: Botao "Ativar Player" nao apareceu, aguardando...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
     if (!clickedActivate) {
-      throw new Error('Botao "Ativar Player" nao encontrado na pagina do cliente.');
+      throw new Error('Botao "Ativar Player" nao encontrado na pagina do cliente apos varias tentativas.');
     }
     await new Promise(r => setTimeout(r, 2000));
 
@@ -781,30 +851,52 @@ export async function createTestClientAndActivatePlayer(
     }
     console.log(`[Puppeteer] Player selecionado: ${playerSelected}`);
 
-    // === STEP 6: preencher MAC ===
-    console.log(`[Puppeteer] Preenchendo MAC: ${mac}`);
+    // === STEP 6: preencher MAC / Código ===
+    console.log(`[Puppeteer] Preenchendo MAC/Código: ${mac}`);
     await new Promise(r => setTimeout(r, 800));
-    const macSelectors = ['input[name="mac"]', 'input[name="mac_address"]', 'input[placeholder*="MAC"]', 'input[placeholder*="00:1A"]'];
-    let macTyped = false;
-    for (const sel of macSelectors) {
-      const macInput = await page.$(sel);
-      if (macInput) {
-        const visible = await page.evaluate(el => {
-          const s = window.getComputedStyle(el);
-          return s.display !== 'none' && s.visibility !== 'hidden';
-        }, macInput);
-        if (visible) {
-          await page.evaluate((s) => {
-            const el = document.querySelector(s) as HTMLInputElement;
-            if (el) el.value = '';
-          }, sel);
-          await page.type(sel, mac, { delay: 80 });
-          macTyped = true;
-          break;
-        }
+    
+    const macTyped = await page.evaluate((textToType) => {
+      // Busca todos os inputs dentro do modal
+      const inputs = Array.from(document.querySelectorAll('.modal input, [role="dialog"] input')) as HTMLInputElement[];
+      
+      // Filtra pelo mais provavel (visivel e com placeholder/label relacionado)
+      const target = inputs.find(input => {
+        const style = window.getComputedStyle(input);
+        const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && input.offsetWidth > 0;
+        if (!isVisible) return false;
+        
+        const placeholder = (input.placeholder || '').toLowerCase();
+        const label = (input.closest('.form-group')?.textContent || '').toLowerCase();
+        const name = (input.name || '').toLowerCase();
+        const id = (input.id || '').toLowerCase();
+
+        return placeholder.includes('mac') || placeholder.includes('código') || placeholder.includes('aparelho') || placeholder.includes('digite') ||
+               label.includes('mac') || label.includes('código') || label.includes('aparelho') ||
+               name.includes('mac') || id.includes('mac') || name.includes('device') || id.includes('device');
+      });
+
+      if (target) {
+        target.focus();
+        target.value = ''; // Limpa
+        target.value = textToType; // Define valor via JS (mais garantido)
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
       }
+      return false;
+    }, mac);
+
+    if (!macTyped) {
+       // Fallback caso o evaluate falhe em achar (tentando seletor genérico)
+       console.warn('[Puppeteer] Nao foi possivel preencher via JS inteligente, tentando fallback...');
+       const genericInput = await page.$('.modal input[type="text"], .modal input:not([type="hidden"])');
+       if (genericInput) {
+          await genericInput.click({ clickCount: 3 });
+          await genericInput.type(mac, { delay: 100 });
+       } else {
+          throw new Error('Input MAC/Código nao encontrado no modal.');
+       }
     }
-    if (!macTyped) throw new Error('Input MAC nao encontrado no modal.');
 
     // === STEP 7: confirmar ativacao ===
     console.log('[Puppeteer] Confirmando ativacao no modal...');
@@ -851,16 +943,395 @@ export async function createTestClientAndActivatePlayer(
 
 // Helper compartilhado: procura botao com texto matching (case-insensitive substring)
 // e clica. Retorna true se achou e clicou, false caso contrario.
-async function clickButtonByText(page: Page, needles: string[]): Promise<boolean> {
-  const buttons = await page.$$('button, a.btn');
-  for (const btn of buttons) {
-    const text = (await page.evaluate(el => el.textContent, btn))?.toLowerCase() || '';
-    for (const n of needles) {
-      if (text.includes(n.toLowerCase())) {
-        await btn.click();
-        return true;
+export async function clickButtonByText(page: Page, needles: string[]): Promise<boolean> {
+  // Tenta encontrar o seletor mais provavel para o botao
+  const selector = await page.evaluate((texts) => {
+    const elements = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+    for (const el of elements as (HTMLElement | HTMLInputElement)[]) {
+      const content = el.tagName === 'INPUT' ? (el as HTMLInputElement).value : el.textContent;
+      const text = (content || '').toLowerCase().trim();
+      if (texts.some(t => text.includes(t.toLowerCase()))) {
+        const style = window.getComputedStyle(el);
+        if (style.display !== 'none' && style.visibility !== 'hidden' && el.offsetWidth > 0) {
+          // Atribui um ID temporario pra gente clicar via seletor do Puppeteer (mais real)
+          const id = 'btn_' + Math.random().toString(36).slice(2, 9);
+          el.id = id;
+          el.scrollIntoView();
+          return '#' + id;
+        }
       }
+    }
+    return null;
+  }, needles);
+
+  if (selector) {
+    try {
+      // Clique "real" do Puppeteer (move mouse, desce, sobe)
+      await page.click(selector, { delay: 100 });
+      await new Promise(r => setTimeout(r, 1000));
+      return true;
+    } catch (e) {
+      // Fallback: clique via JS
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel) as HTMLElement;
+        if (el) el.click();
+      }, selector);
+      return true;
     }
   }
   return false;
+}
+
+/**
+ * Busca a URL da lista (M3U) de um cliente no painel CMS
+ */
+export async function getClientPlaylistUrl(username: string): Promise<string | null> {
+  let browser;
+  try {
+    browser = await launchBrowser(false); // Abre visivel para garantir
+    const page = await browser.newPage();
+    
+    if (!(await loginToPanel(page))) {
+      throw new Error('Falha no login ao painel CMS');
+    }
+
+    console.log(`[Puppeteer] Buscando URL da lista para: ${username}`);
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.waitForSelector('input[type="search"]');
+    await page.type('input[type="search"]', username);
+    await new Promise(r => setTimeout(r, 2000));
+
+    const found = await page.evaluate((uname) => {
+      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      const targetRow = rows.find(tr => tr.textContent?.includes(uname));
+      if (targetRow) {
+        const viewBtn = targetRow.querySelector('a[href*="/view"], a[title*="Visualizar"], .fa-eye') as HTMLElement;
+        if (viewBtn) {
+          viewBtn.click();
+          return true;
+        }
+      }
+      return false;
+    }, username);
+
+    if (!found) throw new Error('Cliente nao encontrado no painel.');
+
+    await page.waitForNavigation({ waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Na pagina do cliente, procura o botao "Visualizar" da URL da lista
+    // Geralmente abre um modal ou campo de texto
+    const playlistUrl = await page.evaluate(() => {
+      // Procura por um texto que pareça uma URL M3U ou o campo de "URL da lista"
+      const elements = Array.from(document.querySelectorAll('td, span, div, input'));
+      for (const el of elements) {
+        const text = el.tagName === 'INPUT' ? (el as HTMLInputElement).value : el.textContent || '';
+        if (text.includes('get.php') && text.includes('username=') && text.includes('password=')) {
+          return text.trim();
+        }
+      }
+      return null;
+    });
+
+    return playlistUrl;
+
+  } catch (error: any) {
+    console.error('[Puppeteer] Erro ao buscar URL da lista:', error.message);
+    return null;
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+/**
+ * Automação de Suporte IBO Player: Atualiza a lista no site do IBO
+ */
+export async function supportIBOPlayer(mac: string, deviceKey: string, playlistUrl: string): Promise<any> {
+  let browser;
+  const sites = ['https://iboplayer.com/dashboard', 'https://iboiptv.com/dashboard'];
+  
+  try {
+    browser = await launchBrowser(false); // Precisamos ver por causa do Captcha
+    const page = await browser.newPage();
+
+    let loggedIn = false;
+    for (const site of sites) {
+      console.log(`[Puppeteer] Tentando login no site: ${site}`);
+      await page.goto(site, { waitUntil: 'networkidle2' });
+      await new Promise(r => setTimeout(r, 3000));
+
+      // NOVO: Dá um Refresh no Captcha logo de cara para garantir que é novo
+      console.log('[Puppeteer] Forçando um Refresh no Captcha para garantir validade...');
+      await clickButtonByText(page, ['Refresh Captcha', 'Atualizar Captcha']);
+      await new Promise(r => setTimeout(r, 2000));
+
+      // === NOVO: Lida com modais de Termos Legais / Welcome ===
+      console.log('[Puppeteer] Verificando modais de termos...');
+      await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, a'));
+        const acceptBtn = buttons.find(b => 
+          b.textContent?.toLowerCase().includes('accept') || 
+          b.textContent?.toLowerCase().includes('agree') ||
+          b.textContent?.toLowerCase().includes('entendi')
+        ) as HTMLElement;
+        if (acceptBtn) acceptBtn.click();
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
+
+      // === PASSO: Preenche MAC e Key com digitação simulada ===
+      console.log('[Puppeteer] Preenchendo credenciais IBO (Tecla por Tecla)...');
+      await page.waitForSelector('input', { timeout: 10000 }).catch(() => {});
+      
+      const inputsFound = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input'));
+        return inputs.map((i, idx) => ({
+          index: idx,
+          placeholder: i.placeholder || '',
+          name: i.name || '',
+          id: i.id || '',
+          type: i.type || ''
+        }));
+      });
+
+      const macIdx = inputsFound.findIndex(i => i.placeholder.toLowerCase().includes('mac') || i.name.toLowerCase().includes('mac') || i.index === 0);
+      const keyIdx = inputsFound.findIndex(i => i.placeholder.toLowerCase().includes('key') || i.name.toLowerCase().includes('key') || i.index === 1);
+
+      if (macIdx !== -1) {
+        const macInputs = await page.$$('input');
+        const box = await macInputs[macIdx].boundingBox();
+        if (box) {
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 3 });
+        }
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(mac, { delay: 200 });
+      }
+
+      await new Promise(r => setTimeout(r, 2000)); // Pausa humana entre campos
+
+      if (keyIdx !== -1) {
+        const allInputs = await page.$$('input');
+        const box = await allInputs[keyIdx].boundingBox();
+        if (box) {
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 3 });
+        }
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(deviceKey, { delay: 200 });
+      }
+
+      // === PASSO: Resolve Captcha com Gemini ===
+      const geminiKey = process.env.GEMINI_API_KEY;
+      if (geminiKey) {
+        console.log('[Puppeteer] Tentando resolver Captcha com Gemini...');
+        try {
+          // Tira um print da area do formulario (onde o captcha esta visivel)
+          console.log('[Puppeteer] Capturando area do formulario para o Gemini...');
+          await new Promise(r => setTimeout(r, 2000)); // Espera carregar bem
+          
+          const screenshot = await page.screenshot({ encoding: 'base64' });
+          const genAI = new GoogleGenerativeAI(geminiKey);
+          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+          const prompt = "Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.";
+          
+          const result = await model.generateContent([
+            prompt,
+            { inlineData: { data: screenshot as string, mimeType: "image/png" } }
+          ]);
+          
+          const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
+          console.log(`[Puppeteer] Gemini identificou o Captcha via Visão Total: ${captchaText}`);
+          
+          // Preenche o captcha (geralmente o ultimo input do form)
+          await page.evaluate((text) => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const captchaInput = inputs[inputs.length - 1]; // O ultimo input costuma ser o captcha
+            if (captchaInput) {
+              captchaInput.focus();
+            }
+          }, captchaText);
+
+          const allInputs = await page.$$('input');
+          const lastInput = allInputs[allInputs.length - 1];
+          const cbox = await lastInput.boundingBox();
+          if (cbox) {
+            await page.mouse.move(cbox.x + cbox.width / 2, cbox.y + cbox.height / 2);
+            await page.mouse.click(cbox.x + cbox.width / 2, cbox.y + cbox.height / 2);
+          }
+          await page.keyboard.type(captchaText, { delay: 200 });
+          
+          console.log('[Puppeteer] Aguardando 5 segundos para o site processar o Captcha...');
+          await new Promise(r => setTimeout(r, 5000));
+
+          // Clica no Login com Mouse
+          console.log('[Puppeteer] Clicando em LOGIN com Mouse...');
+          const loginBtn = await page.evaluateHandle(() => {
+            const btns = Array.from(document.querySelectorAll('button, a'));
+            return btns.find(b => b.textContent?.toUpperCase().includes('LOGIN') || b.textContent?.toUpperCase().includes('ENTRAR'));
+          });
+          
+          if (loginBtn) {
+            const lBtn = loginBtn.asElement();
+            if (lBtn) {
+               const lbox = await lBtn.boundingBox();
+               if (lbox) {
+                 await page.mouse.move(lbox.x + lbox.width / 2, lbox.y + lbox.height / 2);
+                 await page.mouse.click(lbox.x + lbox.width / 2, lbox.y + lbox.height / 2);
+               }
+            }
+          }
+          
+          // === NOVO: Verifica se deu erro de Captcha para tentar o Refresh ===
+          await new Promise(r => setTimeout(r, 3000));
+          const hasCaptchaError = await page.evaluate(() => {
+            return document.body.innerText.toLowerCase().includes('captcha is incorrect') || 
+                   document.body.innerText.toLowerCase().includes('captcha incorreto');
+          });
+
+          if (hasCaptchaError) {
+            console.log('[Puppeteer] Captcha incorreto detectado! Clicando em Refresh e tentando de novo...');
+            await clickButtonByText(page, ['Refresh Captcha', 'Atualizar Captcha']);
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Repete a lógica de visão (uma vez)
+            const secondScreenshot = await page.screenshot({ encoding: 'base64' });
+            const secondResult = await model.generateContent([
+              prompt,
+              { inlineData: { data: secondScreenshot as string, mimeType: "image/png" } }
+            ]);
+            const secondCaptchaText = secondResult.response.text().trim().replace(/\s/g, '').toUpperCase();
+            console.log(`[Puppeteer] Segunda tentativa de Captcha: ${secondCaptchaText}`);
+
+            await page.evaluate((text) => {
+              const inputs = Array.from(document.querySelectorAll('input'));
+              const captchaInput = inputs[inputs.length - 1] as HTMLInputElement;
+              if (captchaInput) {
+                captchaInput.focus();
+                captchaInput.value = text;
+                captchaInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+            }, secondCaptchaText);
+            
+            await page.keyboard.press('Tab');
+            await page.keyboard.type(secondCaptchaText, { delay: 200 });
+            
+            console.log('[Puppeteer] Aguardando 5 segundos (retry) para o site processar o Captcha...');
+            await new Promise(r => setTimeout(r, 5000));
+
+            await clickButtonByText(page, ['LOGIN', 'Login', 'Entrar']);
+          }
+        } catch (err: any) {
+          console.warn(`[Puppeteer] Nao foi possivel resolver captcha automaticamente: ${err.message}`);
+        }
+      }
+
+      console.log('[Puppeteer] Aguardando resolução de Captcha (Manualmente se necessário)...');
+      // Espera o dashboard carregar (indicando login com sucesso)
+      try {
+        await page.waitForFunction(() => 
+          document.body.innerText.includes('Manage Playlists') || 
+          document.body.innerText.includes('Playlist name'),
+          { timeout: 60000 } // Dá 1 minuto para o captcha ser resolvido
+        );
+        loggedIn = true;
+        break;
+      } catch (e) {
+        console.log(`[Puppeteer] Login falhou ou timeout no site ${site}. Capturando print de erro...`);
+        const errorPath = path.join(process.cwd(), 'scratch', `ibo_error_${Date.now()}.png`);
+        await page.screenshot({ path: errorPath });
+        console.log(`[Puppeteer] Print de erro salvo em: ${errorPath}`);
+        console.log(`[Puppeteer] Tentando próximo site se houver...`);
+      }
+    }
+
+    if (!loggedIn) throw new Error('Nao foi possivel logar em nenhum dos sites do IBO.');
+
+    // === PASSO: Manage Playlists ===
+    console.log('[Puppeteer] Indo para Manage Playlists...');
+    await clickButtonByText(page, ['Manage Playlists']);
+    await new Promise(r => setTimeout(r, 2000));
+
+    const editBtnHandle = await page.evaluateHandle(() => {
+      // Procura por links ou botoes que contenham icones de edicao ou classes comuns
+      const editBtn = document.querySelector('a[href*="edit"], .fa-edit, .fa-pencil, .blue-text i, i.fa-edit');
+      if (editBtn) return editBtn;
+      
+      // Fallback: procura por qualquer icone azul na coluna de acoes
+      const blueIcons = Array.from(document.querySelectorAll('i, svg')).filter(el => {
+        const style = window.getComputedStyle(el);
+        return style.color.includes('0, 0, 255') || style.color.includes('blue') || el.classList.contains('text-blue-500');
+      });
+      return blueIcons[0] || null;
+    });
+
+    let editClicked = false;
+    const eBtn = editBtnHandle.asElement();
+    if (eBtn) {
+      const box = await eBtn.boundingBox();
+      if (box) {
+        console.log('[Puppeteer] Movendo mouse para o Lapis Azul...');
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        editClicked = true;
+      }
+    }
+
+      if (!editClicked) {
+        console.log('[Puppeteer] Icone de editar nao encontrado. Tentando "Add Playlist" ou "Add XC Playlist"...');
+        await clickButtonByText(page, ['Add Playlist', 'Add XC Playlist']);
+      }
+
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // Print para debug da tela de PIN/Edicao
+      const debugPath = path.join(process.cwd(), 'scratch', `ibo_edit_screen_${Date.now()}.png`);
+      await page.screenshot({ path: debugPath });
+      console.log(`[Puppeteer] Debug da tela de edicao: ${debugPath}`);
+
+    // Verifica se abriu o modal de PIN
+    const pinInput = await page.waitForSelector('input[type="password"], input[placeholder*="PIN"], .pin-input', { timeout: 5000 }).catch(() => null);
+    if (pinInput) {
+      console.log('[Puppeteer] Inserindo PIN 654321...');
+      await pinInput.type('654321', { delay: 200 });
+      await page.keyboard.press('Enter');
+      console.log('[Puppeteer] Aguardando 5 segundos para o formulario de edicao carregar...');
+      await new Promise(r => setTimeout(r, 5000));
+      
+      // Tira um print para conferir se o form abriu
+      const formPath = path.join(process.cwd(), 'scratch', `ibo_form_debug_${Date.now()}.png`);
+      await page.screenshot({ path: formPath });
+      console.log(`[Puppeteer] Screenshot do formulario: ${formPath}`);
+    }
+
+    // Preenche a URL da playlist
+    console.log('[Puppeteer] Atualizando URL da Playlist...');
+    const urlInput = await page.waitForSelector('input[name*="url"], input[placeholder*="http"], input[placeholder*="M3U"]', { timeout: 15000 });
+    if (urlInput) {
+      await urlInput.click({ clickCount: 3 });
+      await page.keyboard.press('Backspace');
+      await urlInput.type(playlistUrl, { delay: 20 });
+    }
+
+    // Preenche PIN e Confirm PIN se existirem no form de edicao
+    await page.evaluate(() => {
+      const pins = Array.from(document.querySelectorAll('input')).filter(i => i.placeholder?.includes('PIN') || i.type === 'password');
+      pins.forEach(p => {
+        (p as HTMLInputElement).value = '654321';
+        p.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+
+    // Salva
+    console.log('[Puppeteer] Clicando em SAVE...');
+    await clickButtonByText(page, ['SAVE', 'Save', 'Salvar', 'OK', 'Submit']);
+    await new Promise(r => setTimeout(r, 5000));
+    
+    console.log('[Puppeteer] ✅ Suporte IBO concluído!');
+    return { success: true, message: 'IBO Player atualizado com sucesso!' };
+  } catch (error: any) {
+    console.error(`[Puppeteer] Erro no suporte IBO: ${error.message}`);
+    return { success: false, message: error.message };
+  } finally {
+    if (browser) await browser.close();
+  }
 }

@@ -29,7 +29,8 @@ import {
   activateSeePlay,
   createTestClientAndActivatePlayer,
 } from './src/services/startpainel-puppeteer.js';
-import { runIboPlayerAutomation } from './src/services/ibo-automation.js';
+import { runIBOSupportAutomation } from './src/services/ibo-support-service.js';
+import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 
 const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
 const WORKER_TOKEN = process.env.WORKER_TOKEN;
@@ -55,6 +56,7 @@ type JobHandler = (payload: any) => Promise<any>;
 const handlers: Record<string, JobHandler> = {
   renew_client: ({ username }) => renewClientPuppeteer(username),
   create_client: ({ username }) => createClientAndGetPlaylist(username),
+  mac_support: ({ mac, key, playlistUrl }) => runIBOSupportAutomation(mac, key, playlistUrl),
   activate_ultra: ({ username, mac }) => activateUltraPlayer(username, mac),
   activate_funplay: ({ username, mac }) => activateFunPlay(username, mac),
   activate_lazerplay: ({ username, mac }) => activateLazerPlay(username, mac),
@@ -62,8 +64,10 @@ const handlers: Record<string, JobHandler> = {
   activate_seeplay: ({ username, mac }) => activateSeePlay(username, mac),
   create_test: ({ username, mac, playerName }) =>
     createTestClientAndActivatePlayer(username || '', mac, playerName),
-  ibo_setup: ({ mac, key, playlistUrl, targetUrl }) =>
-    runIboPlayerAutomation(mac, key, playlistUrl, process.env.GEMINI_API_KEY, targetUrl),
+  ibo_setup: ({ mac, key, playlistUrl }) =>
+    runIBOSupportAutomation(mac, key, playlistUrl),
+  ibo_pro_setup: ({ mac, key, playlistUrl }) =>
+    runIBOProAutomation(mac, key, playlistUrl),
 };
 
 async function api(path: string, body: any): Promise<Response> {
