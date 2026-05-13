@@ -894,10 +894,39 @@ Regras de resposta:
 
     const response = result.response;
     await logAiUsage(GEMINI_MODEL, 'chat', response.usageMetadata);
-    return { text: response.text() || '', functionCalls: response.functionCalls() || [], usage: response.usageMetadata, model: GEMINI_MODEL };
+    let text = '';
+    try { text = response.text() || ''; } catch (e: any) {
+      // .text() throw quando finishReason e SAFETY/RECITATION/MAX_TOKENS sem texto
+      console.warn('[AI] response.text() lançou:', e?.message);
+    }
+    const functionCalls = response.functionCalls() || [];
+
+    // Diagnostico — quando a IA retorna nada (texto vazio E sem function call) o handler
+    // do webhook nao envia nada e o cliente fica sem resposta. Loga o motivo (finishReason).
+    if (!text && functionCalls.length === 0) {
+      const candidate = response.candidates?.[0];
+      const finishReason = candidate?.finishReason || 'UNKNOWN';
+      const safetyRatings = candidate?.safetyRatings;
+      const promptFeedback = (response as any).promptFeedback;
+      console.warn(`[AI] resposta vazia! finishReason=${finishReason}`, {
+        safetyRatings: safetyRatings?.filter((r: any) => r.blocked || r.probability !== 'NEGLIGIBLE'),
+        promptFeedback: promptFeedback?.blockReason ? promptFeedback : undefined,
+        candidatesCount: response.candidates?.length,
+      });
+      // Fallback amigavel — o cliente recebe ALGO em vez de silencio
+      text = '😕 Desculpa, tive um probleminha pra processar isso. Pode mandar de novo ou de outra forma?';
+    }
+
+    return { text, functionCalls, usage: response.usageMetadata, model: GEMINI_MODEL };
   } catch (error: any) {
-    console.error('[AI Error]', error.message);
-    return { text: `⚠️ IA Erro: ${error.message}`, functionCalls: [], model: 'gemini-2.5-flash' };
+    // Distingue erros comuns (quota/rate limit) pra debug rapido
+    const msg = error?.message || String(error);
+    const status = error?.status || error?.response?.status;
+    console.error(`[AI Error] status=${status} msg=${msg}`);
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+      return { text: '⏳ Estou um pouco sobrecarregada agora. Tenta de novo em uns segundos?', functionCalls: [], model: 'gemini-2.5-flash' };
+    }
+    return { text: `⚠️ IA Erro: ${msg}`, functionCalls: [], model: 'gemini-2.5-flash' };
   }
 }
 
