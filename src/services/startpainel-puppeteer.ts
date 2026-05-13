@@ -433,12 +433,40 @@ export async function activatePlayer(username: string, mac: string, playerName: 
     await page.type(searchSelector, username, { delay: 150 });
     await new Promise(r => setTimeout(r, 2000));
 
+    // 2.5 Verifica se a pesquisa retornou resultado antes de procurar o botao.
+    // DataTables.net renderiza td.dataTables_empty quando nao tem match — usa isso
+    // como sinal primario. Fallback: contar tbody rows com dado real.
+    const searchResult = await page.evaluate(() => {
+      const emptyCell = document.querySelector('td.dataTables_empty, .dataTables_empty');
+      if (emptyCell) return { found: false, hint: emptyCell.textContent?.trim() || 'no results cell' };
+      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      // Algumas tabelas mostram so 1 linha com 'No matching records found' / 'Nenhum'
+      const dataRows = rows.filter(tr => {
+        const txt = tr.textContent?.toLowerCase() || '';
+        if (txt.includes('no data') || txt.includes('no matching') ||
+            txt.includes('nenhum registro') || txt.includes('nenhum resultado') ||
+            txt.includes('sem registros')) return false;
+        // Linha valida tem >=2 colunas com conteudo
+        const cells = tr.querySelectorAll('td');
+        return cells.length >= 2;
+      });
+      return { found: dataRows.length > 0, hint: `${dataRows.length} linha(s) na tabela` };
+    });
+
+    if (!searchResult.found) {
+      console.log(`[Puppeteer] Cliente "${username}" nao encontrado (${searchResult.hint}).`);
+      return {
+        success: false,
+        message: `Cliente "${username}" nao foi encontrado no painel CMS. Confira se o username esta correto.`,
+      };
+    }
+
     // 3. Click "Visualizar" / "Detalhes"
     console.log('[Puppeteer] Clicando em Detalhes/Visualizar...');
     const viewBtnSelector = 'a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"], .fa-eye';
     const viewBtn = await page.$(viewBtnSelector);
     if (!viewBtn) {
-       throw new Error('Botão Detalhes/Visualizar não encontrado.');
+       throw new Error('Botao Detalhes/Visualizar nao encontrado (cliente foi encontrado mas selector do botao nao bate). Pode ser que o CMS atualizou — me avisa.');
     }
     
     await page.evaluate((selector) => {
