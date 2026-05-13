@@ -1583,26 +1583,34 @@ app.post('/api/webhooks/evolution/:event?',
 
     let mediaData = undefined;
     if (isImage || isAudio) {
+       console.log(`[Webhook] Baixando midia (${isImage ? 'image' : 'audio'}) do Evolution...`);
+       const t0 = Date.now();
        try {
          const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
          const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
          const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
          const media = await evo.loadMedia(data.data.key);
+         const elapsed = Date.now() - t0;
          if (media?.base64) {
-           // Use real mimetype from WhatsApp payload, fall back to common defaults.
            const mimeType = (isImage ? msg.imageMessage?.mimetype : msg.audioMessage?.mimetype)
              || (isImage ? 'image/jpeg' : 'audio/ogg');
            mediaData = { data: media.base64.replace(/^data:.*?;base64,/, ""), mimeType };
-           console.log(`[Webhook] Mídia carregada (${mimeType}, ${Math.round(mediaData.data.length / 1024)}KB)`);
+           console.log(`[Webhook] Midia carregada em ${elapsed}ms (${mimeType}, ${Math.round(mediaData.data.length / 1024)}KB)`);
          } else {
-           console.warn('[Webhook] Evolution loadMedia retornou vazio');
+           console.warn(`[Webhook] Evolution loadMedia retornou vazio em ${elapsed}ms — segue sem midia, IA respondera baseado no placeholder`);
          }
        } catch (e: any) {
-         console.error('[Webhook] Falha ao carregar mídia:', e?.message || e);
+         const elapsed = Date.now() - t0;
+         console.error(`[Webhook] Falha ao carregar midia em ${elapsed}ms:`, e?.message || e);
+         // Importante: NAO retorna. Segue pra IA mesmo sem midia — a IA responde
+         // baseado no texto placeholder ('[Audio enviado]'/'[Imagem enviada]').
        }
     }
 
+    console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'})...`);
+    const aiT0 = Date.now();
     const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName }, mediaData);
+    console.log(`[Webhook] IA respondeu em ${Date.now() - aiT0}ms: text=${aiResult.text?.length || 0}chars, tools=${aiResult.functionCalls?.length || 0}`);
     if (aiResult.text) {
        const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
        const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);

@@ -35,6 +35,12 @@ function logEvolutionError(label: string, error: any) {
   });
 }
 
+// Timeouts (ms) — Evolution as vezes trava em loadMedia (ex: midia muito grande
+// ou WhatsApp lento descriptografando). Sem timeout, axios espera infinitamente
+// e o webhook handler fica pendurado, perdendo todas as mensagens seguintes.
+const TIMEOUT_SEND = 30_000;       // 30s pra sendMessage/Media/Audio
+const TIMEOUT_LOAD_MEDIA = 25_000; // 25s pra baixar midia
+
 export class EvolutionService {
   private config: EvolutionConfig;
 
@@ -57,7 +63,7 @@ export class EvolutionService {
         text: text,
         delay: 1200,
         linkPreview: true
-      }, { headers: this.headers });
+      }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
     } catch (error: any) {
       logEvolutionError('sendMessage falhou', error);
@@ -68,16 +74,14 @@ export class EvolutionService {
   async sendMedia(number: string, base64: string, caption: string, fileName: string, mediaType: 'image' | 'video' | 'document' | 'audio' = 'image') {
     try {
       const url = `${this.config.apiUrl}/message/sendMedia/${this.config.instance}`;
-      // Evolution v2 espera base64 puro sem prefixo data URI no campo media.
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
-      // v2 aceita campos flat OU dentro de mediaMessage; flat e mais confiavel.
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
         mediatype: mediaType,
         caption: caption,
         media: cleanBase64,
         fileName: fileName,
-      }, { headers: this.headers });
+      }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
     } catch (error: any) {
       logEvolutionError('sendMedia falhou', error);
@@ -88,14 +92,12 @@ export class EvolutionService {
   async sendAudio(number: string, base64: string) {
     try {
       const url = `${this.config.apiUrl}/message/sendWhatsAppAudio/${this.config.instance}`;
-      // Evolution v2 espera base64 pura, sem prefixo data URI.
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
-
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
         audio: cleanBase64,
         delay: 1000
-      }, { headers: this.headers });
+      }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
     } catch (error: any) {
       logEvolutionError('sendAudio falhou', error);
@@ -105,16 +107,22 @@ export class EvolutionService {
 
   async loadMedia(messageKey: any) {
     // Evolution API v2: /chat/getBase64FromMediaMessage/{instance}
-    // (rota antiga /message/loadMedia/{instance} foi removida e retorna 404)
     try {
       const url = `${this.config.apiUrl}/chat/getBase64FromMediaMessage/${this.config.instance}`;
       const response = await axios.post(url, {
         message: { key: messageKey },
         convertToMp4: false
-      }, { headers: this.headers });
-      return response.data; // { base64: '...', mediaType, mimetype, fileName }
+      }, { headers: this.headers, timeout: TIMEOUT_LOAD_MEDIA });
+      return response.data;
     } catch (error: any) {
-      console.error('[EvolutionAPI] Error loading media:', error.response?.data || error.message);
+      // Inclui codigo do timeout pra debug
+      const isTimeout = error?.code === 'ECONNABORTED' || error?.message?.includes('timeout');
+      console.error('[EvolutionAPI] loadMedia falhou:', {
+        timeout: isTimeout,
+        message: error?.message,
+        code: error?.code,
+        status: error?.response?.status,
+      });
       throw error;
     }
   }
