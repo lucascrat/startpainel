@@ -29,7 +29,7 @@ import {
   activateSeePlay,
   createTestClientAndActivatePlayer,
 } from './src/services/startpainel-puppeteer.js';
-import { runIBOSupportAutomation } from './src/services/ibo-support-service.js';
+import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 
 const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
@@ -66,6 +66,8 @@ const handlers: Record<string, JobHandler> = {
     createTestClientAndActivatePlayer(username || '', mac, playerName),
   ibo_setup: ({ mac, key, playlistUrl }) =>
     runIBOSupportAutomation(mac, key, playlistUrl),
+  ibo_repair: ({ mac, key, playlistUrl }) =>
+    runIBORepairAutomation(mac, key, playlistUrl),
   ibo_pro_setup: ({ mac, key, playlistUrl }) =>
     runIBOProAutomation(mac, key, playlistUrl),
 };

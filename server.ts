@@ -961,6 +961,16 @@ ${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}`;
     if (hasIboPro) {
       ctx += `\n- 🔧 Cliente tem IBO PRO instalado. Se ele reclamar de "lista parou", "nao abre canais", "desativou", "precisa atualizar" → use a tool *repair_ibo_pro_playlist* com username "${customer.username}". O bot vai logar no iboproapp.com e atualizar a lista dele automaticamente em ~1-2min.`;
     }
+
+    // Se tem IBO Player/IPTV (padrao), sugere a nova tool de reparo
+    const hasIboStandard = apps.some(a => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('IBO PLAYER') || n.includes('IBO PLAYER') || m.includes('IBO IPTV') || n.includes('IBO IPTV');
+    });
+    if (hasIboStandard) {
+      ctx += `\n- 🔧 Cliente tem IBO PLAYER ou IBO IPTV. Se ele reclamar de "lista parou", "sem sinal", "canais nao abrem" → use a tool *repair_ibo_playlist* com username "${customer.username}". O bot vai verificar se o app esta vencido e atualizar a lista automaticamente em ~1-2min.`;
+    }
   }
 
   if (customer.status === 'expired') {
@@ -1145,6 +1155,18 @@ NUNCA:
           {
             name: "repair_ibo_pro_playlist",
             description: "Atualiza/repara automaticamente a lista (playlist M3U) do cliente no app iboproapp.com. \n\nUSE QUANDO: cliente RECLAMA ativamente — 'lista parou', 'nao abre canais', 'desativou', 'precisa atualizar a lista', 'da erro pra abrir', 'fica carregando' — E o app dele e IBO PRO.\n\nNAO USE NUNCA QUANDO: (a) cliente esta AGRADECENDO ('obrigado', 'deu certo', 'funcionou', 'valeu', 'top', 'show'); (b) cliente esta confirmando que esta funcionando ('agora foi', 'voltou', 'esta ok', 'consegui'); (c) conversa social ('oi', 'bom dia', 'tudo bem'); (d) voce ja chamou essa tool nesta conversa nos ultimos minutos. Nesses casos so responda com TEXTO de boas-vindas/agradecimento, NUNCA chame a tool de novo.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+              },
+              required: ["username"],
+            },
+          },
+          // Reparo da lista do IBO Player/IPTV (padrao)
+          {
+            name: "repair_ibo_playlist",
+            description: "Verifica validade e atualiza automaticamente a lista do cliente nos sites iboplayer.com ou iboiptv.com. \n\nUSE QUANDO: cliente reporta 'sem sinal', 'lista parou', 'canais nao carregam' E usa IBO Player ou IBO IPTV. O bot vai conferir se o app esta vencido e atualizar a playlist.",
             parameters: {
               type: "OBJECT",
               properties: {
@@ -1690,6 +1712,16 @@ app.post('/api/automations/ibo/run', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/automations/ibo/repair', async (req, res) => {
+  try {
+    const { mac, key, playlistUrl } = req.body;
+    if (!mac || !key || !playlistUrl) return res.status(400).json({ error: 'mac, key e playlistUrl obrigatorios' });
+    const jobId = await enqueueJob('ibo_repair', { mac, key, playlistUrl });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/automations/ibopro/run', async (req, res) => {
   try {
     const { mac, key, playlistUrl } = req.body;
@@ -1830,6 +1862,69 @@ app.post('/api/automations/iboproapp/setup', async (req, res) => {
     }
 
     const result = await waitForJob(await enqueueJob('ibo_pro_setup', {
+      mac: iboApp.mac_address,
+      key: iboApp.device_key,
+      playlistUrl: customer.playlist_url,
+    }));
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Atualiza/repara a lista do cliente no iboplayer.com (IBO PLAYER classico — NAO o PRO).
+ * Mesma logica do /iboproapp/setup mas:
+ *   - Procura customer_apps com modelo contendo 'IBO' mas SEM 'PRO'
+ *   - Enfileira job 'ibo_setup' (mapeia pra runIBOSupportAutomation no worker,
+ *     que opera em iboplayer.com / iboiptv.com)
+ */
+app.post('/api/automations/iboplayer/setup', async (req, res) => {
+  try {
+    const { username, customerId, mac: macOverride, key: keyOverride, playlistUrl: urlOverride } = req.body;
+
+    // Caminho 1: caller passou tudo direto
+    if (macOverride && keyOverride && urlOverride) {
+      const result = await waitForJob(await enqueueJob('ibo_setup', {
+        mac: macOverride, key: keyOverride, playlistUrl: urlOverride,
+      }));
+      return res.json(result);
+    }
+
+    if (!username && !customerId) {
+      return res.status(400).json({ error: 'Passa username (ou customerId), OU mac+key+playlistUrl direto.' });
+    }
+
+    const custRes = await pool.query(
+      customerId
+        ? 'SELECT id, username, playlist_url FROM customers WHERE id = $1'
+        : 'SELECT id, username, playlist_url FROM customers WHERE username = $1',
+      [customerId || username]
+    );
+    const customer = custRes.rows[0];
+    if (!customer) return res.status(404).json({ error: `Cliente "${username || customerId}" nao encontrado.` });
+    if (!customer.playlist_url) {
+      return res.status(400).json({ error: `Cliente "${customer.username}" nao tem playlist_url cadastrada. Cadastre primeiro.` });
+    }
+
+    // Match: contem "IBO" mas NAO contem "PRO" (pra distinguir do IBO PRO).
+    const appsRes = await pool.query(
+      `SELECT app_name, app_model, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const iboApp = appsRes.rows.find((a: any) => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      const matchesIbo = m.includes('IBO') || n.includes('IBO');
+      const isPro = m.includes('PRO') || n.includes('PRO');
+      return matchesIbo && !isPro;
+    });
+    if (!iboApp) {
+      return res.status(400).json({ error: `Cliente "${customer.username}" nao tem app cadastrado como "IBO PLAYER" (so PRO ou nenhum).` });
+    }
+    if (!iboApp.mac_address || !iboApp.device_key) {
+      return res.status(400).json({ error: `App IBO PLAYER do cliente "${customer.username}" precisa ter MAC e Device Key cadastrados.` });
+    }
+
+    const result = await waitForJob(await enqueueJob('ibo_setup', {
       mac: iboApp.mac_address,
       key: iboApp.device_key,
       playlistUrl: customer.playlist_url,
@@ -2051,6 +2146,9 @@ app.post('/api/webhooks/evolution/:event?',
           if (ok) toolsThatSent++;
         } else if (call.name === 'repair_ibo_pro_playlist') {
           const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'repair_ibo_playlist') {
+          const ok = await handleRepairIboPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
@@ -2585,6 +2683,84 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
     return false;
   }
 }
+
+/**
+ * Tool handler: Verifica e repara lista no IBO Player/IPTV (iboplayer.com / iboiptv.com).
+ */
+async function handleRepairIboPlaylist(remoteJid: string, username: string): Promise<boolean> {
+  try {
+    if (!username) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Preciso saber seu usuario pra verificar sua lista IBO. Pode me confirmar?');
+        return true;
+      } catch { return false; }
+    }
+
+    const custRes = await pool.query('SELECT id, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, `😕 Nao achei seu cadastro com o usuario "${username}". Pode confirmar?`);
+        return true;
+      } catch { return false; }
+    }
+
+    const appsRes = await pool.query(
+      `SELECT app_name, app_model, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const iboApp = appsRes.rows.find((a: any) => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('IBO PLAYER') || n.includes('IBO PLAYER') || m.includes('IBO IPTV') || n.includes('IBO IPTV');
+    });
+
+    if (!iboApp || !iboApp.mac_address || !iboApp.device_key) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Pra atualizar o IBO Player preciso do seu MAC e Device Key. Pode me passar?');
+        return true;
+      } catch { return false; }
+    }
+
+    const evo = await getEvolutionService();
+    await evo.sendMessage(
+      remoteJid,
+      `🔧 Vou verificar seu sinal no IBO agora.\n\nMAC: ${iboApp.mac_address}\n\nIsso leva uns 1-2min. Ja te aviso o que encontrei! 🎬`
+    );
+
+    (async () => {
+      try {
+        const jobId = await enqueueJob('ibo_repair', {
+          mac: iboApp.mac_address,
+          key: iboApp.device_key,
+          playlistUrl: customer.playlist_url || '',
+        });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(remoteJid, result.message || '✅ Verificacao concluida.');
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Tive um problema ao verificar: ${result?.message || 'erro tecnico'}.\n\nO suporte ja foi avisado.`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool repair_ibo_playlist] background falhou:', e?.message);
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool repair_ibo_playlist] erro:', e?.message);
+    return false;
+  }
+}
+
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

@@ -513,17 +513,25 @@ export default function AdminPanel() {
   const handleRunFunPlay = (username: string, mac: string) =>
     handleActivatePlayer(username, mac, 'funplay', 'Fun Play');
 
-  // Atualiza/repara a lista no iboproapp.com. Backend busca M3U + MAC + Key
-  // pelo username — caller passa so o username, simples assim.
-  const handleRunIboPro = async (username: string) => {
+  // Generaliza atualizacao de lista IBO via robo (IBO PRO ou IBO PLAYER classico).
+  // Backend busca M3U + MAC + Key pelo username.
+  const handleRunIboAutomation = async (
+    username: string,
+    variant: 'pro' | 'player',
+    label: string,
+    siteUrl: string,
+  ) => {
     if (!username) {
       toast.error('Username do cliente nao identificado.');
       return;
     }
+    const endpoint = variant === 'pro'
+      ? '/api/automations/iboproapp/setup'
+      : '/api/automations/iboplayer/setup';
     setIsLoading(true);
-    const pending = toast.loading('Atualizando lista no iboproapp.com... olha seu Chrome 👀 (até 5min)');
+    const pending = toast.loading(`Atualizando lista no ${siteUrl}... olha seu Chrome 👀 (até 5min)`);
     try {
-      const response = await fetch('/api/automations/iboproapp/setup', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -531,9 +539,9 @@ export default function AdminPanel() {
       const data = await response.json().catch(() => ({}));
       toast.dismiss(pending);
       if (data.success) {
-        toast.success(data.message || 'Lista IBO Pro atualizada com sucesso!');
+        toast.success(data.message || `Lista ${label} atualizada com sucesso!`);
       } else {
-        toast.error(data.message || data.error || 'Falha na automação IBO Pro.');
+        toast.error(data.message || data.error || `Falha na automação ${label}.`);
       }
     } catch (error: any) {
       toast.dismiss(pending);
@@ -542,6 +550,10 @@ export default function AdminPanel() {
       setIsLoading(false);
     }
   };
+  const handleRunIboPro = (username: string) =>
+    handleRunIboAutomation(username, 'pro', 'IBO Pro', 'iboproapp.com');
+  const handleRunIboPlayer = (username: string) =>
+    handleRunIboAutomation(username, 'player', 'IBO Player', 'iboplayer.com');
 
   const handleRunAutomation = async (auto: any, mac: string, key: string, playlistUrl: string, targetUrl?: string) => {
     if (!mac || !key) {
@@ -587,6 +599,32 @@ export default function AdminPanel() {
         toast.error(`Erro na automação: ${data.message}`);
       }
     } catch (error: any) {
+      toast.error(`Erro: ${error.message}`);
+    } finally { setIsLoading(false); }
+  };
+
+  const handleRunIBORepair = async (mac: string, key: string, playlistUrl: string) => {
+    if (!mac || !key || !playlistUrl) {
+      toast.error('Dados incompletos para reparo (MAC, Key ou Playlist).');
+      return;
+    }
+    setIsLoading(true);
+    const pending = toast.loading('Reparando lista no iboplayer.com... olha seu Chrome 👀');
+    try {
+      const response = await fetch('/api/automations/ibo/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mac, key, playlistUrl })
+      });
+      const data = await response.json();
+      toast.dismiss(pending);
+      if (data.success) {
+        toast.success(data.message || 'Reparo concluído com sucesso!');
+      } else {
+        toast.error(data.message || 'Falha no reparo automatizado.');
+      }
+    } catch (error: any) {
+      toast.dismiss(pending);
       toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
   };
@@ -1428,6 +1466,14 @@ export default function AdminPanel() {
                                 {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
                                 Suporte IBO Player (Automático)
                               </button>
+                              <button 
+                                onClick={() => handleRunIBORepair(viewingApp.mac_address || '', viewingApp.device_key || '', customers.find(c => Number(c.id) === selectedCustomerId)?.playlist_url || '')}
+                                disabled={isLoading}
+                                className="w-full mt-2 bg-gradient-to-r from-emerald-600 to-teal-700 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
+                              >
+                                {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                                Reparar IBO Player (Playlist)
+                              </button>
                               <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center italic">Resolve erros de conexão, atualiza M3U e valida com IA (Gemini 2.5)</p>
                             </div>
                           )}
@@ -1460,7 +1506,7 @@ export default function AdminPanel() {
                             </div>
                           )}
 
-                          {!isEditingApp && (viewingApp.app_model === 'IBO PRO' || viewingApp.app_model === 'IBO PLAYER') && (
+                          {!isEditingApp && viewingApp.app_model === 'IBO PRO' && (
                             <div className="col-span-2">
                               <button
                                 onClick={() => handleRunIboPro(customers.find(c => Number(c.id) === selectedCustomerId)?.username || '')}
@@ -1470,7 +1516,21 @@ export default function AdminPanel() {
                                 {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
                                 Atualizar Lista IBO Pro (Robô)
                               </button>
-                              <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Pega M3U do cliente + MAC/Key do app, faz login no iboproapp.com e atualiza a lista automaticamente</p>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Faz login em iboproapp.com com MAC/Key do cliente, edita a lista, marca PIN e salva</p>
+                            </div>
+                          )}
+
+                          {!isEditingApp && viewingApp.app_model === 'IBO PLAYER' && (
+                            <div className="col-span-2">
+                              <button
+                                onClick={() => handleRunIboPlayer(customers.find(c => Number(c.id) === selectedCustomerId)?.username || '')}
+                                disabled={isLoading}
+                                className="w-full bg-violet-600 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-violet-700 transition-all shadow-lg shadow-violet-100 flex items-center justify-center gap-2"
+                              >
+                                {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
+                                Atualizar Lista IBO Player (Robô)
+                              </button>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Faz login em iboplayer.com com MAC/Key do cliente, atualiza a playlist M3U e resolve captcha com IA</p>
                             </div>
                           )}
 
