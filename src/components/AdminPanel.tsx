@@ -66,6 +66,7 @@ export default function AdminPanel() {
   const [autoType, setAutoType] = useState('ibo_player');
 
   const [autoCreateCms, setAutoCreateCms] = useState(false);
+  const [autoActivateStartflix, setAutoActivateStartflix] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
@@ -301,10 +302,13 @@ export default function AdminPanel() {
         } catch (err: any) {
           toast.error(`Erro na comunicação com o robô: ${err.message}`);
         }
-      } else {
-        toast.success('Cliente cadastrado com sucesso!');
       }
 
+      if (autoActivateStartflix) {
+        handleSyncStartflix(newUsername, newExpirationDate);
+      }
+
+      toast.success('Cliente cadastrado com sucesso!');
     } catch (error: any) {
       toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
@@ -829,6 +833,18 @@ export default function AdminPanel() {
                         />
                         <label htmlFor="autoCreateCms" className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer">
                           Criar cliente também no StartPainel CMS e pegar Lista M3U (Robô)
+                        </label>
+                      </div>
+                      <div className="sm:col-span-2 lg:col-span-4 flex items-center gap-2 mt-1">
+                        <input 
+                          type="checkbox" 
+                          id="autoActivateStartflix" 
+                          checked={autoActivateStartflix} 
+                          onChange={e => setAutoActivateStartflix(e.target.checked)}
+                          className="w-4 h-4 text-blue-500 rounded border-slate-300 focus:ring-blue-500"
+                        />
+                        <label htmlFor="autoActivateStartflix" className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer">
+                          Ativar Startflix (Supabase) automaticamente para este cliente
                         </label>
                       </div>
                       <button type="submit" disabled={isLoading} className="bg-slate-900 text-white h-11 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-100 sm:col-span-2 lg:col-span-4">
