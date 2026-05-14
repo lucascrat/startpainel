@@ -3,7 +3,7 @@ export interface CustomerApp {
   customer_id: number;
   app_name: string;
   app_model?: string;
-  access_type: 'mac_key' | 'user_pass' | 'xtream';
+  access_type: 'mac_key' | 'user_pass' | 'xtream' | 'xtream_full';
   mac_address?: string;
   device_key?: string;
   username?: string;

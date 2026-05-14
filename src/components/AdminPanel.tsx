@@ -1817,7 +1817,8 @@ export default function AdminPanel() {
                       <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
                       <select value={accessType} onChange={e => setAccessType(e.target.value as any)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                         <option value="mac_key">MAC & Device Key</option>
-                        <option value="xtream">Xtream Codes (DNS + Usuário + Senha)</option>
+                        <option value="xtream">Xtream Codes (Host + Usuário + Senha)</option>
+                        <option value="xtream_full">Xtream Codes Completo (Nome + Host + Login + Senha)</option>
                         <option value="user_pass">Usuário & Senha (genérico)</option>
                       </select>
                     </div>
@@ -1833,11 +1834,17 @@ export default function AdminPanel() {
                           <input value={deviceKey} onChange={e => setDeviceKey(e.target.value)} placeholder="123456" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
                         </div>
                       </>
-                    ) : accessType === 'xtream' ? (
+                    ) : accessType === 'xtream' || accessType === 'xtream_full' ? (
                       <>
+                        {accessType === 'xtream_full' && (
+                          <div className="col-span-2 space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Nome do Acesso / Lista</label>
+                            <input value={appName} onChange={e => setAppName(e.target.value)} placeholder="Minha Lista 4K" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
+                          </div>
+                        )}
                         <div className="col-span-2 space-y-1">
                           <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
-                            {appModel === 'QUICKPLAYER' ? 'Host (Nome do Host)' : 'DNS / Servidor (ex: http://host.com:8080)'}
+                            {appModel === 'QUICKPLAYER' ? 'Host (Nome do Host)' : 'DNS / Provedor (ex: http://provedor.com:8080)'}
                           </label>
                           <input
                             value={appHost}
@@ -1847,7 +1854,7 @@ export default function AdminPanel() {
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Usuário</label>
+                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">{accessType === 'xtream_full' ? 'Login' : 'Usuário'}</label>
                           <input value={appUsername} onChange={e => setAppUsername(e.target.value)} placeholder="usuario123" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
                         </div>
                         <div className="space-y-1">
