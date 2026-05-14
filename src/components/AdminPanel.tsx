@@ -33,6 +33,8 @@ export default function AdminPanel() {
   const [newWhatsapp, setNewWhatsapp] = useState('');
   const [newExpirationDate, setNewExpirationDate] = useState('');
   const [newPlaylistUrl, setNewPlaylistUrl] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newDns, setNewDns] = useState('');
   
   // App Management
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
@@ -267,6 +269,8 @@ export default function AdminPanel() {
           username: newUsername,
           name: newName,
           whatsapp: newWhatsapp,
+          password: newPassword,
+          dns: newDns,
           renewalPrice: parseFloat(newRenewalPrice),
           linesCount: parseInt(newLinesCount),
           costPerCredit: parseFloat(defaultCostPerLine),
@@ -279,9 +283,15 @@ export default function AdminPanel() {
         throw new Error(errData.details || errData.error || 'Erro ao cadastrar');
       }
 
+      const created = await response.json();
+      const savedUsername = created.username;
+      const savedExpDate = created.expiration_date;
+
       setNewUsername('');
       setNewName('');
       setNewWhatsapp('');
+      setNewPassword('');
+      setNewDns('');
       setNewExpirationDate('');
       setNewLinesCount('1');
       setNewPlaylistUrl('');
@@ -295,7 +305,7 @@ export default function AdminPanel() {
           const cmsResponse = await fetch('/api/automations/startpainel/create-client', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: newUsername })
+            body: JSON.stringify({ username: savedUsername })
           });
           const cmsData = await cmsResponse.json();
           if (cmsData.success) {
@@ -310,7 +320,24 @@ export default function AdminPanel() {
       }
 
       if (autoActivateStartflix) {
-        handleSyncStartflix(newUsername, newExpirationDate);
+        handleSyncStartflix(savedUsername, savedExpDate);
+        // Automação: Registrar o App Startflix na lista do cliente
+        try {
+          await fetch(`/api/customers/${created.id}/apps`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              appName: 'Startflix Web/App',
+              appModel: 'Startflix',
+              accessType: 'user_pass',
+              appUsername: savedUsername,
+              appPassword: created.password || '123456',
+              appSiteUrl: 'https://startflix.app'
+            })
+          });
+        } catch (appErr) {
+          console.error('[AdminPanel] Erro ao registrar app Startflix:', appErr);
+        }
       }
 
       toast.success('Cliente cadastrado com sucesso!');
@@ -917,6 +944,14 @@ export default function AdminPanel() {
                       <div className="sm:col-span-2 lg:col-span-4 space-y-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">URL da Lista M3U Principal</label>
                         <input type="url" value={newPlaylistUrl} onChange={e => setNewPlaylistUrl(e.target.value)} placeholder="http://painel.com/get.php?username=..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                      <div className="sm:col-span-1 lg:col-span-2 space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Senha da Lista</label>
+                        <input type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Senha da lista IPTV" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                      <div className="sm:col-span-1 lg:col-span-2 space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">DNS / Provedor</label>
+                        <input type="text" value={newDns} onChange={e => setNewDns(e.target.value)} placeholder="Ex: http://dns.com:8080" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
                       <div className="sm:col-span-2 lg:col-span-4 flex items-center gap-2 mt-2">
                         <input 

@@ -68,7 +68,10 @@ export default function CustomerMenu() {
     renewal_price: '30.00',
     expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
     lines_count: 1,
-    playlist_url: ''
+    playlist_url: '',
+    password: '',
+    dns: '',
+    autoActivateStartflix: false
   });
 
   // App Management States
@@ -111,6 +114,27 @@ export default function CustomerMenu() {
     } finally {
       setIsLoading(false);
       setLoading(false);
+    }
+  };
+
+  const handleSyncStartflix = async (username: string, expirationDate: string) => {
+    const pending = toast.loading(`Sincronizando ${username} com Startflix...`);
+    try {
+      const response = await fetch('/api/startflix/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, expirationDate })
+      });
+      const data = await response.json();
+      toast.dismiss(pending);
+      if (data.success) {
+        toast.success(`${username} sincronizado com sucesso!`);
+      } else {
+        toast.error(`Erro ao sincronizar: ${data.error}`);
+      }
+    } catch (error: any) {
+      toast.dismiss(pending);
+      toast.error(`Erro: ${error.message}`);
     }
   };
 
@@ -255,6 +279,11 @@ export default function CustomerMenu() {
       });
 
       if (response.ok) {
+        const created = await response.json();
+        const savedUsername = created.username;
+        const savedExpDate = created.expiration_date;
+        const shouldSync = newCust.autoActivateStartflix;
+
         await loadCustomers();
         setIsAdding(false);
         setNewCust({
@@ -264,8 +293,33 @@ export default function CustomerMenu() {
           renewal_price: '30.00',
           expiration_date: format(addMonths(new Date(), 1), 'yyyy-MM-dd'),
           lines_count: 1,
-          playlist_url: ''
+          playlist_url: '',
+          password: '',
+          dns: '',
+          autoActivateStartflix: false
         });
+
+        if (shouldSync) {
+          handleSyncStartflix(savedUsername, savedExpDate);
+          // Automação: Registrar o App Startflix na lista do cliente
+          try {
+            await fetch(`/api/customers/${created.id}/apps`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                appName: 'Startflix Web/App',
+                appModel: 'Startflix',
+                accessType: 'user_pass',
+                appUsername: savedUsername,
+                appPassword: created.password || '123456',
+                appSiteUrl: 'https://startflix.app'
+              })
+            });
+          } catch (appErr) {
+            console.error('[CustomerMenu] Erro ao registrar app Startflix:', appErr);
+          }
+        }
+        toast.success('Cliente cadastrado com sucesso!');
       } else {
         const err = await response.json();
         setFormError(`${err.error}${err.details ? ': ' + err.details : ''}`);
@@ -314,7 +368,9 @@ export default function CustomerMenu() {
       renewal_price: selectedCustomer.renewal_price || '30.00',
       expiration_date: selectedCustomer.expiration_date ? format(parseISO(selectedCustomer.expiration_date), 'yyyy-MM-dd') : '',
       lines_count: selectedCustomer.lines_count || 1,
-      status: selectedCustomer.status || 'active'
+      status: selectedCustomer.status || 'active',
+      password: selectedCustomer.password || '',
+      dns: selectedCustomer.dns || ''
     });
     setIsEditing(true);
   };
@@ -612,6 +668,24 @@ export default function CustomerMenu() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-mono focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Senha da Lista</label>
+                        <input 
+                          value={editForm.password || ''} 
+                          onChange={e => setEditForm({...editForm, password: e.target.value})} 
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">DNS / Provedor</label>
+                        <input 
+                          value={editForm.dns || ''} 
+                          onChange={e => setEditForm({...editForm, dns: e.target.value})} 
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                        />
+                      </div>
+                    </div>
                     <div className="pt-4 flex gap-3">
                       <button 
                         onClick={() => setIsEditing(false)}
@@ -670,6 +744,17 @@ export default function CustomerMenu() {
                         <div className="flex items-center justify-between">
                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Linhas Ativas</span>
                           <span className="text-[10px] font-black text-slate-800">{selectedCustomer.lines_count || 1}</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Senha da Lista</p>
+                          <p className="text-[11px] font-bold text-slate-800">{selectedCustomer.password || '-'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">DNS / Provedor</p>
+                          <p className="text-[11px] font-bold text-slate-800 truncate" title={selectedCustomer.dns}>{selectedCustomer.dns || '-'}</p>
                         </div>
                       </div>
 
@@ -845,6 +930,26 @@ export default function CustomerMenu() {
                       placeholder="1"
                     />
                   </div>
+                  <div className="col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Senha da Lista</label>
+                      <input 
+                        value={newCust.password}
+                        onChange={e => setNewCust({...newCust, password: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        placeholder="Senha do painel"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">DNS / Provedor</label>
+                      <input 
+                        value={newCust.dns}
+                        onChange={e => setNewCust({...newCust, dns: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        placeholder="Ex: http://dns.me:8080"
+                      />
+                    </div>
+                  </div>
                   <div className="col-span-2 space-y-1.5">
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">URL da Lista M3U</label>
                     <input 
@@ -854,6 +959,18 @@ export default function CustomerMenu() {
                       onChange={e => setNewCust({...newCust, playlist_url: e.target.value})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-mono focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                     />
+                  </div>
+                  <div className="col-span-2 flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100">
+                    <input 
+                      type="checkbox"
+                      id="menuAutoStartflix"
+                      checked={newCust.autoActivateStartflix}
+                      onChange={e => setNewCust({...newCust, autoActivateStartflix: e.target.checked})}
+                      className="w-4 h-4 text-blue-600 rounded border-blue-300 focus:ring-blue-500"
+                    />
+                    <label htmlFor="menuAutoStartflix" className="text-[10px] font-black text-blue-700 uppercase tracking-widest cursor-pointer">
+                      Ativar Startflix automaticamente
+                    </label>
                   </div>
                 </div>
 

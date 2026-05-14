@@ -35,6 +35,7 @@ interface AppCatalogItem {
   web_link: string | null;
   device_type: string;
   is_active: boolean;
+  dns: string | null;
 }
 
 const EMPTY_FORM: Omit<AppCatalogItem, 'id'> = {
@@ -49,6 +50,7 @@ const EMPTY_FORM: Omit<AppCatalogItem, 'id'> = {
   web_link: '',
   device_type: 'todos',
   is_active: true,
+  dns: '',
 };
 
 export default function AppCatalog() {
@@ -94,6 +96,7 @@ export default function AppCatalog() {
       web_link: a.web_link || '',
       device_type: a.device_type,
       is_active: a.is_active,
+      dns: a.dns || '',
     });
     setEditing(a);
     setIsCreating(false);
@@ -289,6 +292,17 @@ export default function AppCatalog() {
             placeholder="Ex: Melhor app pra Smart TV Samsung/LG, suporta TODOS os codecs"
             rows={2}
             className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        {/* DNS */}
+        <div className="space-y-1">
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">DNS (Portal URL) - Usado em Smarters, 9Xtream, etc</label>
+          <input
+            value={form.dns || ''}
+            onChange={e => setForm({ ...form, dns: e.target.value })}
+            placeholder="Ex: http://portal.exemplo.com:8080"
+            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
 

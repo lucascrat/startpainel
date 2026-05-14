@@ -53,7 +53,7 @@ async function initDB(retries = 5) {
       const tables = [
         `CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, text TEXT, sender VARCHAR(20), type VARCHAR(50) DEFAULT 'text', remote_jid TEXT, contact_name TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, remote_jid TEXT UNIQUE NOT NULL, name TEXT, last_message TEXT, last_message_time TIMESTAMP, unread_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
-        `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, password TEXT, dns TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS ai_usage_logs (id SERIAL PRIMARY KEY, model TEXT NOT NULL, type TEXT NOT NULL, prompt_tokens INTEGER, candidates_tokens INTEGER, estimated_cost DECIMAL(15,8), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS payment_receipts (
           id SERIAL PRIMARY KEY,
@@ -112,6 +112,7 @@ async function initDB(retries = 5) {
           web_link TEXT,
           device_type TEXT DEFAULT 'todos',
           is_active BOOLEAN DEFAULT true,
+          dns TEXT,
           created_at TIMESTAMP DEFAULT NOW(),
           updated_at TIMESTAMP DEFAULT NOW()
         )`,
@@ -128,11 +129,14 @@ async function initDB(retries = 5) {
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS icon_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS host TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS dns TEXT`
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2) DEFAULT 0`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_renewal TIMESTAMP`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS password TEXT`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS dns TEXT`,
       ];
       for (const sql of alters) {
         try { await client.query(sql); } catch (e: any) { console.warn('PG: alter falhou:', e.message); }
@@ -895,7 +899,9 @@ PLANO:
 - Linhas contratadas: ${customer.lines_count || 1}
 - Custo por linha (interno): ${formatBRL(customer.cost_per_credit || 0)}
 - Total ja pago: ${formatBRL(customer.amount_paid || 0)}
-${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}`;
+${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}
+${customer.password ? `- Senha da lista: ${customer.password}` : ''}
+${customer.dns ? `- DNS / Provedor: ${customer.dns}` : ''}`;
 
   // === APPS DO CLIENTE (info SENSITIVA — MAC/key/senha) ===
   if (apps.length > 0) {
@@ -1429,6 +1435,7 @@ function normalizeAppCatalogPayload(b: any) {
     web_link:            b.web_link ?? b.webLink ?? null,
     device_type:         b.device_type ?? b.deviceType ?? 'todos',
     is_active:           b.is_active ?? b.isActive ?? true,
+    dns:                 b.dns ?? null,
   };
 }
 
@@ -1438,10 +1445,10 @@ app.post('/api/app-catalog', requireAdmin, async (req, res) => {
     if (!a.name) return res.status(400).json({ error: 'name e obrigatorio' });
     const result = await pool.query(
       `INSERT INTO app_catalog (name, display_order, description, app_image_url, example_image_url,
-                                example_instruction, android_link, ios_link, web_link, device_type, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+                                example_instruction, android_link, ios_link, web_link, device_type, is_active, dns)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
-       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active]
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns]
     );
     res.json(result.rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1463,10 +1470,11 @@ app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
          web_link = COALESCE($10, web_link),
          device_type = COALESCE($11, device_type),
          is_active = COALESCE($12, is_active),
+         dns = COALESCE($13, dns),
          updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [req.params.id, a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
-       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active]
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
     res.json(result.rows[0]);
@@ -1557,18 +1565,24 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', async (req, res) => {
-  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
+  const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
   const result = await pool.query(
-    `INSERT INTO customers (username, name, whatsapp, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [username, name, whatsapp, renewal_price || 49.90, expiration_date, playlist_url, lines_count || 1, cost_per_credit || 0, amount_paid || 0]
+    `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    [username, name, whatsapp, password, dns, renewal_price || 49.90, expiration_date, playlist_url, lines_count || 1, cost_per_credit || 0, amount_paid || 0]
   );
   res.json(result.rows[0]);
 });
 
 app.put('/api/customers/:id', async (req, res) => {
   const { id } = req.params;
-  const { username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
+  const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
+
+  // Busca status atual antes de atualizar pra saber se era teste
+  const current = await pool.query('SELECT status, username FROM customers WHERE id = $1', [id]);
+  const wasTeste = current.rows[0]?.status === 'teste';
+  const finalUsername = username || current.rows[0]?.username;
+
   // Faz COALESCE pra preservar campos que o cliente nao enviou (parcial update).
   const result = await pool.query(
     `UPDATE customers SET
@@ -1582,11 +1596,21 @@ app.put('/api/customers/:id', async (req, res) => {
        lines_count=COALESCE($8, lines_count),
        cost_per_credit=COALESCE($9, cost_per_credit),
        amount_paid=COALESCE($10, amount_paid),
+       password=COALESCE($11, password),
+       dns=COALESCE($12, dns),
        updated_at=NOW()
-     WHERE id=$11 RETURNING *`,
-    [username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid, id]
+     WHERE id=$13 RETURNING *`,
+    [username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid, password, dns, id]
   );
-  res.json(result.rows[0]);
+  
+  const updated = result.rows[0];
+  // Se era teste e agora está ativo ou foi renovado, ativa no CMS
+  if (wasTeste && updated && (updated.status === 'active' || expiration_date)) {
+    console.log(`[Admin] Cliente ${finalUsername} convertido de teste para oficial. Ativando no CMS...`);
+    enqueueJob('create_client', { username: finalUsername });
+  }
+
+  res.json(updated);
 });
 
 app.delete('/api/customers/:id', async (req, res) => {
@@ -1874,19 +1898,25 @@ app.post('/api/automations/startpainel/create-client', async (req, res) => {
     const result: any = await waitForJob(await enqueueJob('create_client', { username }));
     
     // Se sucesso, atualiza a M3U e possivelmente a senha no DB local
-    if (result.success && result.username) {
+    if (result.success && (result.username || username)) {
+      const targetUser = result.username || username;
       try {
          await pool.query(
-           `UPDATE customers SET playlist_url = COALESCE($2, playlist_url), updated_at = NOW() WHERE username = $1`,
-           [result.username, result.playlistUrl]
+           `UPDATE customers SET 
+              playlist_url = COALESCE($2, playlist_url), 
+              password = COALESCE($3, password),
+              dns = COALESCE($4, dns),
+              updated_at = NOW() 
+            WHERE username = $1`,
+           [targetUser, result.playlistUrl || null, result.password || null, (result.dns || result.playlistUrl) || null]
          );
          if (result.password) {
-            // Atualiza a senha em todos os apps desse cliente que batem com o username do CMS
             await pool.query(
               `UPDATE customer_apps SET password = $2 WHERE username = $1`,
-              [result.username, result.password]
+              [targetUser, result.password]
             );
          }
+         console.log(`[Automation] Cliente ${targetUser} atualizado com sucesso no DB local.`);
       } catch (dbErr: any) {
         console.error('[Automation] Erro ao atualizar cliente oficial no DB:', dbErr.message);
       }
@@ -1957,21 +1987,25 @@ app.post('/api/automations/startpainel/create-test', async (req, res) => {
     const result: any = await waitForJob(await enqueueJob('create_test', { username: finalUsername, mac, playerName }));
     
     // Se sucesso, salva/atualiza o cliente localmente como 'teste'
-    if (result.success && result.username) {
+    if (result.success && (result.username || finalUsername)) {
+      const targetUser = result.username || finalUsername;
       try {
         const expirationDate = new Date();
         expirationDate.setHours(expirationDate.getHours() + 6); // Teste padrão de 6h
+        const expStr = expirationDate.toISOString().split('T')[0];
 
         // Upsert no customer
         const custRes = await pool.query(
-          `INSERT INTO customers (username, status, expiration_date, name)
-           VALUES ($1, 'teste', $2, $3)
+          `INSERT INTO customers (username, status, expiration_date, name, password, dns)
+           VALUES ($1, 'teste', $2, $3, $4, $5)
            ON CONFLICT (username) DO UPDATE SET
              status = 'teste',
              expiration_date = $2,
+             password = EXCLUDED.password,
+             dns = EXCLUDED.dns,
              updated_at = NOW()
            RETURNING id`,
-          [result.username, expirationDate, `Teste: ${result.username}`]
+          [targetUser, expStr, `Teste: ${targetUser}`, result.password || null, (result.dns || result.playlistUrl) || null]
         );
         const customerId = custRes.rows[0].id;
 
@@ -1980,10 +2014,11 @@ app.post('/api/automations/startpainel/create-test', async (req, res) => {
           `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, username, password)
            VALUES ($1, $2, $3, 'mac_key', $4, $5, $6)
            ON CONFLICT DO NOTHING`, 
-          [customerId, playerName, playerName, mac, result.username, result.password || '']
+          [customerId, playerName, playerName, mac, targetUser, result.password || '']
         );
+        console.log(`[Automation] Teste ${targetUser} registrado com sucesso no DB local.`);
       } catch (dbErr: any) {
-        console.error('[Automation] Erro ao salvar cliente teste no DB:', dbErr.message);
+        console.error('[Automation] Erro ao salvar cliente teste no DB:', dbErr.message, { targetUser, mac });
       }
     }
     
@@ -2387,11 +2422,20 @@ async function handleRegisterPixReceipt(
 
     // Renova: bumpa expiration_date em 30 dias (se já vencido, conta a partir de hoje).
     if (customerId) {
+      const currentRes = await pool.query('SELECT status, username FROM customers WHERE id = $1', [customerId]);
+      const wasTeste = currentRes.rows[0]?.status === 'teste';
+      const username = currentRes.rows[0]?.username;
+
       await pool.query(
         `UPDATE customers SET expiration_date = GREATEST(COALESCE(expiration_date, NOW()::date), NOW()::date) + INTERVAL '30 days', status = 'active', last_renewal = NOW(), updated_at = NOW() WHERE id = $1`,
         [customerId]
       );
       console.log(`[Receipt] cliente ${customerUsername} renovado por +30 dias`);
+
+      if (wasTeste && username) {
+        console.log(`[Receipt] Cliente ${username} era teste. Ativando linha oficial no CMS...`);
+        enqueueJob('create_client', { username });
+      }
     } else {
       console.warn(`[Receipt] sem cliente vinculado a ${remoteJid}${altJid ? ' (alt ' + altJid + ')' : ''} — renovacao manual necessaria`);
     }
@@ -2980,6 +3024,8 @@ async function checkAppPayments() {
       }
 
       const customer = customerRes.rows[0];
+      const wasTeste = customer.status === 'teste';
+
       let newExpiration = new Date(customer.expiration_date || new Date());
       if (newExpiration < new Date()) {
         newExpiration = new Date();
@@ -2990,6 +3036,11 @@ async function checkAppPayments() {
         "UPDATE customers SET expiration_date = $1, status = 'active', updated_at = CURRENT_TIMESTAMP, last_renewal = CURRENT_TIMESTAMP, amount_paid = amount_paid + $2 WHERE username = $3",
         [newExpiration.toISOString().split('T')[0], payment.amount, username]
       );
+
+      if (wasTeste) {
+        console.log(`[AutoRenewal] Cliente ${username} era teste. Ativando no CMS...`);
+        enqueueJob('create_client', { username });
+      }
 
       await pool.query("INSERT INTO processed_app_payments (payment_id) VALUES ($1)", [paymentId]);
       console.log(`[AutoRenewal] Sucesso: ${username} renovado até ${newExpiration.toISOString().split('T')[0]}`);
