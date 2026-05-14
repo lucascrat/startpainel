@@ -7,16 +7,19 @@ import {
   Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle, 
   Brain, Save, Key, QrCode, DollarSign, TrendingUp, 
   Tv, Monitor, Globe, ChevronRight, Calendar, Info, X, Eye,
-  Cpu, ExternalLink
+  Cpu, ExternalLink, Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
+  const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
+  const [startflixPayments, setStartflixPayments] = useState<any[]>([]);
+  const [isSyncingStartflix, setIsSyncingStartflix] = useState(false);
   
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -99,7 +102,52 @@ export default function AdminPanel() {
     if (activeSubTab === 'ai') {
       loadAiUsage();
     }
+    if (activeSubTab === 'startflix') {
+      loadStartflixUsers();
+      loadStartflixPayments();
+    }
   }, [activeSubTab]);
+
+  const loadStartflixUsers = async () => {
+    try {
+      const response = await fetch('/api/startflix/users');
+      const data = await response.json();
+      setStartflixUsers(Array.isArray(data) ? data : []);
+    } catch (error) {}
+  };
+
+  const loadStartflixPayments = async () => {
+    try {
+      const response = await fetch('/api/startflix/payments');
+      const data = await response.json();
+      setStartflixPayments(Array.isArray(data) ? data : []);
+    } catch (error) {}
+  };
+
+  const handleSyncStartflix = async (username: string, expirationDate: string) => {
+    setIsSyncingStartflix(true);
+    const pending = toast.loading(`Sincronizando ${username} com Startflix...`);
+    try {
+      const response = await fetch('/api/startflix/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, expirationDate })
+      });
+      const data = await response.json();
+      toast.dismiss(pending);
+      if (data.success) {
+        toast.success(`${username} sincronizado com sucesso!`);
+        if (activeSubTab === 'startflix') loadStartflixUsers();
+      } else {
+        toast.error(`Erro ao sincronizar: ${data.error}`);
+      }
+    } catch (error: any) {
+      toast.dismiss(pending);
+      toast.error(`Erro: ${error.message}`);
+    } finally {
+      setIsSyncingStartflix(false);
+    }
+  };
 
   const loadAiUsage = async () => {
     try {
@@ -121,7 +169,9 @@ export default function AdminPanel() {
       loadSettings(),
       loadCustomers(),
       loadFinancials(),
-      loadAutomations()
+      loadAutomations(),
+      loadStartflixUsers(),
+      loadStartflixPayments()
     ]);
   };
 
@@ -719,6 +769,14 @@ export default function AdminPanel() {
               >
                 Dashboard IA
               </button>
+              <button 
+                onClick={() => setActiveSubTab('startflix')}
+                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                  activeSubTab === 'startflix' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Startflix
+              </button>
             </div>
                      </div>
           </div>
@@ -946,6 +1004,13 @@ export default function AdminPanel() {
                               <RefreshCw size={16} />
                             </button>
                             <button 
+                              onClick={() => handleSyncStartflix(customer.username, customer.expiration_date!)}
+                              className="p-2.5 text-blue-500 bg-blue-50 rounded-xl hover:bg-blue-100 transition-all"
+                              title="Sincronizar com Startflix (Supabase)"
+                            >
+                              <Zap size={16} />
+                            </button>
+                            <button 
                               onClick={() => handleDeleteCustomer(Number(customer.id))}
                               className="p-2.5 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
                             >
@@ -1156,6 +1221,150 @@ export default function AdminPanel() {
                       </div>
                     )}
                   </div>
+                </div>
+              );
+            case 'startflix':
+              return (
+                <div className="space-y-6">
+                  {/* Summary */}
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-white shadow-lg">
+                        <Zap size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-white font-black uppercase tracking-widest text-sm">Usuários Startflix</h3>
+                        <p className="text-slate-400 text-[10px] font-bold">Total no Supabase: {startflixUsers.length}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={loadStartflixUsers}
+                      className="p-3 bg-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all border border-slate-700"
+                    >
+                      <RefreshCw size={20} className={isLoading ? 'animate-spin' : ''} />
+                    </button>
+                  </motion.div>
+
+                  {/* Users Table */}
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50">
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Usuário</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Credenciais App</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Vencimento</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Criado em</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {startflixUsers.map(user => (
+                            <tr key={user.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                              <td className="p-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                                    <User size={16} />
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] font-black text-slate-800">{user.username}</p>
+                                    <p className="text-[9px] text-slate-400 font-bold">{user.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <div className="bg-slate-100 p-2 rounded-xl border border-slate-200 space-y-1">
+                                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-tighter">User: <span className="text-slate-800 font-mono">{user.app_username}</span></p>
+                                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-tighter">Pass: <span className="text-slate-800 font-mono">{user.app_password_app}</span></p>
+                                </div>
+                              </td>
+                              <td className="p-4 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${user.is_active ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                                  {user.is_active ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <p className={`text-[10px] font-black ${user.expiration_date && new Date(user.expiration_date) < new Date() ? 'text-rose-500' : 'text-emerald-600'}`}>
+                                  {user.expiration_date ? format(new Date(user.expiration_date), 'dd/MM/yyyy') : '--/--/----'}
+                                </p>
+                              </td>
+                              <td className="p-4">
+                                <p className="text-[10px] text-slate-400 font-bold">{format(new Date(user.created_at), 'dd/MM HH:mm')}</p>
+                              </td>
+                            </tr>
+                          ))}
+                          {startflixUsers.length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="p-12 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest">Nenhum usuário sincronizado</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </motion.div>
+
+                  {/* Payments Table */}
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 flex items-center gap-2">
+                      <DollarSign size={16} className="text-emerald-500" />
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pagamentos no App</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50">
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Cliente</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Plano/Descrição</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Valor</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Data</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {startflixPayments.map(payment => (
+                            <tr key={payment.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                              <td className="p-4">
+                                <p className="text-[11px] font-black text-slate-800">{payment.profiles?.username || payment.profiles?.full_name || 'Desconhecido'}</p>
+                                <p className="text-[9px] text-slate-400 font-bold">{payment.profiles?.email}</p>
+                              </td>
+                              <td className="p-4">
+                                <p className="text-[10px] font-bold text-slate-600">{payment.description || 'Assinatura'}</p>
+                                <p className="text-[8px] text-slate-400 font-mono">{payment.payment_id}</p>
+                              </td>
+                              <td className="p-4 text-right">
+                                <p className="text-[11px] font-black text-emerald-600">R$ {Number(payment.amount).toFixed(2)}</p>
+                              </td>
+                              <td className="p-4 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${payment.status === 'approved' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                                  {payment.status === 'approved' ? 'Aprovado' : payment.status}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <p className="text-[10px] text-slate-400 font-bold">{format(new Date(payment.created_at), 'dd/MM/yyyy HH:mm')}</p>
+                              </td>
+                              <td className="p-4 text-center">
+                                {payment.status === 'approved' && (
+                                  <button 
+                                    onClick={() => handleManualRenewal(payment.profiles?.username || payment.profiles?.full_name)}
+                                    className="p-2 text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-all"
+                                    title="Processar Renovação"
+                                  >
+                                    <RefreshCw size={14} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          {startflixPayments.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="p-12 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest">Nenhum pagamento registrado</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </motion.div>
                 </div>
               );
             case 'ai':

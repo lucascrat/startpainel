@@ -15,6 +15,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
 import jwt from 'jsonwebtoken';
+import { supabaseStartflix, supabaseAuthAdmin } from './src/lib/supabaseStartflix.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -114,7 +115,8 @@ async function initDB(retries = 5) {
           created_at TIMESTAMP DEFAULT NOW(),
           updated_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE INDEX IF NOT EXISTS app_catalog_active_order_idx ON app_catalog(is_active, display_order)`
+        `CREATE INDEX IF NOT EXISTS app_catalog_active_order_idx ON app_catalog(is_active, display_order)`,
+        `CREATE TABLE IF NOT EXISTS processed_app_payments (payment_id TEXT PRIMARY KEY, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
       ];
 
       for (const sql of tables) await client.query(sql);
@@ -1636,6 +1638,100 @@ app.delete('/api/apps/:id', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// === STARTFLIX SUPABASE INTEGRATION ===
+app.get('/api/startflix/users', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseStartflix
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/startflix/payments', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseStartflix
+      .from('payments')
+      .select('*, profiles!user_id(username, full_name, email)')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/startflix/sync', requireAdmin, async (req, res) => {
+  const { username, expirationDate } = req.body;
+  if (!username) return res.status(400).json({ error: 'username é obrigatório' });
+
+  try {
+    // 1. Buscar por username (nao case sensitive se possível, mas vamos seguir o exato)
+    let { data: profile, error: searchError } = await supabaseStartflix
+      .from('profiles')
+      .select('id, username')
+      .eq('username', username)
+      .maybeSingle();
+
+    let userId = profile?.id;
+
+    if (!userId) {
+      // 2. Criar no Auth
+      const email = `${username.toLowerCase()}@startflix.app`;
+      const password = Math.random().toString(36).slice(-8);
+
+      const { data: newUser, error: authError } = await supabaseAuthAdmin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { username }
+      });
+
+      if (authError) throw authError;
+      userId = newUser.user.id;
+      
+      // 3. Criar profile
+      const { error: profileError } = await supabaseStartflix
+        .from('profiles')
+        .insert({
+          id: userId,
+          email,
+          username,
+          app_username: username,
+          app_password_app: password,
+          is_active: true,
+          has_signal: true,
+          expiration_date: expirationDate || null
+        });
+      
+      if (profileError) throw profileError;
+    } else {
+      // 4. Atualizar
+      const { error: updateError } = await supabaseStartflix
+        .from('profiles')
+        .update({
+          is_active: true,
+          has_signal: true,
+          expiration_date: expirationDate || null
+        })
+        .eq('id', userId);
+      
+      if (updateError) throw updateError;
+    }
+
+    res.json({ success: true, userId });
+  } catch (e: any) {
+    console.error('[Startflix Sync Error]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Settings
 app.get('/api/settings', requireAdmin, async (req, res) => {
   // Returns all settings — sensitive keys come masked.
@@ -2778,6 +2874,59 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
 }
 
 
+async function checkAppPayments() {
+  try {
+    const { data: payments, error } = await supabaseStartflix
+      .from('payments')
+      .select('*, profiles!user_id(username, full_name)')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+    if (!payments || payments.length === 0) return;
+
+    for (const payment of payments) {
+      const paymentId = payment.id;
+      const username = payment.profiles?.username || payment.profiles?.full_name;
+      if (!username) continue;
+
+      const processedCheck = await pool.query("SELECT 1 FROM processed_app_payments WHERE payment_id = $1", [paymentId]);
+      if (processedCheck.rows.length > 0) continue;
+
+      console.log(`[AutoRenewal] Processando pagamento ${paymentId} para ${username}...`);
+
+      const customerRes = await pool.query("SELECT * FROM customers WHERE username = $1", [username]);
+      if (customerRes.rows.length === 0) {
+        await pool.query("INSERT INTO processed_app_payments (payment_id) VALUES ($1)", [paymentId]);
+        continue;
+      }
+
+      const customer = customerRes.rows[0];
+      let newExpiration = new Date(customer.expiration_date || new Date());
+      if (newExpiration < new Date()) {
+        newExpiration = new Date();
+      }
+      newExpiration.setMonth(newExpiration.getMonth() + 1);
+
+      await pool.query(
+        "UPDATE customers SET expiration_date = $1, status = 'active', updated_at = CURRENT_TIMESTAMP, last_renewal = CURRENT_TIMESTAMP, amount_paid = amount_paid + $2 WHERE username = $3",
+        [newExpiration.toISOString().split('T')[0], payment.amount, username]
+      );
+
+      await pool.query("INSERT INTO processed_app_payments (payment_id) VALUES ($1)", [paymentId]);
+      console.log(`[AutoRenewal] Sucesso: ${username} renovado até ${newExpiration.toISOString().split('T')[0]}`);
+
+      await supabaseStartflix
+        .from('profiles')
+        .update({ expiration_date: newExpiration.toISOString(), is_active: true, has_signal: true })
+        .eq('id', payment.user_id);
+    }
+  } catch (e: any) {
+    console.error(`[AutoRenewal] Erro ao verificar pagamentos:`, e.message);
+  }
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: true, host: '0.0.0.0' }, appType: 'spa' });
@@ -2789,6 +2938,11 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-  app.listen(Number(PORT), '0.0.0.0', () => console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`));
+  app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`);
+    // Inicia verificador de pagamentos do app (a cada 5 minutos)
+    checkAppPayments();
+    setInterval(checkAppPayments, 1000 * 60 * 5);
+  });
 }
 startServer();
