@@ -37,6 +37,11 @@ export default function AdminPanel() {
   // App Management
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [isAppModalOpen, setIsAppModalOpen] = useState(false);
+  
+  // States para Gerar Teste
+  const [testUsername, setTestUsername] = useState('');
+  const [testMac, setTestMac] = useState('');
+  const [testPlayer, setTestPlayer] = useState('ULTRA PLAYER');
   const [viewingApp, setViewingApp] = useState<CustomerApp | null>(null);
   const [isEditingApp, setIsEditingApp] = useState(false);
   
@@ -526,7 +531,7 @@ export default function AdminPanel() {
   const handleActivatePlayer = async (
     username: string,
     mac: string,
-    playerType: 'ultra' | 'funplay',
+    playerType: 'ultra' | 'funplay' | 'xcloud' | 'lazerplay' | 'seeplay',
     playerLabel: string,
   ) => {
     if (!mac) {
@@ -536,6 +541,12 @@ export default function AdminPanel() {
     setIsLoading(true);
     const endpoint = playerType === 'funplay'
       ? '/api/automations/startpainel/activate-funplay'
+      : playerType === 'xcloud'
+      ? '/api/automations/startpainel/activate-xcloud'
+      : playerType === 'lazerplay'
+      ? '/api/automations/startpainel/activate-lazerplay'
+      : playerType === 'seeplay'
+      ? '/api/automations/startpainel/activate-seeplay'
       : '/api/automations/startpainel/activate-ultra';
     // Toast persistente avisando que o robo vai abrir Chrome no PC. Substituido pelo
     // resultado quando o job terminar (5min max). NAO usa await — fire-and-forget
@@ -568,6 +579,8 @@ export default function AdminPanel() {
     handleActivatePlayer(username, mac, 'ultra', 'Ultra Player');
   const handleRunFunPlay = (username: string, mac: string) =>
     handleActivatePlayer(username, mac, 'funplay', 'Fun Play');
+  const handleRunXCloud = (username: string, code: string) =>
+    handleActivatePlayer(username, code, 'xcloud', 'X-Cloud');
 
   // Generaliza atualizacao de lista IBO via robo (IBO PRO ou IBO PLAYER classico).
   // Backend busca M3U + MAC + Key pelo username.
@@ -598,6 +611,41 @@ export default function AdminPanel() {
         toast.success(data.message || `Lista ${label} atualizada com sucesso!`);
       } else {
         toast.error(data.message || data.error || `Falha na automação ${label}.`);
+      }
+    } catch (error: any) {
+      toast.dismiss(pending);
+      toast.error(`Erro: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGenerateTest = async () => {
+    if (!testMac.trim()) {
+      toast.error('MAC Address é obrigatório para gerar teste.');
+      return;
+    }
+    setIsLoading(true);
+    const pending = toast.loading('Gerando teste 6h no CMS... acompanhe no seu Chrome 👀');
+    try {
+      const response = await fetch('/api/automations/startpainel/create-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: testUsername,
+          mac: testMac,
+          playerName: testPlayer
+        })
+      });
+      const data = await response.json();
+      toast.dismiss(pending);
+      if (data.success) {
+        toast.success(`Teste gerado com sucesso!\nUsuário: ${data.username}\nSenha: ${data.password || 'N/A'}`);
+        setTestUsername('');
+        setTestMac('');
+        loadCustomers(); // Atualiza lista para ver o novo cliente 'teste'
+      } else {
+        toast.error(data.message || 'Falha ao gerar teste.');
       }
     } catch (error: any) {
       toast.dismiss(pending);
@@ -792,6 +840,53 @@ export default function AdminPanel() {
             case 'users':
               return (
                 <div className="space-y-4">
+                  {/* Gerar Teste Rápido Section */}
+                  <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-6 rounded-3xl border border-slate-700 shadow-xl space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-700 pb-3">
+                      <Zap size={18} className="text-amber-400" />
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-slate-200">Gerar Teste Rápido (CMS)</h3>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Usuário (Opcional)</label>
+                        <input value={testUsername} onChange={e => setTestUsername(e.target.value)} placeholder="Deixe vazio p/ auto" className="w-full px-3 py-2.5 bg-slate-800/50 border border-slate-700 rounded-xl text-xs font-bold text-white outline-none focus:border-amber-500" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-500 uppercase ml-1">
+                          {testPlayer === 'X-CLOUD' ? 'Código de Ativação' : 'Endereço MAC'}
+                        </label>
+                        <input 
+                          value={testMac} 
+                          onChange={e => setTestMac(e.target.value)} 
+                          placeholder={testPlayer === 'X-CLOUD' ? 'Ex: 1J616K' : '00:11:22...'} 
+                          className="w-full px-3 py-2.5 bg-slate-800/50 border border-slate-700 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500" 
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Player</label>
+                        <select value={testPlayer} onChange={e => setTestPlayer(e.target.value)} className="w-full px-3 py-2.5 bg-slate-800/50 border border-slate-700 rounded-xl text-xs font-bold text-white outline-none focus:border-amber-500">
+                          <option>ULTRA PLAYER</option>
+                          <option>FUN PLAY</option>
+                          <option>X-CLOUD</option>
+                          <option>IBO PLAYER</option>
+                        </select>
+                      </div>
+                      <div className="flex items-end">
+                        <button 
+                          onClick={handleGenerateTest}
+                          disabled={isLoading || !testMac}
+                          className="w-full bg-amber-500 text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-900/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Zap size={14} />}
+                          Gerar Teste 6h
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[8px] text-slate-500 font-medium italic px-1">
+                      * O sistema criará o teste no CMS, ativará o player e salvará as credenciais no banco local.
+                    </p>
+                  </div>
+
                   {/* Quick Actions / Add Customer */}
                   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 border-b border-slate-50 pb-3">
@@ -973,6 +1068,7 @@ export default function AdminPanel() {
                     >
                       <option value="all">Todos os Status</option>
                       <option value="active">Ativos</option>
+                      <option value="teste">Clientes em Teste</option>
                       <option value="expired">Vencidos</option>
                     </select>
                   </div>
@@ -982,7 +1078,10 @@ export default function AdminPanel() {
                     {customers.filter(c => {
                       const matchesSearch = c.username.toLowerCase().includes(searchTerm.toLowerCase()) || (c.whatsapp && c.whatsapp.includes(searchTerm));
                       const isExpired = c.expiration_date ? new Date(c.expiration_date) < new Date() : false;
-                      const matchesStatus = statusFilter === 'all' ? true : (statusFilter === 'active' ? !isExpired : isExpired);
+                      const matchesStatus = statusFilter === 'all' ? true : 
+                                           (statusFilter === 'active' ? (!isExpired && c.status !== 'teste') : 
+                                           (statusFilter === 'expired' ? isExpired : 
+                                           (statusFilter === 'teste' ? c.status === 'teste' : true)));
                       return matchesSearch && matchesStatus;
                     }).map(customer => (
                       <motion.div key={customer.id} layout className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group hover:border-emerald-200 transition-all">
@@ -993,7 +1092,12 @@ export default function AdminPanel() {
                                 <User size={20} />
                               </div>
                               <div>
-                                <h4 className="font-black text-slate-800 text-sm tracking-tight">{customer.name || customer.username}</h4>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="font-black text-slate-800 text-sm tracking-tight">{customer.name || customer.username}</h4>
+                                  {customer.status === 'teste' && (
+                                    <span className="text-[8px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest border border-amber-200">Teste</span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400 font-bold">@{customer.username} • {customer.whatsapp || 'Sem WhatsApp'}</p>
                               </div>
                             </div>
@@ -1745,6 +1849,20 @@ export default function AdminPanel() {
                             </div>
                           )}
 
+                          {!isEditingApp && viewingApp.app_model === 'X-CLOUD' && (
+                            <div className="col-span-2">
+                              <button
+                                onClick={() => handleRunXCloud(customers.find(c => Number(c.id) === selectedCustomerId)?.username || '', viewingApp.mac_address || '')}
+                                disabled={isLoading}
+                                className="w-full bg-slate-800 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg flex items-center justify-center gap-2"
+                              >
+                                {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Cpu size={14} />}
+                                Ativar X-Cloud (Robô)
+                              </button>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase mt-2 text-center">Ativa o Código no StartPainel CMS automaticamente</p>
+                            </div>
+                          )}
+
                           {!isEditingApp && viewingApp.app_model === 'IBO PRO' && (
                             <div className="col-span-2">
                               <button
@@ -1806,6 +1924,8 @@ export default function AdminPanel() {
                         <option>IBO PLAYER</option>
                         <option>IBO PRO</option>
                         <option>ULTRA PLAYER</option>
+                        <option>FUN PLAY</option>
+                        <option>X-CLOUD</option>
                         <option>QUICKPLAYER</option>
                         <option>LAZER PLAYER</option>
                         <option>SMARTERS PLAYER LITE</option>
@@ -1826,8 +1946,15 @@ export default function AdminPanel() {
                     {accessType === 'mac_key' ? (
                       <>
                         <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Endereço MAC</label>
-                          <input value={macAddress} onChange={e => setMacAddress(e.target.value)} placeholder="00:11:22:33:44:55" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
+                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
+                            {appModel === 'X-CLOUD' ? 'Código de Ativação' : 'Endereço MAC'}
+                          </label>
+                          <input 
+                            value={macAddress} 
+                            onChange={e => setMacAddress(e.target.value)} 
+                            placeholder={appModel === 'X-CLOUD' ? 'Ex: 1J616K' : '00:11:22:33:44:55'} 
+                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" 
+                          />
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Device Key</label>

@@ -1852,8 +1852,27 @@ app.post('/api/automations/startpainel/create-client', async (req, res) => {
   try {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'username obrigatorio' });
-    const jobId = await enqueueJob('create_client', { username });
-    const result = await waitForJob(jobId);
+    const result: any = await waitForJob(await enqueueJob('create_client', { username }));
+    
+    // Se sucesso, atualiza a M3U e possivelmente a senha no DB local
+    if (result.success && result.username) {
+      try {
+         await pool.query(
+           `UPDATE customers SET playlist_url = COALESCE($2, playlist_url), updated_at = NOW() WHERE username = $1`,
+           [result.username, result.playlistUrl]
+         );
+         if (result.password) {
+            // Atualiza a senha em todos os apps desse cliente que batem com o username do CMS
+            await pool.query(
+              `UPDATE customer_apps SET password = $2 WHERE username = $1`,
+              [result.username, result.password]
+            );
+         }
+      } catch (dbErr: any) {
+        console.error('[Automation] Erro ao atualizar cliente oficial no DB:', dbErr.message);
+      }
+    }
+    
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -1915,7 +1934,39 @@ app.post('/api/automations/startpainel/create-test', async (req, res) => {
     if (!mac || !playerName) {
       return res.status(400).json({ error: 'mac e playerName obrigatorios (username opcional — gera automatico se vazio)' });
     }
-    const result = await waitForJob(await enqueueJob('create_test', { username: username || '', mac, playerName }));
+    const result: any = await waitForJob(await enqueueJob('create_test', { username: username || '', mac, playerName }));
+    
+    // Se sucesso, salva/atualiza o cliente localmente como 'teste'
+    if (result.success && result.username) {
+      try {
+        const expirationDate = new Date();
+        expirationDate.setHours(expirationDate.getHours() + 6); // Teste padrão de 6h
+
+        // Upsert no customer
+        const custRes = await pool.query(
+          `INSERT INTO customers (username, status, expiration_date, name)
+           VALUES ($1, 'teste', $2, $3)
+           ON CONFLICT (username) DO UPDATE SET
+             status = 'teste',
+             expiration_date = $2,
+             updated_at = NOW()
+           RETURNING id`,
+          [result.username, expirationDate, `Teste: ${result.username}`]
+        );
+        const customerId = custRes.rows[0].id;
+
+        // Cria o app associado se nao existir um com mesmo MAC
+        await pool.query(
+          `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, username, password)
+           VALUES ($1, $2, $3, 'mac_key', $4, $5, $6)
+           ON CONFLICT DO NOTHING`, 
+          [customerId, playerName, playerName, mac, result.username, result.password || '']
+        );
+      } catch (dbErr: any) {
+        console.error('[Automation] Erro ao salvar cliente teste no DB:', dbErr.message);
+      }
+    }
+    
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

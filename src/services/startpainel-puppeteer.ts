@@ -377,10 +377,15 @@ export async function createClientAndGetPlaylist(username: string): Promise<Rene
 
     console.log(`[Puppeteer] M3U encontrada: ${m3uUrl}`);
 
+    const creds = await extractCredentialsFromPage(page);
+    console.log(`[Puppeteer] Credenciais extraídas: user=${creds.user}, pass=${creds.pass}`);
+
     return {
       success: true,
       message: `Cliente ${username} criado com sucesso!`,
-      playlistUrl: m3uUrl
+      playlistUrl: m3uUrl,
+      username: creds.user || username,
+      password: creds.pass
     };
 
   } catch (error: any) {
@@ -919,10 +924,15 @@ export async function createTestClientAndActivatePlayer(
     await new Promise(r => setTimeout(r, 5000));
     console.log(`[Puppeteer] ✅ Teste 6h criado e ${playerName} ativado pra ${finalUsername}`);
 
+    // Antes de retornar, tenta extrair as credenciais (usuario/senha) da tela de detalhes
+    const creds = await extractCredentialsFromPage(page);
+    console.log(`[Puppeteer] Credenciais extraídas (Teste): user=${creds.user}, pass=${creds.pass}`);
+
     return {
       success: true,
       message: `Cliente teste "${finalUsername}" criado e ${playerName} ativado com MAC ${mac}!`,
-      username: finalUsername,
+      username: creds.user || finalUsername,
+      password: creds.pass,
       playerName,
       mac,
     };
@@ -980,6 +990,64 @@ export async function clickButtonByText(page: Page, needles: string[]): Promise<
     }
   }
   return false;
+}
+
+/**
+ * Helper para extrair Usuário e Senha da página de detalhes do cliente no CMS.
+ */
+export async function extractCredentialsFromPage(page: Page): Promise<{ user?: string, pass?: string }> {
+  try {
+    return await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll('div, td, label, th, p, li, span'));
+      let user = '';
+      let pass = '';
+      
+      for (let i = 0; i < elements.length; i++) {
+        const txt = elements[i].textContent?.trim() || '';
+        
+        // Match exato ou seguido de dois pontos para o rótulo
+        if (/^usu[áa]rio:?$/i.test(txt)) {
+          // 1. Tenta o próximo elemento irmão
+          const nextVal = elements[i].nextElementSibling?.textContent?.trim();
+          if (nextVal && nextVal.length >= 3) {
+            user = nextVal;
+          } else {
+            // 2. Tenta o texto do próprio elemento pai removendo o rótulo
+            const parentTxt = elements[i].parentElement?.textContent || '';
+            const val = parentTxt.replace(txt, '').replace(':', '').trim();
+            if (val && val.length >= 3) user = val;
+          }
+        }
+
+        if (/^senha:?$/i.test(txt)) {
+          const nextVal = elements[i].nextElementSibling?.textContent?.trim();
+          if (nextVal && nextVal.length >= 3) {
+            pass = nextVal;
+          } else {
+            const parentTxt = elements[i].parentElement?.textContent || '';
+            const val = parentTxt.replace(txt, '').replace(':', '').trim();
+            if (val && val.length >= 3) pass = val;
+          }
+        }
+      }
+      // Se não achou por rótulo isolado, tenta regex no body inteiro (brute force)
+      if (!user) {
+        const bodyTxt = document.body.innerText;
+        const uMatch = bodyTxt.match(/usu[áa]rio:?\s*([a-z0-9_.-]+)/i);
+        if (uMatch) user = uMatch[1];
+      }
+      if (!pass) {
+        const bodyTxt = document.body.innerText;
+        const pMatch = bodyTxt.match(/senha:?\s*([a-z0-9_.-]+)/i);
+        if (pMatch) pass = pMatch[1];
+      }
+
+      return { user, pass };
+    });
+  } catch (e) {
+    console.error('[Puppeteer] Erro ao extrair credenciais:', e);
+    return {};
+  }
 }
 
 /**
