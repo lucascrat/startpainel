@@ -1643,6 +1643,9 @@ app.put('/api/customers/:id', async (req, res) => {
   }
 
   res.json(updated);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/customers/:id', async (req, res) => {
