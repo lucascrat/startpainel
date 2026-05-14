@@ -1639,6 +1639,10 @@ app.delete('/api/apps/:id', async (req, res) => {
 });
 
 // === STARTFLIX SUPABASE INTEGRATION ===
+app.use('/api/startflix', (req, res, next) => {
+  if (!supabaseStartflix) return res.status(503).json({ error: 'Integração Startflix não configurada.' });
+  next();
+});
 app.get('/api/startflix/users', requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabaseStartflix
@@ -2875,6 +2879,7 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
 
 
 async function checkAppPayments() {
+  if (!supabaseStartflix) return;
   try {
     const { data: payments, error } = await supabaseStartflix
       .from('payments')
