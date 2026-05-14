@@ -40,12 +40,13 @@ export default function AdminPanel() {
   // New App Form
   const [appName, setAppName] = useState('');
   const [appModel, setAppModel] = useState('IBO PLAYER');
-  const [accessType, setAccessType] = useState<'mac_key' | 'user_pass'>('mac_key');
+  const [accessType, setAccessType] = useState<'mac_key' | 'user_pass' | 'xtream'>('mac_key');
   const [macAddress, setMacAddress] = useState('');
   const [deviceKey, setDeviceKey] = useState('');
   const [appUsername, setAppUsername] = useState('');
   const [appPassword, setAppPassword] = useState('');
   const [providerUrl, setProviderUrl] = useState('');
+  const [appHost, setAppHost] = useState('');
   const [androidLink, setAndroidLink] = useState('');
   const [iosLink, setIosLink] = useState('');
   const [iconUrl, setIconUrl] = useState('');
@@ -272,7 +273,7 @@ export default function AdminPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           appName, appModel, accessType, macAddress, deviceKey,
-          appUsername, appPassword, providerUrl,
+          appUsername, appPassword, providerUrl, host: appHost,
           androidLink, iosLink, iconUrl, appSiteUrl, isTv
         })
       });
@@ -283,6 +284,7 @@ export default function AdminPanel() {
         setAppPassword('');
         setDeviceKey('');
         setProviderUrl('');
+        setAppHost('');
         setAndroidLink('');
         setIosLink('');
         setIconUrl('');
@@ -1426,6 +1428,18 @@ export default function AdminPanel() {
                               )}
                             </div>
                           )}
+                          {(viewingApp.host || isEditingApp) && (
+                            <div className="col-span-2 bg-white p-3 rounded-xl border border-emerald-100 space-y-1">
+                              <p className="text-[8px] font-black text-slate-400 uppercase">
+                                {viewingApp.app_model === 'QUICKPLAYER' ? 'Host (Quick Player)' : 'Host / DNS (Xtream Codes)'}
+                              </p>
+                              {isEditingApp ? (
+                                <input value={viewingApp.host || ''} onChange={e => setViewingApp({...viewingApp, host: e.target.value})} className="w-full px-2 py-1 bg-slate-50 border border-slate-100 rounded text-[10px] font-mono outline-none" />
+                              ) : (
+                                <p className="text-xs font-mono font-bold text-slate-700 break-all">{viewingApp.host}</p>
+                              )}
+                            </div>
+                          )}
                           {(viewingApp.app_site_url || isEditingApp) && (
                             <div className="col-span-2 bg-white p-3 rounded-xl border border-emerald-100 flex items-center justify-between">
                               <div className="min-w-0 flex-1">
@@ -1578,7 +1592,8 @@ export default function AdminPanel() {
                       <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
                       <select value={accessType} onChange={e => setAccessType(e.target.value as any)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                         <option value="mac_key">MAC & Device Key</option>
-                        <option value="user_pass">Usuário & Senha</option>
+                        <option value="xtream">Xtream Codes (DNS + Usuário + Senha)</option>
+                        <option value="user_pass">Usuário & Senha (genérico)</option>
                       </select>
                     </div>
 
@@ -1591,6 +1606,28 @@ export default function AdminPanel() {
                         <div className="space-y-1">
                           <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Device Key</label>
                           <input value={deviceKey} onChange={e => setDeviceKey(e.target.value)} placeholder="123456" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
+                        </div>
+                      </>
+                    ) : accessType === 'xtream' ? (
+                      <>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
+                            {appModel === 'QUICKPLAYER' ? 'Host (Nome do Host)' : 'DNS / Servidor (ex: http://host.com:8080)'}
+                          </label>
+                          <input
+                            value={appHost}
+                            onChange={e => setAppHost(e.target.value)}
+                            placeholder={appModel === 'QUICKPLAYER' ? 'ex: meuhost.tv' : 'http://provedor.com:8080'}
+                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Usuário</label>
+                          <input value={appUsername} onChange={e => setAppUsername(e.target.value)} placeholder="usuario123" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Senha</label>
+                          <input value={appPassword} onChange={e => setAppPassword(e.target.value)} placeholder="••••••" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
                         </div>
                       </>
                     ) : (

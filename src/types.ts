@@ -3,12 +3,13 @@ export interface CustomerApp {
   customer_id: number;
   app_name: string;
   app_model?: string;
-  access_type: 'mac_key' | 'user_pass';
+  access_type: 'mac_key' | 'user_pass' | 'xtream';
   mac_address?: string;
   device_key?: string;
   username?: string;
   password?: string;
   provider_url?: string;
+  host?: string;
   android_link?: string;
   ios_link?: string;
   icon_url?: string;

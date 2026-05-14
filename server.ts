@@ -125,6 +125,7 @@ async function initDB(retries = 5) {
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS ios_link TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS icon_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
+        `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS host TEXT`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
@@ -1579,6 +1580,7 @@ function normalizeAppPayload(b: any) {
     username:     b.username     ?? b.appUsername ?? null,
     password:     b.password     ?? b.appPassword ?? null,
     provider_url: b.provider_url ?? b.providerUrl ?? null,
+    host:         b.host         ?? b.appHost     ?? null,
     android_link: b.android_link ?? b.androidLink ?? null,
     ios_link:     b.ios_link     ?? b.iosLink     ?? null,
     icon_url:     b.icon_url     ?? b.iconUrl     ?? null,
@@ -1592,9 +1594,9 @@ app.post('/api/customers/:id/apps', async (req, res) => {
     const a = normalizeAppPayload(req.body || {});
     if (!a.app_name) return res.status(400).json({ error: 'app_name é obrigatório' });
     const result = await pool.query(
-      `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, device_key, username, password, provider_url, android_link, ios_link, icon_url, app_site_url, is_tv)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
+      `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, device_key, username, password, provider_url, host, android_link, ios_link, icon_url, app_site_url, is_tv)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.host, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
     );
     res.json(result.rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1604,9 +1606,9 @@ app.put('/api/apps/:id', async (req, res) => {
   try {
     const a = normalizeAppPayload(req.body || {});
     const result = await pool.query(
-      `UPDATE customer_apps SET app_name=$2, app_model=$3, access_type=$4, mac_address=$5, device_key=$6, username=$7, password=$8, provider_url=$9, android_link=$10, ios_link=$11, icon_url=$12, app_site_url=$13, is_tv=$14
+      `UPDATE customer_apps SET app_name=$2, app_model=$3, access_type=$4, mac_address=$5, device_key=$6, username=$7, password=$8, provider_url=$9, host=$10, android_link=$11, ios_link=$12, icon_url=$13, app_site_url=$14, is_tv=$15
        WHERE id=$1 RETURNING *`,
-      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
+      [req.params.id, a.app_name, a.app_model, a.access_type, a.mac_address, a.device_key, a.username, a.password, a.provider_url, a.host, a.android_link, a.ios_link, a.icon_url, a.app_site_url, a.is_tv]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
     res.json(result.rows[0]);
