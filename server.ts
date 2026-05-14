@@ -690,6 +690,20 @@ function normalizePhone(jid: string): string {
   return (jid || '').split('@')[0].replace(/\D/g, '');
 }
 
+/**
+ * Sanitiza o username de teste: remove espaços, tudo junto e adiciona sufixo app2026.
+ */
+function sanitizeTestUsername(username: string): string {
+  let sanitized = (username || '').trim().replace(/\s+/g, '').toLowerCase();
+  if (!sanitized) {
+    sanitized = 'teste' + Math.floor(Math.random() * 100000);
+  }
+  if (!sanitized.endsWith('app2026')) {
+    sanitized += 'app2026';
+  }
+  return sanitized;
+}
+
 // Procura cliente pelo numero do WhatsApp. Compara so os digitos (ignora formatacao).
 // Aceita ate 2 JIDs (remoteJid + remoteJidAlt) pra cobrir o caso do WhatsApp moderno
 // que envia mensagens com JID @lid (identidade mascarada) e o numero REAL fica no
@@ -814,8 +828,8 @@ Quando ele mandar o MAC:
 - Pergunte se ele quer fazer um *teste gratis de 6 horas* pra ver a qualidade antes de pagar.
 - Se ele aceitar: chame IMEDIATAMENTE a tool *create_test_account* com:
   * player_name = nome exato do app que ele instalou (Ultra Player / Fun Play / Lazer Play / X-Cloud / See Play)
-  * mac = MAC que ele forneceu
-- A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando!
+  * mac = MAC ou Código de Ativação que ele forneceu
+- A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando! Para o X-Cloud, use o Código de Ativação no campo 'mac'.
 - Se ele NAO quiser teste e ja quiser comprar: va pro PASSO 6.
 
 PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
@@ -1071,13 +1085,18 @@ NUNCA:
 - Invente preço, vencimento ou data — use APENAS o que está no CONTEXTO.
 - Diga "não tenho acesso a..." — você tem TUDO no contexto.
 - Repita perguntas que o cliente já respondeu na conversa.
-- Repita uma TOOL que voce ja chamou nesta conversa SE o cliente apenas agradeceu, confirmou que funcionou ou esta fazendo conversa social. As tools (create_test_account, repair_ibo_pro_playlist, generate_pix, register_new_customer) so devem ser chamadas quando o cliente PEDE algo NOVO ativamente. Quando ele diz "obrigado", "deu certo", "funcionou", "valeu" — apenas responda com texto agradecendo de volta, NUNCA dispare a tool de novo.`;
+- Repita uma TOOL que voce ja chamou nesta conversa SE o cliente apenas agradeceu, confirmou que funcionou ou esta fazendo conversa social. As tools (create_test_account, repair_ibo_pro_playlist, generate_pix, register_new_customer) so devem ser chamadas quando o cliente PEDE algo NOVO ativamente. Quando ele diz "obrigado", "deu certo", "funcionou", "valeu" — apenas responda com texto agradecendo de volta, NUNCA dispare a tool de novo.
+
+X-CLOUD E CÓDIGOS DE ATIVAÇÃO:
+- O app X-Cloud (iPhone/iOS) usa um Código de Ativação (ex: 1J616K) em vez de MAC.
+- Nossa ferramenta de TESTE GRATUITO (create_test_account) SUPORTA X-Cloud e códigos.
+- Se o cliente usar X-Cloud, peça o código e use-o no campo 'mac' da tool. Não diga que não há teste para X-Cloud.`;
 
     let systemPrompt = DEFAULT_PROMPT;
     try {
       const r = await pool.query("SELECT value FROM settings WHERE key = 'ai_system_prompt'");
       const dbPrompt = r.rows[0]?.value?.trim();
-      if (dbPrompt) systemPrompt = dbPrompt;
+      if (dbPrompt) systemPrompt += "\n\n" + dbPrompt;
     } catch (e) { /* silencioso, usa o default */ }
 
     // Injeta contexto do cliente (se encontrado pelo numero) — pra IA saber quem ta falando.
@@ -1129,7 +1148,7 @@ NUNCA:
               type: "OBJECT",
               properties: {
                 player_name: { type: "STRING", description: "Nome do player que o cliente instalou. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'X-Cloud', 'See Play'. Use exatamente o nome do app que o cliente confirmou que abriu." },
-                mac: { type: "STRING", description: "MAC do aparelho que apareceu na tela do app (formato XX:XX:XX:XX:XX:XX)" },
+                mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
                 username: { type: "STRING", description: "Username sugerido pra conta (opcional — se nao passar, gera 'Teste<numero>')" },
               },
               required: ["player_name", "mac"],
@@ -1145,7 +1164,7 @@ NUNCA:
                 full_name: { type: "STRING", description: "Nome completo do cliente (ex: 'Joao Silva')" },
                 desired_username: { type: "STRING", description: "Username sugerido pro cadastro (ex: 'joao24h'). Letras/numeros, sem espacos." },
                 app_id: { type: "NUMBER", description: "ID do app do catalogo que o cliente vai usar (pega da lista do system prompt)" },
-                mac_address: { type: "STRING", description: "MAC do aparelho (formato XX:XX:XX:XX:XX:XX). Opcional se for tipo user/pass." },
+                mac_address: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
                 device_key: { type: "STRING", description: "Device Key do app. Opcional." },
                 app_username: { type: "STRING", description: "Username do app (se for login user/pass). Opcional." },
                 app_password: { type: "STRING", description: "Senha do app (se for login user/pass). Opcional." },
@@ -1934,7 +1953,8 @@ app.post('/api/automations/startpainel/create-test', async (req, res) => {
     if (!mac || !playerName) {
       return res.status(400).json({ error: 'mac e playerName obrigatorios (username opcional — gera automatico se vazio)' });
     }
-    const result: any = await waitForJob(await enqueueJob('create_test', { username: username || '', mac, playerName }));
+    const finalUsername = sanitizeTestUsername(username || '');
+    const result: any = await waitForJob(await enqueueJob('create_test', { username: finalUsername, mac, playerName }));
     
     // Se sucesso, salva/atualiza o cliente localmente como 'teste'
     if (result.success && result.username) {
@@ -2686,13 +2706,14 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     // tudo por minutos. Quando terminar, callback notifica o cliente.
     (async () => {
       try {
-        const jobId = await enqueueJob('create_test', { username, mac, playerName });
+        const finalUsername = sanitizeTestUsername(username);
+        const jobId = await enqueueJob('create_test', { username: finalUsername, mac, playerName });
         // waitForJob bloqueia ate 5min — esta dentro de IIFE async, nao trava o handler principal
         const result: any = await waitForJob(jobId);
         const evo2 = await getEvolutionService();
 
         if (result?.success) {
-          const finalUser = result.username || username || 'cliente';
+          const finalUser = result.username || finalUsername || 'cliente';
           await evo2.sendMessage(
             remoteJid,
             `✅ *Seu teste esta ativo!*\n\nUsuario: *${finalUser}*\nApp: ${playerName}\nMAC: ${mac}\n\n⏰ Voce tem *6 horas* pra testar tudo. Abre o ${playerName} ai na sua tela e ja vai estar funcionando!\n\nGostou? Me chama aqui que ativo seu plano definitivo. 🎬`
