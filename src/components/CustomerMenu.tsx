@@ -78,12 +78,13 @@ export default function CustomerMenu() {
   const [appForm, setAppForm] = useState({
     appName: '',
     appModel: 'IBO PLAYER',
-    accessType: 'mac_key' as 'mac_key' | 'user_pass',
+    accessType: 'mac_key' as 'mac_key' | 'user_pass' | 'xtream',
     macAddress: '',
     deviceKey: '',
     appUsername: '',
     appPassword: '',
     providerUrl: '',
+    appHost: '',
     androidLink: '',
     iosLink: '',
     iconUrl: '',
@@ -175,13 +176,16 @@ export default function CustomerMenu() {
       const response = await fetch(`/api/customers/${selectedCustomer.id}/apps`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(appForm)
+        body: JSON.stringify({
+          ...appForm,
+          host: appForm.appHost
+        })
       });
       if (response.ok) {
         setAppForm({
           appName: '', appModel: 'IBO PLAYER', accessType: 'mac_key',
           macAddress: '', deviceKey: '', appUsername: '', appPassword: '',
-          providerUrl: '', androidLink: '', iosLink: '', iconUrl: '',
+          providerUrl: '', appHost: '', androidLink: '', iosLink: '', iconUrl: '',
           appSiteUrl: '', isTv: true
         });
         loadCustomers();
@@ -951,6 +955,59 @@ export default function CustomerMenu() {
                         )}
                       </div>
 
+                      {viewingApp.mac_address && (
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase">Endereço MAC</p>
+                          {isEditingApp ? (
+                            <input value={viewingApp.mac_address || ''} onChange={e => setViewingApp({...viewingApp, mac_address: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-xs font-mono outline-none" />
+                          ) : (
+                            <p className="text-xs font-mono font-bold text-slate-700">{viewingApp.mac_address}</p>
+                          )}
+                        </div>
+                      )}
+                      {viewingApp.device_key && (
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase">Device Key</p>
+                          {isEditingApp ? (
+                            <input value={viewingApp.device_key || ''} onChange={e => setViewingApp({...viewingApp, device_key: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-xs font-mono outline-none" />
+                          ) : (
+                            <p className="text-xs font-mono font-bold text-slate-700">{viewingApp.device_key}</p>
+                          )}
+                        </div>
+                      )}
+                      {viewingApp.username && (
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase">Usuário</p>
+                          {isEditingApp ? (
+                            <input value={viewingApp.username || ''} onChange={e => setViewingApp({...viewingApp, username: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-xs font-bold outline-none" />
+                          ) : (
+                            <p className="text-xs font-bold text-slate-700">{viewingApp.username}</p>
+                          )}
+                        </div>
+                      )}
+                      {viewingApp.password && (
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase">Senha</p>
+                          {isEditingApp ? (
+                            <input value={viewingApp.password || ''} onChange={e => setViewingApp({...viewingApp, password: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-xs font-bold outline-none" />
+                          ) : (
+                            <p className="text-xs font-bold text-slate-700">{viewingApp.password}</p>
+                          )}
+                        </div>
+                      )}
+                      {viewingApp.host && (
+                        <div className="col-span-2 space-y-1">
+                          <p className="text-[8px] font-black text-slate-400 uppercase">
+                            {viewingApp.app_model === 'QUICKPLAYER' ? 'Host (Quick Player)' : 'Host / DNS (Xtream)'}
+                          </p>
+                          {isEditingApp ? (
+                            <input value={viewingApp.host || ''} onChange={e => setViewingApp({...viewingApp, host: e.target.value})} className="w-full px-3 py-2 bg-white border border-indigo-100 rounded-xl text-[10px] font-mono outline-none" />
+                          ) : (
+                            <p className="text-[10px] font-mono font-bold text-slate-700 break-all">{viewingApp.host}</p>
+                          )}
+                        </div>
+                      )}
+
                       <div className="col-span-2 space-y-1">
                         <p className="text-[8px] font-black text-slate-400 uppercase">Ícone do App</p>
                         <div className="flex items-center gap-4">
@@ -1012,7 +1069,8 @@ export default function CustomerMenu() {
                         <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
                         <select value={appForm.accessType} onChange={e => setAppForm({...appForm, accessType: e.target.value as any})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                           <option value="mac_key">MAC & Device Key</option>
-                          <option value="user_pass">Usuário & Senha</option>
+                          <option value="xtream">Xtream Codes (DNS + Usuário + Senha)</option>
+                          <option value="user_pass">Usuário & Senha (genérico)</option>
                         </select>
                       </div>
 
@@ -1025,6 +1083,28 @@ export default function CustomerMenu() {
                           <div className="space-y-1">
                             <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Device Key</label>
                             <input value={appForm.deviceKey} onChange={e => setAppForm({...appForm, deviceKey: e.target.value})} placeholder="123456" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none" />
+                          </div>
+                        </>
+                      ) : appForm.accessType === 'xtream' ? (
+                        <>
+                          <div className="col-span-2 space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
+                              {appForm.appModel === 'QUICKPLAYER' ? 'Host (Nome do Host)' : 'DNS / Servidor (ex: http://host.com:8080)'}
+                            </label>
+                            <input
+                              value={appForm.appHost}
+                              onChange={e => setAppForm({...appForm, appHost: e.target.value})}
+                              placeholder={appForm.appModel === 'QUICKPLAYER' ? 'ex: meuhost.tv' : 'http://provedor.com:8080'}
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Usuário</label>
+                            <input value={appForm.appUsername} onChange={e => setAppForm({...appForm, appUsername: e.target.value})} placeholder="usuario123" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Senha</label>
+                            <input value={appForm.appPassword} onChange={e => setAppForm({...appForm, appPassword: e.target.value})} placeholder="••••••" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
                           </div>
                         </>
                       ) : (

@@ -1517,8 +1517,22 @@ app.get('/api/financials', async (req, res) => {
 
 // Customers
 app.get('/api/customers', async (req, res) => {
-  const result = await pool.query('SELECT * FROM customers ORDER BY created_at DESC');
-  res.json(result.rows);
+  try {
+    const result = await pool.query(`
+      SELECT c.*, 
+             COALESCE(
+               (SELECT json_agg(ca.* ORDER BY ca.created_at DESC) 
+                FROM customer_apps ca 
+                WHERE ca.customer_id = c.id), 
+               '[]'::json
+             ) AS apps
+      FROM customers c
+      ORDER BY c.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/customers', async (req, res) => {
