@@ -129,7 +129,7 @@ async function initDB(retries = 5) {
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS icon_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS host TEXT`,
-        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS dns TEXT`
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS dns TEXT`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
