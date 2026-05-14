@@ -1203,6 +1203,20 @@ X-CLOUD E CÓDIGOS DE ATIVAÇÃO:
               required: ["username"],
             },
           },
+          // Ativação de player para cliente EXISTENTE
+          {
+            name: "activate_player",
+            description: "Ativa um player (X-Cloud, Fun Play, Ultra, etc) para um cliente que JA EXISTE no sistema. Use quando o cliente passa o MAC/Código e pede pra ativar o app. Nao use pra criar teste gratis (use create_test_account).",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente (do CONTEXTO)." },
+                player_name: { type: "STRING", description: "Nome do player. Valores: 'Ultra Player', 'Fun Play', 'X-Cloud', 'Lazer Play', 'See Play'." },
+                mac: { type: "STRING", description: "MAC ou Código de Ativação." },
+              },
+              required: ["username", "player_name", "mac"],
+            },
+          },
         ]
       }] as any
     });
@@ -1565,43 +1579,61 @@ app.get('/api/customers', async (req, res) => {
 });
 
 app.post('/api/customers', async (req, res) => {
-  const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
-  const result = await pool.query(
-    `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-    [username, name, whatsapp, password, dns, renewal_price || 49.90, expiration_date, playlist_url, lines_count || 1, cost_per_credit || 0, amount_paid || 0]
-  );
-  res.json(result.rows[0]);
+  try {
+    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
+    
+    const cleanPrice = (p: any) => {
+      if (typeof p === 'number') return p;
+      if (!p) return 0;
+      return parseFloat(String(p).replace(',', '.'));
+    };
+
+    const result = await pool.query(
+      `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [username, name, whatsapp, password, dns, cleanPrice(renewal_price) || 49.90, expiration_date, playlist_url, Number(lines_count) || 1, cleanPrice(cost_per_credit) || 0, cleanPrice(amount_paid) || 0]
+    );
+    res.json(result.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.put('/api/customers/:id', async (req, res) => {
-  const { id } = req.params;
-  const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
+  try {
+    const { id } = req.params;
+    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
 
-  // Busca status atual antes de atualizar pra saber se era teste
-  const current = await pool.query('SELECT status, username FROM customers WHERE id = $1', [id]);
-  const wasTeste = current.rows[0]?.status === 'teste';
-  const finalUsername = username || current.rows[0]?.username;
+    const cleanPrice = (p: any) => {
+      if (typeof p === 'number') return p;
+      if (!p) return 0;
+      return parseFloat(String(p).replace(',', '.'));
+    };
 
-  // Faz COALESCE pra preservar campos que o cliente nao enviou (parcial update).
-  const result = await pool.query(
-    `UPDATE customers SET
-       username=COALESCE($1, username),
-       name=COALESCE($2, name),
-       whatsapp=COALESCE($3, whatsapp),
-       renewal_price=COALESCE($4, renewal_price),
-       expiration_date=COALESCE($5, expiration_date),
-       playlist_url=COALESCE($6, playlist_url),
-       status=COALESCE($7, status),
-       lines_count=COALESCE($8, lines_count),
-       cost_per_credit=COALESCE($9, cost_per_credit),
-       amount_paid=COALESCE($10, amount_paid),
-       password=COALESCE($11, password),
-       dns=COALESCE($12, dns),
-       updated_at=NOW()
-     WHERE id=$13 RETURNING *`,
-    [username, name, whatsapp, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid, password, dns, id]
-  );
+    // Busca status atual antes de atualizar pra saber se era teste
+    const current = await pool.query('SELECT status, username FROM customers WHERE id = $1', [id]);
+    const wasTeste = current.rows[0]?.status === 'teste';
+    const finalUsername = username || current.rows[0]?.username;
+
+    // Faz COALESCE pra preservar campos que o cliente nao enviou (parcial update).
+    const result = await pool.query(
+      `UPDATE customers SET
+         username=COALESCE($1, username),
+         name=COALESCE($2, name),
+         whatsapp=COALESCE($3, whatsapp),
+         renewal_price=COALESCE($4, renewal_price),
+         expiration_date=COALESCE($5, expiration_date),
+         playlist_url=COALESCE($6, playlist_url),
+         status=COALESCE($7, status),
+         lines_count=COALESCE($8, lines_count),
+         cost_per_credit=COALESCE($9, cost_per_credit),
+         amount_paid=COALESCE($10, amount_paid),
+         password=COALESCE($11, password),
+         dns=COALESCE($12, dns),
+         updated_at=NOW()
+       WHERE id=$13 RETURNING *`,
+      [username, name, whatsapp, renewal_price !== undefined ? cleanPrice(renewal_price) : null, expiration_date, playlist_url, status, lines_count !== undefined ? Number(lines_count) : null, cost_per_credit !== undefined ? cleanPrice(cost_per_credit) : null, amount_paid !== undefined ? cleanPrice(amount_paid) : null, password, dns, id]
+    );
   
   const updated = result.rows[0];
   // Se era teste e agora está ativo ou foi renovado, ativa no CMS
@@ -2372,6 +2404,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'repair_ibo_playlist') {
           const ok = await handleRepairIboPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'activate_player') {
+          const ok = await handleActivatePlayerAccount(remoteJid, call.args);
+          if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
@@ -2796,7 +2831,52 @@ const _lastRepair = new Map<string, number>();
 const REPAIR_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos
 
 /**
- * Tool handler: dispara automacao IBO Pro pra atualizar a lista do cliente.
+ * Tool handler: ativa um player para cliente existente.
+ */
+async function handleActivatePlayerAccount(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const playerName: string = (args.player_name || '').trim();
+    const mac: string = (args.mac || '').trim();
+    const username: string = (args.username || '').trim();
+
+    if (!playerName || !mac || !username) return false;
+
+    const playerLower = playerName.toLowerCase();
+    let playerType = 'ultra';
+    if (playerLower.includes('fun')) playerType = 'funplay';
+    else if (playerLower.includes('cloud')) playerType = 'xcloud';
+    else if (playerLower.includes('lazer')) playerType = 'lazerplay';
+    else if (playerLower.includes('see')) playerType = 'seeplay';
+
+    const evo = await getEvolutionService();
+    await evo.sendMessage(remoteJid, `⚙️ Entendido! Vou ativar o *${playerName}* no seu acesso agora mesmo (MAC/Código: ${mac}).\n\nAguarde uns 30 segundinhos...`);
+
+    (async () => {
+      try {
+        const jobId = await enqueueJob(`activate_${playerType}`, { username, mac });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(remoteJid, `✅ *Pronto!* Seu player *${playerName}* foi ativado com sucesso.\n\nPode abrir o app agora e testar! 🎬`);
+          await pool.query(
+            `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, username)
+             SELECT id, $2, $3, 'mac_key', $4, $5 FROM customers WHERE username = $1
+             ON CONFLICT DO NOTHING`,
+            [username, playerName, playerName, mac, username]
+          );
+        } else {
+          await evo2.sendMessage(remoteJid, `😕 Houve um problema na ativação: ${result?.message || 'Erro no robô'}.\n\nO suporte humano já foi avisado.`);
+        }
+      } catch (e: any) { console.error('[Tool activate_player] background falhou:', e?.message); }
+    })();
+
+    return true;
+  } catch (e) { return false; }
+}
+
+/**
+ * Anti-spam: registra quando a tool repair_ibo_pro_playlist foi executada
  *
  * Fluxo:
  *   1. Checa cooldown — se rodou ha <5min, manda mensagem de confirmacao em vez
