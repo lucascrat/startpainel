@@ -53,7 +53,7 @@ async function initDB(retries = 5) {
       const tables = [
         `CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, text TEXT, sender VARCHAR(20), type VARCHAR(50) DEFAULT 'text', remote_jid TEXT, contact_name TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, remote_jid TEXT UNIQUE NOT NULL, name TEXT, last_message TEXT, last_message_time TIMESTAMP, unread_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
-        `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, password TEXT, dns TEXT, renewal_price DECIMAL(10,2) DEFAULT 49.90, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        `CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT, whatsapp TEXT, password TEXT, dns TEXT, renewal_price DECIMAL(10,2) DEFAULT 25, expiration_date DATE, playlist_url TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS ai_usage_logs (id SERIAL PRIMARY KEY, model TEXT NOT NULL, type TEXT NOT NULL, prompt_tokens INTEGER, candidates_tokens INTEGER, estimated_cost DECIMAL(15,8), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
         `CREATE TABLE IF NOT EXISTS payment_receipts (
           id SERIAL PRIMARY KEY,
@@ -137,6 +137,29 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_renewal TIMESTAMP`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS password TEXT`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS dns TEXT`,
+        // === MEMORIA DA IA (clientes cadastrados) ===
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_summary TEXT`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_facts JSONB DEFAULT '{}'::jsonb`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_last_summary_at TIMESTAMP`,
+        // === LEADS (potenciais clientes — capturados automaticamente) ===
+        `CREATE TABLE IF NOT EXISTS leads (
+          id SERIAL PRIMARY KEY,
+          remote_jid TEXT NOT NULL UNIQUE,
+          alt_jid TEXT,
+          push_name TEXT,
+          first_message TEXT,
+          message_count INTEGER DEFAULT 1,
+          status TEXT DEFAULT 'new',
+          notes TEXT,
+          ai_summary TEXT,
+          ai_facts JSONB DEFAULT '{}'::jsonb,
+          ai_last_summary_at TIMESTAMP,
+          first_contact TIMESTAMP DEFAULT NOW(),
+          last_contact TIMESTAMP DEFAULT NOW(),
+          converted_to_customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS leads_status_idx ON leads(status, last_contact DESC)`,
+        `CREATE INDEX IF NOT EXISTS leads_alt_jid_idx ON leads(alt_jid) WHERE alt_jid IS NOT NULL`,
       ];
       for (const sql of alters) {
         try { await client.query(sql); } catch (e: any) { console.warn('PG: alter falhou:', e.message); }
@@ -784,6 +807,157 @@ function maskValue(v: string | null | undefined, keep = 4): string {
  * Tudo aqui vai DIRETO no system prompt do Gemini. A IA passa a operar como um
  * atendente que ja CONHECE o cliente — nao pergunta o que ja sabe.
  */
+
+// ── LEADS (contatos ainda nao cadastrados) ──────────────────────────────────
+
+/** Insere ou atualiza o lead. Chamado a cada mensagem recebida de nao-cliente. */
+async function upsertLead(
+  remoteJid: string,
+  pushName: string,
+  firstMsg: string,
+  altJid?: string | null
+): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO leads (remote_jid, alt_jid, push_name, first_message, message_count, last_contact)
+       VALUES ($1, $2, $3, $4, 1, NOW())
+       ON CONFLICT (remote_jid) DO UPDATE SET
+         push_name        = COALESCE(NULLIF($3,''), leads.push_name),
+         alt_jid          = COALESCE($2, leads.alt_jid),
+         message_count    = leads.message_count + 1,
+         last_contact     = NOW(),
+         status           = CASE WHEN leads.status = 'converted' THEN leads.status ELSE 'active' END`,
+      [remoteJid, altJid || null, pushName || '', firstMsg.slice(0, 500)]
+    );
+  } catch (e) {
+    console.error('[Lead] upsertLead error:', e);
+  }
+}
+
+/**
+ * Recomputa ai_summary + ai_facts para lead OU cliente cadastrado.
+ * kind = 'lead' | 'customer'
+ * Tem cooldown de 30 min para nao chamar Gemini demais.
+ * Roda em background (nao bloqueia a resposta ao cliente).
+ */
+async function maybeRecomputeAISummary(remoteJid: string, kind: 'lead' | 'customer', altJid?: string | null): Promise<void> {
+  try {
+    const COOLDOWN_MS = 30 * 60 * 1000; // 30 min
+
+    let customerId: number | null = null;
+
+    if (kind === 'customer') {
+      // Para clientes: resolve pelo JID → pega o ID do cadastro
+      const cust = await findCustomerByJid(remoteJid, altJid);
+      if (!cust) return;
+      customerId = cust.id;
+      const rec = await pool.query(
+        `SELECT ai_last_summary_at FROM customers WHERE id = $1`, [customerId]
+      );
+      if (!rec.rows.length) return;
+      const lastAt: Date | null = rec.rows[0].ai_last_summary_at;
+      if (lastAt && Date.now() - new Date(lastAt).getTime() < COOLDOWN_MS) return;
+    } else {
+      // Para leads: lookup direto por remote_jid
+      const rec = await pool.query(
+        `SELECT ai_last_summary_at FROM leads WHERE remote_jid = $1`, [remoteJid]
+      );
+      if (!rec.rows.length) return;
+      const lastAt: Date | null = rec.rows[0].ai_last_summary_at;
+      if (lastAt && Date.now() - new Date(lastAt).getTime() < COOLDOWN_MS) return;
+    }
+
+    // Busca historico de mensagens (tabela messages, coluna text/sender)
+    const hist = await pool.query(
+      `SELECT text, sender, created_at FROM messages
+       WHERE remote_jid = $1
+       ORDER BY created_at DESC LIMIT 50`,
+      [remoteJid]
+    );
+    if (hist.rows.length < 3) return; // pouco historico — nao vale resumir
+
+    const convo = hist.rows.reverse().map(r =>
+      `[${(r.sender === 'ai' || r.sender === 'attendant') ? 'Atendente' : 'Cliente'}] ${r.text || ''}`
+    ).join('\n');
+
+    const summaryPrompt = `Analise essa conversa de atendimento e extraia informacoes uteis sobre o cliente.
+
+CONVERSA:
+${convo}
+
+Responda APENAS com JSON valido neste formato exato:
+{
+  "summary": "resumo curto em 1-2 frases do que o cliente quer/precisa",
+  "facts": {
+    "device_type": "Smart TV | Celular | PC | TV Box | (vazio se nao mencionado)",
+    "app_tried": "apps que ele ja tentou (lista separada por virgula ou vazio)",
+    "issue": "problema principal relatado (vazio se nao ha problema)",
+    "name_mentioned": "nome que ele disse ou vazio",
+    "interested_in": "o que ele quer comprar/testar ou vazio",
+    "last_intent": "ultima intencao clara do cliente"
+  }
+}`;
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return;
+    const genAISummary = new GoogleGenerativeAI(apiKey);
+    const summaryModel = genAISummary.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const result = await summaryModel.generateContent(summaryPrompt);
+    const raw = result.response.text()?.trim() || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const summary = parsed.summary || '';
+    const facts = parsed.facts || {};
+
+    if (kind === 'customer' && customerId) {
+      await pool.query(
+        `UPDATE customers SET ai_summary = $1, ai_facts = $2, ai_last_summary_at = NOW()
+         WHERE id = $3`,
+        [summary, JSON.stringify(facts), customerId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE leads SET ai_summary = $1, ai_facts = $2, ai_last_summary_at = NOW()
+         WHERE remote_jid = $3`,
+        [summary, JSON.stringify(facts), remoteJid]
+      );
+    }
+    console.log(`[AI Memory] Summary updated for ${kind} ${remoteJid}: "${summary}"`);
+  } catch (e) {
+    console.error('[AI Memory] maybeRecomputeAISummary error:', e);
+  }
+}
+
+/** Formata contexto de lead (nao-cliente) para injecao no prompt do Gemini. */
+async function buildLeadContext(remoteJid: string): Promise<string> {
+  try {
+    const res = await pool.query(
+      `SELECT push_name, message_count, first_message, first_contact, last_contact,
+              ai_summary, ai_facts, status, notes
+       FROM leads WHERE remote_jid = $1`,
+      [remoteJid]
+    );
+    if (!res.rows.length) return '';
+    const lead = res.rows[0];
+    const facts: Record<string, string> = lead.ai_facts || {};
+
+    let ctx = `\n\nMEMORIA DO CONTATO (${lead.push_name || 'sem nome'} — ${lead.message_count} msg${lead.message_count !== 1 ? 's' : ''} enviadas):`;
+    if (lead.ai_summary) ctx += `\n- Resumo: ${lead.ai_summary}`;
+    if (facts.device_type) ctx += `\n- Dispositivo: ${facts.device_type}`;
+    if (facts.app_tried) ctx += `\n- Apps testados: ${facts.app_tried}`;
+    if (facts.issue) ctx += `\n- Problema relatado: ${facts.issue}`;
+    if (facts.interested_in) ctx += `\n- Interesse: ${facts.interested_in}`;
+    if (facts.last_intent) ctx += `\n- Ultima intencao: ${facts.last_intent}`;
+    if (lead.notes) ctx += `\n- Notas: ${lead.notes}`;
+    ctx += `\n\nUSE essa memoria para nao repetir perguntas que voce ja fez antes. Retome de onde parou naturalmente.`;
+    return ctx;
+  } catch {
+    return '';
+  }
+}
+
 async function buildCustomerContext(remoteJid: string, pushName: string, altJid?: string | null): Promise<string> {
   const customer = await findCustomerByJid(remoteJid, altJid);
   // Pra exibir o numero, prefere o alt (real) se disponivel
@@ -801,10 +975,12 @@ async function buildCustomerContext(remoteJid: string, pushName: string, altJid?
       });
     }
 
+    const leadCtx = await buildLeadContext(remoteJid);
+
     return `\n\n=== CONTEXTO DO CONTATO (NOVO — NAO CADASTRADO) ===
 Esta pessoa NAO esta cadastrada como cliente.
 - Numero WhatsApp: +${phone}
-- Nome no WhatsApp: ${pushName}${appList}
+- Nome no WhatsApp: ${pushName}${leadCtx}${appList}
 
 FLUXO DE ATENDIMENTO (siga esses passos na ordem):
 
@@ -840,7 +1016,11 @@ PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
 - Quando ele confirmar que gostou do teste OU quiser virar cliente fixo:
   * Peca o nome completo dele.
   * Use a tool *register_new_customer* com full_name, desired_username, app_id, mac.
-  * Em seguida use *generate_pix* com username + valor R$ 49,90.
+  * Em seguida use *generate_pix* com o valor TOTAL — calcula assim:
+    - VALOR DA LISTA: 1 tela = R$ 25 / 2 telas = R$ 45 / 3 telas = R$ 60.
+    - + R$ 10 por cada IBO Player ou IBO Pro ativado (taxa anual).
+    - Apps grátis (Ultra, Fun, Lazer, X-Cloud, See) e celular NÃO somam nada.
+    - Exemplo: 1 IBO numa TV = R$ 25 + R$ 10 = R$ 35. 2 IBOs = R$ 45 + R$ 20 = R$ 65.
 - Avise: "Assim que confirmar o pagamento, ja transformo seu teste em conta definitiva. 🎬"
 
 REGRAS:
@@ -946,7 +1126,7 @@ ${customer.dns ? `- DNS / Provedor: ${customer.dns}` : ''}`;
 
   if (dias !== null && dias < 0) {
     ctx += `\n- 🚨 PRIORIDADE MAXIMA: plano VENCIDO ha ${-dias} dia(s). Ofereca renovacao logo na primeira mensagem.
-- Use o tool generate_pix com username "${customer.username}" e valor R$ ${customer.renewal_price || 49.90}.`;
+- Use o tool generate_pix com username "${customer.username}" e valor R$ ${customer.renewal_price || 25}.`;
   } else if (dias !== null && dias <= 3) {
     ctx += `\n- ⏰ Plano vence em ${dias} dia(s). Mencione e ofereca renovacao se ele nao tocar no assunto.`;
   } else if (dias !== null && dias <= 7) {
@@ -998,6 +1178,16 @@ ${customer.dns ? `- DNS / Provedor: ${customer.dns}` : ''}`;
 
   if (customer.status === 'expired') {
     ctx += `\n- Status do cadastro: EXPIRED. Confirme se ele renovou; se sim, registre o pagamento.`;
+  }
+
+  // === MEMORIA IA (ai_summary + ai_facts) ===
+  if (customer.ai_summary) {
+    ctx += `\n\nMEMORIA DE CONVERSAS ANTERIORES:`;
+    ctx += `\n- Resumo: ${customer.ai_summary}`;
+    const facts: Record<string, string> = customer.ai_facts || {};
+    if (facts.issue) ctx += `\n- Problema ja relatado: ${facts.issue}`;
+    if (facts.last_intent) ctx += `\n- Ultima intencao: ${facts.last_intent}`;
+    ctx += `\n\nUSE essa memoria para retomar de onde parou sem repetir perguntas.`;
   }
 
   return ctx;
@@ -1058,10 +1248,15 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
 
     const DEFAULT_PROMPT = `Você é a atendente oficial do StartPainel — IPTV/streaming. Atende clientes via WhatsApp.
 
-PERSONALIDADE:
-- Cordial, prestativa, direta. Estilo WhatsApp: breve, claro, emojis quando apropriado.
-- NÃO se apresenta como "IA" nem pede desculpas por ser robô — você é a atendente.
-- Trata o cliente com naturalidade humana (pode dizer "vou ver aqui", "deixa eu conferir", etc).
+QUEM VOCÊ É:
+Você é a atendente humana do StartPainel — fala via WhatsApp com clientes de IPTV/streaming. Você pensa, interpreta e decide. Não é roteiro — é atendimento de verdade. Use bom senso.
+
+COMO CONVERSAR:
+- Você fala português brasileiro fluente — entende gírias, abreviações, erros de digitação, áudios, fotos. Não pede pra repetir o que dá pra entender pelo contexto.
+- Espelha o cliente: descontraído com descontraído, profissional com formal. Use emojis quando combinar.
+- Não se apresenta como IA, robô ou assistente automatizado — você é a atendente.
+- Tom natural: "deixa eu ver aqui", "já te respondo", "boa pergunta!" — fale como gente.
+- Se o cliente escreve curto, você responde curto. Se ele explica longo, você acompanha o contexto inteiro.
 
 MULTIMODAL:
 - ENTENDE texto, áudio e imagens. Quando receber áudio, transcreva mentalmente e responda ao conteúdo.
@@ -1080,23 +1275,79 @@ TOOLS DISPONÍVEIS (use proativamente):
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo. Use pra cliente NOVO ou que quer trocar de app.
 - request_screenshot(app_id, custom_instruction): pede print de uma tela específica do app (pra pegar MAC/Key/erro). Use o app_id que BATA com o app que o cliente USA.
 
-PRIORIDADES (na ordem):
-1. Renovação se vencido / a vencer em ≤3d → ofereça Pix proativamente.
-2. Comprovante de pagamento na foto → registre via register_pix_receipt.
-3. Pedido de ajuda com app → request_screenshot.
-4. Cliente novo / sem cadastro → send_app_info do app prioritário (display_order=0).
-5. Dúvida normal → responda com os dados do CONTEXTO.
+QUANDO USAR AS TOOLS (use o julgamento — esses são gatilhos típicos, não regras):
+- Cliente com plano vencido ou prestes a vencer → você pode oferecer Pix sem ele pedir.
+- Foto que parece comprovante de Pix → registra com register_pix_receipt e confirma.
+- Reclamou de problema no app → tente entender qual app e qual sintoma antes de pedir print.
+- Cliente novo querendo testar → ofereça o app prioritário do catálogo, peça MAC, crie teste.
+- Conversa social/dúvida simples → só texto, sem tool.
 
-NUNCA:
-- Invente preço, vencimento ou data — use APENAS o que está no CONTEXTO.
-- Diga "não tenho acesso a..." — você tem TUDO no contexto.
-- Repita perguntas que o cliente já respondeu na conversa.
-- Repita uma TOOL que voce ja chamou nesta conversa SE o cliente apenas agradeceu, confirmou que funcionou ou esta fazendo conversa social. As tools (create_test_account, repair_ibo_pro_playlist, generate_pix, register_new_customer) so devem ser chamadas quando o cliente PEDE algo NOVO ativamente. Quando ele diz "obrigado", "deu certo", "funcionou", "valeu" — apenas responda com texto agradecendo de volta, NUNCA dispare a tool de novo.
+PRINCÍPIOS (regras inegociáveis — todo o resto é seu julgamento):
+- Só usa dados REAIS do CONTEXTO — preço, vencimento, MAC, username. Se não está lá, pergunta antes de afirmar.
+- Tools são AÇÕES no mundo real (gera Pix, repara lista, cria conta) — só chame quando o cliente está pedindo a ação AGORA. Se ele só agradeceu, confirmou ou conversou — apenas responda em texto, não dispare tool de novo.
+- Se você não entendeu o que ele quer, pergunte com naturalidade — não invente intenção.
+- Você confia no que o cliente diz, mas valida antes de agir (ex: confirma o MAC antes de criar teste).
+- Tudo que precisar julgar ("ele tá bravo?", "isso é spam?", "ele quer renovar ou só conversar?"), use bom senso humano — não tem regra pra tudo.
 
 X-CLOUD E CÓDIGOS DE ATIVAÇÃO:
 - O app X-Cloud (iPhone/iOS) usa um Código de Ativação (ex: 1J616K) em vez de MAC.
 - Nossa ferramenta de TESTE GRATUITO (create_test_account) SUPORTA X-Cloud e códigos.
-- Se o cliente usar X-Cloud, peça o código e use-o no campo 'mac' da tool. Não diga que não há teste para X-Cloud.`;
+- Se o cliente usar X-Cloud, peça o código e use-o no campo 'mac' da tool. Não diga que não há teste para X-Cloud.
+
+PREÇOS — LEIA COM ATENÇÃO (e EXPLIQUE pro cliente quando ele se confundir):
+
+⚠️ CONCEITO FUNDAMENTAL — CLIENTES SE CONFUNDEM COM ISSO:
+- O SINAL (a "lista") e o APP são coisas SEPARADAS.
+- A lista é o conteúdo: canais ao vivo, filmes, séries. Custa R$ 25/mês. SEM ela, NADA funciona.
+- O app (IBO Player, Ultra Player, etc) é só o tocador de vídeo — onde a lista roda.
+- Se o cliente disser "quero ativar o IBO" achando que isso já dá sinal, EXPLIQUE com calma: "O IBO é só o player que toca os canais. Pra ter os canais funcionando, você precisa também da lista (R$ 25/mês). Sem a lista, o IBO fica vazio."
+
+VALORES:
+
+1) SINAL / LISTA — preço escalonado por número de telas simultâneas:
+   - 1 tela  → R$ 25/mês
+   - 2 telas → R$ 45/mês
+   - 3 telas → R$ 60/mês (limite máximo do site de ativação)
+   - É OBRIGATÓRIO. Todo cliente paga o sinal pra ter canais.
+   - Mesmo valor pra cliente novo E renovação mensal.
+   - App de celular NÃO conta como tela — é grátis, ilimitado, sempre incluso.
+
+2) APPS PAGOS — só IBO Player e IBO Pro:
+   - R$ 10 de TAXA DE ATIVAÇÃO por aparelho — válida por 1 ANO.
+   - Depois de 1 ano, paga R$ 10 de novo pra renovar a ativação daquele aparelho.
+   - Cada aparelho diferente (TV da sala, TV do quarto, TV box) = R$ 10 cada.
+   - Essa taxa é SOMADA por cima do valor da lista — não substitui.
+
+3) APPS GRÁTIS — todos os outros do nosso catálogo (Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play, etc):
+   - Ativação 100% GRÁTIS — a atendente (você) ativa pra ele sem cobrar nada.
+   - Cliente só paga o valor da lista (R$ 25 / R$ 45 / R$ 60 conforme nº de telas).
+
+EXEMPLOS COMPLETOS (use estes pra calcular o Pix do primeiro mês):
+
+🟢 Apenas apps grátis (Ultra/Fun/Lazer/X-Cloud/See) ou só celular:
+- 1 tela → R$ 25
+- 2 telas → R$ 45
+- 3 telas → R$ 60
+
+🔵 Com IBO Player ou IBO Pro (soma R$ 10 por IBO ativado):
+- 1 tela com 1 IBO → R$ 25 + R$ 10 = R$ 35
+- 2 telas com 2 IBOs → R$ 45 + R$ 20 = R$ 65
+- 3 telas com 3 IBOs → R$ 60 + R$ 30 = R$ 90
+- 2 telas com 1 IBO + 1 app grátis → R$ 45 + R$ 10 = R$ 55
+- 3 telas com 2 IBOs + 1 app grátis → R$ 60 + R$ 20 = R$ 80
+
+RENOVAÇÕES (mês a mês):
+- Só o valor da lista (R$ 25 / R$ 45 / R$ 60).
+- A taxa de R$ 10 do IBO é ANUAL — só volta a cobrar quando completar 1 ano da ativação daquele aparelho.
+
+REGRAS DE OURO:
+- Quando o cliente perguntar "quanto custa?", SEMPRE clarifique: quantas telas ele quer + se vai usar IBO em algum aparelho.
+- Se ele só quer celular → R$ 25 e pronto.
+- Se ele quer na TV usando app grátis → cobra só o sinal pelo nº de telas.
+- Se ele quer IBO numa TV → soma R$ 10 por IBO em cima do valor da lista.
+- NUNCA cobre R$ 10 por apps que NÃO são IBO. Os outros são todos grátis.
+
+Quando gerar Pix com generate_pix, calcule o valor total certinho com base no que o cliente pediu. Se ficar em dúvida, pergunte antes de gerar.`;
 
     let systemPrompt = DEFAULT_PROMPT;
     try {
@@ -1558,6 +1809,44 @@ app.get('/api/financials', async (req, res) => {
 
 // (rota duplicada e insegura removida — usar a definida no topo com timingSafeEqual e ADMIN_JWT_SECRET)
 
+// Leads (potenciais clientes — capturados automaticamente pelo bot)
+app.get('/api/leads', async (req, res) => {
+  try {
+    const { status, limit = '50', offset = '0' } = req.query as Record<string, string>;
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (status && status !== 'all') {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await pool.query(
+      `SELECT * FROM leads ${where} ORDER BY last_contact DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, parseInt(limit), parseInt(offset)]
+    );
+    const total = await pool.query(`SELECT COUNT(*) FROM leads ${where}`, params);
+    res.json({ leads: result.rows, total: parseInt(total.rows[0].count) });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/leads/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+    const result = await pool.query(
+      `UPDATE leads SET status = COALESCE($1, status), notes = COALESCE($2, notes)
+       WHERE id = $3 RETURNING *`,
+      [status || null, notes ?? null, id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Lead nao encontrado' });
+    res.json(result.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Customers
 app.get('/api/customers', async (req, res) => {
   try {
@@ -1591,7 +1880,7 @@ app.post('/api/customers', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [username, name, whatsapp, password, dns, cleanPrice(renewal_price) || 49.90, expiration_date, playlist_url, Number(lines_count) || 1, cleanPrice(cost_per_credit) || 0, cleanPrice(amount_paid) || 0]
+      [username, name, whatsapp, password, dns, cleanPrice(renewal_price) || 25, expiration_date, playlist_url, Number(lines_count) || 1, cleanPrice(cost_per_credit) || 0, cleanPrice(amount_paid) || 0]
     );
     res.json(result.rows[0]);
   } catch (e: any) {
@@ -2343,6 +2632,18 @@ app.post('/api/webhooks/evolution/:event?',
        }
     }
 
+    // Salva lead (contato nao-cliente) em background antes de chamar IA.
+    // Se for cliente cadastrado, findCustomerByJid retorna algo e nao upserta.
+    // Usa void pra nao bloquear — buildLeadContext vai ler o resultado na proxima mensagem.
+    void (async () => {
+      try {
+        const existingCustomer = await findCustomerByJid(remoteJid, altJid);
+        if (!existingCustomer) {
+          await upsertLead(remoteJid, pushName, storedText, altJid);
+        }
+      } catch (e) { console.error('[Lead] upsertLead background error:', e); }
+    })();
+
     console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'})...`);
     const aiT0 = Date.now();
     const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName, altJid }, mediaData);
@@ -2429,6 +2730,15 @@ app.post('/api/webhooks/evolution/:event?',
         console.error('[Webhook] sendMessage fallback falhou:', e?.message);
       }
     }
+
+    // Recomputa memoria IA em background (cooldown 30 min — nao bloqueia resposta).
+    void (async () => {
+      try {
+        const cust = await findCustomerByJid(remoteJid, altJid);
+        await maybeRecomputeAISummary(remoteJid, cust ? 'customer' : 'lead', altJid);
+      } catch (e) { console.error('[AI Memory] background recompute error:', e); }
+    })();
+
   } catch (err: any) { console.error('[Webhook Error]', err); }
 });
 

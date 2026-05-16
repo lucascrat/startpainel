@@ -514,7 +514,14 @@ export default function CustomerMenu() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  onClick={() => { setSelectedCustomer(customer); setIsEditing(false); }}
+                  onClick={async () => {
+                    setSelectedCustomer(customer);
+                    setIsEditing(false);
+                    try {
+                      const full = await fetch(`/api/customers/${customer.id}`).then(r => r.json());
+                      if (full?.id) setSelectedCustomer(full);
+                    } catch {}
+                  }}
                   className={`group relative bg-white p-4 rounded-2xl border transition-all cursor-pointer ${
                     selectedCustomer?.id === customer.id 
                       ? 'border-indigo-600 shadow-md ring-1 ring-indigo-600' 
