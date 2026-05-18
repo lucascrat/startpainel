@@ -8,14 +8,13 @@ import path from 'path';
  * SERVIÇO DE SUPORTE AUTOMATIZADO IBO PLAYER
  * Este modulo serve como base para automacoes de alta precisao com Gemini Vision.
  */
-export async function runIBOSupportAutomation(mac: string, deviceKey: string, playlistUrl: string) {
+export async function runIBOSupportAutomation(mac: string, deviceKey: string, playlistUrl: string, profileNum = 0) {
   let browser: Browser | null = null;
   const geminiKey = process.env.GEMINI_API_KEY;
   const sites = ['https://iboplayer.com/dashboard', 'https://iboiptv.com/dashboard'];
 
   try {
-    // Launch com as configuracoes stealth ja validadas
-    browser = await launchBrowser(false) as any;
+    browser = await launchBrowser(false, profileNum) as any;
     if (!browser) throw new Error('Falha ao iniciar navegador.');
     
     const page = await browser.newPage();
@@ -193,13 +192,13 @@ export async function runIBOSupportAutomation(mac: string, deviceKey: string, pl
  * REPARO AUTOMATIZADO IBO PLAYER (COM CHECK DE EXPIRAÇÃO)
  * Esta função verifica se o MAC está vencido no site antes de atualizar a lista.
  */
-export async function runIBORepairAutomation(mac: string, deviceKey: string, playlistUrl: string) {
+export async function runIBORepairAutomation(mac: string, deviceKey: string, playlistUrl: string, profileNum = 0) {
   let browser: Browser | null = null;
   const geminiKey = process.env.GEMINI_API_KEY;
   const sites = ['https://iboplayer.com/dashboard', 'https://iboiptv.com/dashboard'];
 
   try {
-    browser = await launchBrowser(false) as any;
+    browser = await launchBrowser(false, profileNum) as any;
     if (!browser) throw new Error('Falha ao iniciar navegador.');
     
     const page = await browser.newPage();

@@ -34,10 +34,12 @@ export interface RenewalResult {
   playlistUrl?: string;
 }
 
-export async function launchBrowser(headless = true): Promise<Browser> {
-  console.log(`[Puppeteer Stealth] Launching with: ${CHROME_PATH}`);
-  
-  const userDataDir = process.env.PUPPETEER_USER_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'PuppeteerProfile');
+export async function launchBrowser(headless = true, profileNum = 0): Promise<Browser> {
+  const suffix = profileNum > 0 ? `-${profileNum}` : '';
+  console.log(`[Puppeteer Stealth] Launching profile${suffix} with: ${CHROME_PATH}`);
+
+  const baseDir = process.env.PUPPETEER_USER_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'PuppeteerProfile');
+  const userDataDir = profileNum > 0 ? `${baseDir.replace(/(-\d+)?$/, '')}${suffix}` : baseDir;
   
   return puppeteer.launch({
     executablePath: CHROME_PATH,
@@ -97,7 +99,7 @@ export async function loginToPanel(page: Page): Promise<boolean> {
   }
 }
 
-export async function renewClientPuppeteer(username: string): Promise<RenewalResult> {
+export async function renewClientPuppeteer(username: string, profileNum = 0): Promise<RenewalResult> {
   if (!ADMIN_USER || !ADMIN_PASS) {
     return { success: false, message: 'Credenciais não configuradas' };
   }
@@ -105,8 +107,7 @@ export async function renewClientPuppeteer(username: string): Promise<RenewalRes
   let browser: Browser | null = null;
   try {
     console.log(`\n[Puppeteer] === Iniciando renovação para: ${username} ===`);
-    // Rodar com headless: false no notebook é MUITO mais seguro contra captcha
-    browser = await launchBrowser(false); 
+    browser = await launchBrowser(false, profileNum); 
     const page = await browser.newPage();
     
     const loggedIn = await loginToPanel(page);
@@ -192,10 +193,10 @@ async function performRenewalFlow(page: Page, clientUsername: string): Promise<R
 }
 
 
-export async function renewClientPuppeteerVisible(username: string): Promise<RenewalResult> {
+export async function renewClientPuppeteerVisible(username: string, profileNum = 0): Promise<RenewalResult> {
   let browser: Browser | null = null;
   try {
-    browser = await launchBrowser(false);
+    browser = await launchBrowser(false, profileNum);
     const page = await browser.newPage();
     const loggedIn = await loginToPanel(page);
     if (!loggedIn) return { success: false, message: 'Login falhou' };
@@ -207,11 +208,11 @@ export async function renewClientPuppeteerVisible(username: string): Promise<Ren
   }
 }
 
-export async function createClientAndGetPlaylist(username: string): Promise<RenewalResult> {
+export async function createClientAndGetPlaylist(username: string, profileNum = 0): Promise<RenewalResult> {
   let browser: Browser | null = null;
   try {
     console.log(`\n[Puppeteer] === Iniciando criação de cliente: ${username} ===`);
-    browser = await launchBrowser(false); // Visible to handle any unexpected popups or captchas
+    browser = await launchBrowser(false, profileNum);
     const page = await browser.newPage();
     
     const loggedIn = await loginToPanel(page);
@@ -415,11 +416,11 @@ export async function createClientAndGetPlaylist(username: string): Promise<Rene
  *   - activateUltraPlayer(u,m) -> activatePlayer(u,m,'Ultra Player')
  *   - activateFunPlay(u,m)     -> activatePlayer(u,m,'Fun Play')
  */
-export async function activatePlayer(username: string, mac: string, playerName: string): Promise<RenewalResult> {
+export async function activatePlayer(username: string, mac: string, playerName: string, profileNum = 0): Promise<RenewalResult> {
   let browser: Browser | null = null;
   try {
     console.log(`\n[Puppeteer] === Ativando "${playerName}" para: ${username} (MAC: ${mac}) ===`);
-    browser = await launchBrowser(false); // Visible for monitoring
+    browser = await launchBrowser(false, profileNum);
     const page = await browser.newPage();
     
     const loggedIn = await loginToPanel(page);
@@ -587,24 +588,24 @@ export async function activatePlayer(username: string, mac: string, playerName: 
 
 // Wrappers de compatibilidade (cada player tem seu nome no dropdown do CMS).
 // Se o painel mudar o nome exato no futuro, basta editar a string aqui.
-export async function activateUltraPlayer(username: string, mac: string): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'Ultra Player');
+export async function activateUltraPlayer(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Ultra Player', profileNum);
 }
 
-export async function activateFunPlay(username: string, mac: string): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'Fun Play');
+export async function activateFunPlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Fun Play', profileNum);
 }
 
-export async function activateLazerPlay(username: string, mac: string): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'Lazer Play');
+export async function activateLazerPlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'Lazer Play', profileNum);
 }
 
-export async function activateXCloud(username: string, mac: string): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'X-Cloud');
+export async function activateXCloud(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'X-Cloud', profileNum);
 }
 
-export async function activateSeePlay(username: string, mac: string): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'See Play');
+export async function activateSeePlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'See Play', profileNum);
 }
 
 /**
@@ -627,14 +628,14 @@ export async function createTestClientAndActivatePlayer(
   username: string,
   mac: string,
   playerName: string,
+  profileNum = 0,
 ): Promise<RenewalResult & { username?: string; playerName?: string; mac?: string }> {
   let browser: Browser | null = null;
-  // Username unico — se nao veio um, gera baseado em timestamp pra evitar colisao no CMS
   const finalUsername = (username && username.trim()) || `Teste${Date.now().toString().slice(-7)}`;
 
   try {
     console.log(`\n[Puppeteer] === Teste 6h: criando ${finalUsername} + ativando ${playerName} (MAC: ${mac}) ===`);
-    browser = await launchBrowser(false);
+    browser = await launchBrowser(false, profileNum);
     const page = await browser.newPage();
 
     if (!await loginToPanel(page)) {
