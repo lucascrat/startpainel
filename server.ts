@@ -2185,6 +2185,84 @@ app.get('/api/contacts', async (req, res) => {
   res.json(result.rows);
 });
 
+// Agenda — todos os contatos com flag de cliente cadastrado
+app.get('/api/contacts/all', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT c.*,
+        CASE WHEN cu.id IS NOT NULL THEN true ELSE false END AS is_customer
+      FROM contacts c
+      LEFT JOIN customers cu ON cu.whatsapp = SPLIT_PART(c.remote_jid, '@', 1)
+      ORDER BY c.last_message_time DESC NULLS LAST
+    `);
+    res.json(result.rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Broadcast — dispara uma mensagem para todos os contatos WhatsApp
+app.post('/api/contacts/broadcast', requireAdmin, async (req, res) => {
+  try {
+    const { message } = req.body || {};
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Mensagem obrigatória' });
+    }
+
+    const settings = await pool.query("SELECT key, value FROM settings WHERE key LIKE 'evolution_%'");
+    const config: any = {};
+    settings.rows.forEach((r: any) => config[r.key] = r.value);
+
+    if (!config.evolution_api_url || !config.evolution_token || !config.evolution_instance) {
+      return res.status(400).json({ error: 'Evolution API não configurada. Configure em Admin → Automações.' });
+    }
+
+    const evo = new EvolutionService({
+      apiUrl: config.evolution_api_url,
+      token: config.evolution_token,
+      instance: config.evolution_instance,
+    });
+
+    // Busca apenas contatos WhatsApp reais (sem web: e sem grupos)
+    const contactsRes = await pool.query(
+      `SELECT remote_jid, name FROM contacts
+       WHERE remote_jid NOT LIKE 'web:%'
+         AND remote_jid NOT LIKE '%@g.us'
+         AND remote_jid NOT LIKE '%@broadcast'
+       ORDER BY last_message_time DESC NULLS LAST`
+    );
+
+    const contacts = contactsRes.rows;
+    let sent = 0;
+    let failed = 0;
+
+    for (const contact of contacts) {
+      try {
+        await evo.sendMessage(contact.remote_jid, message.trim());
+        sent++;
+        // Pequena pausa para não derrubar o WhatsApp com flood
+        await new Promise(r => setTimeout(r, 800));
+      } catch {
+        failed++;
+      }
+    }
+
+    res.json({ sent, failed, total: contacts.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/messages', requireAdmin, async (req, res) => {
+  const { remoteJid } = req.query;
+  if (!remoteJid) return res.status(400).json({ error: 'remoteJid obrigatório' });
+  const result = await pool.query(
+    'SELECT * FROM messages WHERE remote_jid = $1 ORDER BY created_at ASC LIMIT 200',
+    [remoteJid]
+  );
+  res.json(result.rows);
+});
+
 app.get('/api/messages/:remoteJid', async (req, res) => {
   const result = await pool.query('SELECT * FROM messages WHERE remote_jid = $1 ORDER BY created_at ASC LIMIT 100', [req.params.remoteJid]);
   res.json(result.rows);
