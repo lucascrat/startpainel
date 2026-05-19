@@ -2308,6 +2308,17 @@ app.post('/api/panel/extend', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Alias com username na URL — usado pelo AdminPanel.tsx no botao de renovacao.
+app.post('/api/panel/renew/:username', requireAdmin, async (req, res) => {
+  try {
+    const { username } = req.params;
+    if (!username) return res.status(400).json({ error: 'username obrigatorio' });
+    const jobId = await enqueueJob('renew_client', { username });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/automations/ibo/run', async (req, res) => {
   try {
     const { mac, key, playlistUrl, targetUrl } = req.body;
