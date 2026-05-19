@@ -764,9 +764,13 @@ export default function AdminPanel() {
     if (!confirm(`Deseja renovar manualmente o cliente ${username}?`)) return;
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/panel/renew/${username}`, { method: 'POST' });
+      const response = await authFetch(`/api/panel/renew/${username}`, { method: 'POST' });
       const data = await response.json();
-      toast.error(data.message || data.error);
+      if (data?.success) {
+        toast.success(data.message || `Cliente ${username} renovado!`);
+      } else {
+        toast.error(data?.message || data?.error || 'Falha ao renovar');
+      }
     } catch (error: any) {
       toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
