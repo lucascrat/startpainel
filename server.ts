@@ -2309,12 +2309,36 @@ app.post('/api/panel/extend', async (req, res) => {
 });
 
 // Alias com username na URL — usado pelo AdminPanel.tsx no botao de renovacao.
+// Quando o job termina com sucesso, atualiza a data de vencimento e last_renewal
+// no nosso DB (StartPainel adiciona 1 mes — espelha a mesma logica).
 app.post('/api/panel/renew/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
     if (!username) return res.status(400).json({ error: 'username obrigatorio' });
     const jobId = await enqueueJob('renew_client', { username });
-    const result = await waitForJob(jobId);
+    const result: any = await waitForJob(jobId);
+
+    if (result?.success) {
+      try {
+        const cur = await pool.query('SELECT expiration_date FROM customers WHERE username = $1', [username]);
+        if (cur.rows.length > 0) {
+          const currentExp = cur.rows[0].expiration_date ? new Date(cur.rows[0].expiration_date) : new Date();
+          const base = currentExp > new Date() ? currentExp : new Date();
+          const newExp = new Date(base);
+          newExp.setMonth(newExp.getMonth() + 1);
+          const newExpStr = newExp.toISOString().split('T')[0];
+          await pool.query(
+            'UPDATE customers SET expiration_date = $1, last_renewal = NOW(), status = $2, updated_at = NOW() WHERE username = $3',
+            [newExpStr, 'active', username]
+          );
+          result.newExpirationDate = newExpStr;
+        }
+      } catch (dbErr: any) {
+        console.error('[renew] DB update falhou apos renew OK:', dbErr?.message);
+        result.warning = 'Renovado no painel, mas falhou ao atualizar data no DB local';
+      }
+    }
+
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
