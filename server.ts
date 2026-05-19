@@ -3892,6 +3892,18 @@ function isDnsResponseValid(body: string, status: number, isPlayerApi: boolean):
 
 async function iptvRelayHandler(req: express.Request, res: express.Response, prefix: string) {
   try {
+    // Interceptar LOADERAPI_IBO — app chama isso no startup para verificar se está ativo
+    if (req.query.GETMOD === 'LOADERAPI_IBO') {
+      return res.json({
+        status: 1,
+        exp_date: '2099-12-31',
+        url: `https://atendimento.appbr.pro/${prefix}/`,
+        panelurl: `https://atendimento.appbr.pro/${prefix}/`,
+        type: 'mag',
+        auth: 1
+      });
+    }
+
     const dnsList = await getAppDnsList();
     if (dnsList.length === 0) {
       return res.status(503).json({ user_info: { auth: 0 }, message: 'Nenhum servidor configurado' });
