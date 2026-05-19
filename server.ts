@@ -3861,8 +3861,28 @@ app.get('/api/app/config', async (req, res) => {
 
 // ---- Xtream API Relay (/iptv/*) ----
 // The Android APK points to https://atendimento.appbr.pro/iptv/
-// We try each configured DNS in order and return the first successful response.
-// All Xtream API calls include username+password, so we authenticate on every call.
+// Tries each DNS in order, skipping those that return auth failure or server errors.
+
+/** Returns true if the body/status indicates the DNS actually authenticated the user */
+function isDnsResponseValid(body: string, status: number, isPlayerApi: boolean): boolean {
+  if (status === 0 || status >= 500) return false;
+  if (!body || body.trim() === '') return false;
+  // Reject generic denial responses from IPTV servers
+  const lower = body.trim().toLowerCase();
+  if (lower === 'access denied.' || lower === 'access denied' || lower === 'not found' || lower === '404 not found') return false;
+  if (status === 401 || status === 403) return false;
+  // For player_api.php: require auth:1 — if auth:0 this user isn't on this provider, try next
+  if (isPlayerApi) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed?.user_info?.auth === 0 || parsed?.user_info?.auth === '0') return false;
+      if (parsed?.user_info?.auth === 1 || parsed?.user_info?.auth === '1') return true;
+    } catch {}
+    // If body isn't valid JSON player_api response, it's not a valid Xtream server
+    return false;
+  }
+  return true;
+}
 
 app.use('/iptv', async (req: express.Request, res: express.Response) => {
   try {
@@ -3873,28 +3893,45 @@ app.use('/iptv', async (req: express.Request, res: express.Response) => {
 
     const username = (req.query.username as string) || '';
     const relayPath = req.originalUrl.replace(/^\/iptv/, '') || '/';
+    const isPlayerApi = relayPath.includes('player_api.php');
 
-    // Try cached DNS first
+    // Try cached DNS first, then the rest in order
     let orderedDns = [...dnsList];
     const cached = username ? getCachedDns(username) : null;
     if (cached) {
       orderedDns = [cached, ...dnsList.filter(d => d !== cached)];
     }
 
+    let lastBody = '';
+    let lastStatus = 503;
+
     for (const dns of orderedDns) {
       const result = await fetchFromDns(dns, relayPath, 8000);
-      if (result.ok && result.body) {
-        // Cache working DNS for this user
-        if (username) dnsCache.set(username, { dns, ts: Date.now() });
+      lastBody = result.body;
+      lastStatus = result.status;
 
-        // Forward response
-        res.setHeader('Content-Type', 'application/json');
+      if (isDnsResponseValid(result.body, result.status, isPlayerApi)) {
+        // Cache this working DNS for the user (invalidate old cache if different)
+        if (username) {
+          if (cached && cached !== dns) dnsCache.delete(username);
+          dnsCache.set(username, { dns, ts: Date.now() });
+        }
+        res.setHeader('Content-Type', isPlayerApi ? 'application/json' : (result.body.startsWith('<') ? 'text/html' : 'application/json'));
         res.setHeader('X-Relay-Dns', dns);
         return res.send(result.body);
       }
+      // This DNS failed for this user — continue to next
     }
 
-    // All DNS failed
+    // All DNS tried and none authenticated this user
+    if (isPlayerApi) {
+      return res.status(401).json({ user_info: { auth: 0 }, message: 'Usuário não encontrado em nenhum servidor' });
+    }
+    // For non-login requests, return last response or 503
+    if (lastBody) {
+      res.setHeader('X-Relay-Dns', 'fallback');
+      return res.send(lastBody);
+    }
     res.status(503).json({ user_info: { auth: 0 }, message: 'Servidor temporariamente indisponivel' });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
