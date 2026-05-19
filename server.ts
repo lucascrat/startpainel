@@ -1325,9 +1325,11 @@ DNS PARA Apps de Portal (Smart STB, Smart UP, IPTV Portal, IVI, IVI Portal, SSIP
 
 EPG (guia de programação): http://u.startpainel.cc/epg
 
-APP ANDROID (Play Store — app próprio):
+APP ANDROID — MASTER PLAYER PRO (Play Store):
 https://play.google.com/store/apps/details?id=masterP.pro.com&hl=pt_BR
-→ Basta entrar com usuário e senha do cliente.
+→ Login por *usuário e senha* (NÃO usa MAC).
+→ Quando criar TESTE GRÁTIS (create_test_account): o sistema JÁ envia automaticamente ao cliente o usuário+senha junto com o link da Play Store. Você NÃO precisa repetir esses dados na conversa.
+→ Quando um CLIENTE ATIVO pedir pra usar no celular Android: mande o link da Play Store + lembre que ele entra com o MESMO usuário/senha da lista dele. Se ele não souber a senha, consulte os dados do cliente (estão injetados no contexto) e envie.
 
 APP iOS/iPhone (App Store — XCloud Mobile):
 https://apps.apple.com/br/app/xcloud-mobile/id6471106231
@@ -3227,9 +3229,14 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
 
         if (result?.success) {
           const finalUser = result.username || finalUsername || 'cliente';
+          const finalPass = result.password || '';
+          const passLine = finalPass ? `Senha: *${finalPass}*\n` : '';
+          const androidBlock = finalPass
+            ? `\n\n📱 *No celular Android* tambem da pra usar — baixa o app *Master Player Pro* na Play Store e entra com esse mesmo usuario e senha:\nhttps://play.google.com/store/apps/details?id=masterP.pro.com`
+            : '';
           await evo2.sendMessage(
             remoteJid,
-            `✅ *Seu teste esta ativo!*\n\nUsuario: *${finalUser}*\nApp: ${playerName}\nMAC: ${mac}\n\n⏰ Voce tem *6 horas* pra testar tudo. Abre o ${playerName} ai na sua tela e ja vai estar funcionando!\n\nGostou? Me chama aqui que ativo seu plano definitivo. 🎬`
+            `✅ *Seu teste esta ativo!*\n\nUsuario: *${finalUser}*\n${passLine}App ativado: ${playerName} (MAC ${mac})\n\n⏰ Voce tem *6 horas* pra testar tudo. Abre o ${playerName} ai na tua TV e ja vai estar funcionando!${androidBlock}\n\nGostou? Me chama aqui que ativo seu plano definitivo. 🎬`
           );
         } else {
           await evo2.sendMessage(
