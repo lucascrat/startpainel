@@ -3859,8 +3859,14 @@ app.get('/api/app/config', async (req, res) => {
   res.json({ version: 1, servers: list });
 });
 
-// ---- Xtream API Relay (/iptv/*) ----
-// The Android APK points to https://atendimento.appbr.pro/iptv/
+// ---- Xtream API Relay (/iptv/* e /ip/*) ----
+// /ip/ = alias de mesmo tamanho que a URL original do APK (patch direto no DEX, 33 chars)
+// /iptv/ = rota principal (usada em versões rebuild com apktool)
+// Ambas apontam para o mesmo relay que tenta cada DNS em ordem.
+
+// ---- Xtream API Relay (/iptv/* e /ip/*) ----
+// /ip/ é o alias de 33 chars usado no patch direto do DEX do APK original
+// /iptv/ é a rota para builds feitos via apktool
 // Tries each DNS in order, skipping those that return auth failure or server errors.
 
 /** Returns true if the body/status indicates the DNS actually authenticated the user */
@@ -3884,7 +3890,7 @@ function isDnsResponseValid(body: string, status: number, isPlayerApi: boolean):
   return true;
 }
 
-app.use('/iptv', async (req: express.Request, res: express.Response) => {
+async function iptvRelayHandler(req: express.Request, res: express.Response, prefix: string) {
   try {
     const dnsList = await getAppDnsList();
     if (dnsList.length === 0) {
@@ -3892,7 +3898,7 @@ app.use('/iptv', async (req: express.Request, res: express.Response) => {
     }
 
     const username = (req.query.username as string) || '';
-    const relayPath = req.originalUrl.replace(/^\/iptv/, '') || '/';
+    const relayPath = req.originalUrl.replace(new RegExp(`^\\/${prefix}`), '') || '/';
     const isPlayerApi = relayPath.includes('player_api.php');
 
     // Try cached DNS first, then the rest in order
@@ -3936,7 +3942,10 @@ app.use('/iptv', async (req: express.Request, res: express.Response) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
-});
+}
+
+app.use('/iptv', (req, res) => iptvRelayHandler(req, res, 'iptv'));
+app.use('/ip', (req, res) => iptvRelayHandler(req, res, 'ip'));
 
 // ---- APK Download ----
 app.get('/app/download', (req, res) => {
