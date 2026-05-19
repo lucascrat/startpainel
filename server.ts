@@ -16,6 +16,7 @@ import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
 import jwt from 'jsonwebtoken';
 import { supabaseStartflix, supabaseAuthAdmin } from './src/lib/supabaseStartflix.js';
+import * as warezApi from './src/services/wareztv-api.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,7 +118,24 @@ async function initDB(retries = 5) {
           updated_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE INDEX IF NOT EXISTS app_catalog_active_order_idx ON app_catalog(is_active, display_order)`,
-        `CREATE TABLE IF NOT EXISTS processed_app_payments (payment_id TEXT PRIMARY KEY, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+        `CREATE TABLE IF NOT EXISTS processed_app_payments (payment_id TEXT PRIMARY KEY, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        // Clientes do provedor Wareztv (Wplay) — gerenciados via API, sem Puppeteer
+        `CREATE TABLE IF NOT EXISTS wareztv_customers (
+          id SERIAL PRIMARY KEY,
+          warez_line_id INTEGER UNIQUE,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT,
+          whatsapp TEXT,
+          name TEXT,
+          notes TEXT,
+          exp_date DATE,
+          status TEXT DEFAULT 'active',
+          is_trial BOOLEAN DEFAULT false,
+          plan_name TEXT,
+          max_connections INTEGER DEFAULT 1,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )`
       ];
 
       for (const sql of tables) await client.query(sql);
@@ -1392,7 +1410,34 @@ REGRAS DE OURO:
 - Se ele quer IBO numa TV → soma R$ 10 por IBO em cima do valor da lista.
 - NUNCA cobre R$ 10 por apps que NÃO são IBO. Os outros são todos grátis.
 
-Quando gerar Pix com generate_pix, calcule o valor total certinho com base no que o cliente pediu. Se ficar em dúvida, pergunte antes de gerar.`;
+Quando gerar Pix com generate_pix, calcule o valor total certinho com base no que o cliente pediu. Se ficar em dúvida, pergunte antes de gerar.
+
+===== PROVEDOR WAREZTV (Wplay) =====
+
+Além do StartPainel, você também atende clientes do provedor *Wareztv* (plataforma Wplay).
+
+DIFERENÇAS DO WAREZTV:
+- Acesso por *usuário e senha* em todos os apps — NÃO usa MAC nem código de ativação.
+- Apps compatíveis: *Krator*, *Wplay*, *Nexus* (apps da plataforma Wplay).
+- Teste grátis de 6 horas disponível (tool wareztv_generate_test).
+- Plano mensal custa R$ 30/mês (Essencial — 2 telas IPTV + 1 P2P).
+
+TOOLS WAREZTV:
+- wareztv_generate_test(notes): gera teste 6h — retorna usuário e senha. Use quando cliente pede teste no Wareztv.
+- wareztv_create_client(name, whatsapp, days): cria cliente pago. Use após cliente fechar negócio.
+
+COMO RECONHECER CLIENTE WAREZTV:
+- Menciona "Wareztv", "Wplay", "Krator", "Nexus" ou pergunta sobre esses apps.
+- Se você não souber qual provedor o cliente usa, pergunte: "Você usa nossa lista StartPainel ou o sistema Wareztv?"
+
+CONFIGURAÇÃO DOS APPS WAREZTV:
+1. Baixe o app (Krator, Wplay ou Nexus) na loja de apps.
+2. Selecione "Entrar com usuário e senha" (ou "Login").
+3. Digite o *usuário* e a *senha* fornecidos.
+4. Pronto — aguarde carregar.
+
+IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas separados.`;
+
 
     let systemPrompt = DEFAULT_PROMPT;
     try {
@@ -1511,6 +1556,31 @@ Quando gerar Pix com generate_pix, calcule o valor total certinho com base no qu
                 mac: { type: "STRING", description: "MAC ou Código de Ativação." },
               },
               required: ["username", "player_name", "mac"],
+            },
+          },
+          // ===== WAREZTV (Wplay) =====
+          {
+            name: "wareztv_generate_test",
+            description: "Gera um TESTE GRATUITO de 6 horas no provedor Wareztv (Wplay). Retorna usuario e senha prontos. Use quando cliente Wareztv pede teste. Nao precisa de MAC — o acesso e por usuario e senha nos apps Krator, Nexus ou IPTV. Apos chamar, envie as credenciais ao cliente com instrucoes de como configurar o app.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                notes: { type: "STRING", description: "Nome ou observacao do cliente (ex: 'joao' ou 'whatsapp:5511999990000'). Opcional." },
+              },
+              required: [],
+            },
+          },
+          {
+            name: "wareztv_create_client",
+            description: "Cria um cliente PAGO no provedor Wareztv (Wplay) — consome 1 credito (1 mes). Use quando cliente fechou negocio e quer ativar o plano. Retorna usuario e senha para configurar nos apps.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                name: { type: "STRING", description: "Nome do cliente." },
+                whatsapp: { type: "STRING", description: "Numero WhatsApp do cliente com DDI (ex: 5511999990000)." },
+                days: { type: "NUMBER", description: "Dias do plano. Padrao: 30." },
+              },
+              required: ["name"],
             },
           },
         ]
@@ -2869,6 +2939,12 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'activate_player') {
           const ok = await handleActivatePlayerAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'wareztv_generate_test') {
+          const ok = await handleWareztvGenerateTest(remoteJid, call.args);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'wareztv_create_client') {
+          const ok = await handleWareztvCreateClient(remoteJid, call.args);
+          if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
@@ -3550,6 +3626,99 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
 }
 
 
+async function handleWareztvGenerateTest(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    const notes = args.notes || '';
+
+    await evo.sendMessage(remoteJid, '⏳ Gerando seu teste Wareztv... aguarda um segundo!');
+
+    const line = await warezApi.generateTest(notes);
+
+    // Persiste no DB local
+    await pool.query(
+      `INSERT INTO wareztv_customers (warez_line_id, username, password, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
+       VALUES ($1,$2,$3,$4,$5,'trial',true,'Teste 6h',1,NOW())
+       ON CONFLICT (warez_line_id) DO UPDATE SET password=EXCLUDED.password, updated_at=NOW()`,
+      [line.id, line.username, line.password, notes,
+       line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null]
+    );
+
+    const expFormatted = line.exp_date
+      ? new Date(line.exp_date).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+      : '6 horas';
+
+    await evo.sendMessage(remoteJid,
+      `✅ *Teste Wareztv ativado!*\n\n` +
+      `👤 Usuário: *${line.username}*\n` +
+      `🔑 Senha: *${line.password}*\n` +
+      `⏰ Válido até: ${expFormatted}\n\n` +
+      `📱 *Configure nos apps:*\n` +
+      `• *Krator* — o melhor pra TV e celular\n` +
+      `• *Wplay* — app oficial do provedor\n\n` +
+      `No app, escolha a opção *"Entrar com usuário e senha"* e use as credenciais acima.\n\n` +
+      `Gostou? Me chama que faço seu plano mensal! 🎬`
+    );
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool wareztv_generate_test] erro:', e?.message);
+    try {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Tive um problema ao gerar seu teste. Tenta de novo em instantes!');
+    } catch {}
+    return false;
+  }
+}
+
+async function handleWareztvCreateClient(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    const { name, whatsapp, days } = args;
+
+    await evo.sendMessage(remoteJid, '⏳ Criando seu acesso Wareztv...');
+
+    const line = await warezApi.createClient({
+      whatsapp: whatsapp || '',
+      notes: name || '',
+      days: days || 30,
+    });
+
+    await pool.query(
+      `INSERT INTO wareztv_customers (warez_line_id, username, password, name, whatsapp, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',false,$8,$9,NOW())
+       ON CONFLICT (warez_line_id) DO UPDATE SET password=EXCLUDED.password, name=EXCLUDED.name, exp_date=EXCLUDED.exp_date, updated_at=NOW()`,
+      [line.id, line.username, line.password, name || null, whatsapp || null, name || '',
+       line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null,
+       line.plan?.name || 'Essencial', line.max_connections || 2]
+    );
+
+    const expDate = line.exp_date
+      ? new Date(line.exp_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+      : `${days || 30} dias`;
+
+    await evo.sendMessage(remoteJid,
+      `🎉 *Acesso Wareztv criado com sucesso!*\n\n` +
+      `👤 Usuário: *${line.username}*\n` +
+      `🔑 Senha: *${line.password}*\n` +
+      `📅 Vencimento: ${expDate}\n\n` +
+      `📱 *Configure nos apps:*\n` +
+      `• *Krator* (recomendado para TVs)\n` +
+      `• *Wplay* (app oficial)\n\n` +
+      `Entre com usuário e senha. Qualquer dúvida é só me chamar! 🙌`
+    );
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool wareztv_create_client] erro:', e?.message);
+    try {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Tive um problema ao criar o acesso. Contate o suporte.');
+    } catch {}
+    return false;
+  }
+}
+
 async function checkAppPayments() {
   if (!supabaseStartflix) return;
   try {
@@ -3610,6 +3779,132 @@ async function checkAppPayments() {
     console.error(`[AutoRenewal] Erro ao verificar pagamentos:`, e.message);
   }
 }
+
+// ============================================================
+// WAREZTV (Wplay) — gerenciamento de clientes via API direta
+// ============================================================
+
+/** Sincroniza dados de uma WarezLine no nosso DB local */
+async function upsertWarezCustomer(line: any) {
+  const exp = line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null;
+  const status = line.status === 1 ? (line.is_trial ? 'trial' : 'active') : 'inactive';
+  await pool.query(
+    `INSERT INTO wareztv_customers (warez_line_id, username, password, whatsapp, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+     ON CONFLICT (warez_line_id) DO UPDATE SET
+       username=EXCLUDED.username, password=EXCLUDED.password, whatsapp=EXCLUDED.whatsapp,
+       notes=EXCLUDED.notes, exp_date=EXCLUDED.exp_date, status=EXCLUDED.status,
+       is_trial=EXCLUDED.is_trial, plan_name=EXCLUDED.plan_name, max_connections=EXCLUDED.max_connections,
+       updated_at=NOW()`,
+    [line.id, line.username, line.password, line.whatsapp || null, line.notes || '',
+     exp, status, line.is_trial === 1, line.plan?.name || null, line.max_connections || 1]
+  );
+}
+
+// Reseller info
+app.get('/api/wareztv/reseller', requireAdmin, async (req, res) => {
+  try {
+    const data = await warezApi.getReseller();
+    res.json(data);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// List clients (paginated, with sync)
+app.get('/api/wareztv/clients', requireAdmin, async (req, res) => {
+  try {
+    const page = Number(req.query.page || 1);
+    const perPage = Number(req.query.perPage || 100);
+    const isTrial = req.query.trial === '1';
+    const data = isTrial ? await warezApi.listTests(page, perPage) : await warezApi.listClients(page, perPage);
+    // Sync to local DB in background
+    if (data.items?.length) {
+      Promise.all(data.items.map(upsertWarezCustomer)).catch(e => console.error('[WarezSync]', e.message));
+    }
+    res.json(data);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Generate test (6 hours)
+app.post('/api/wareztv/test', requireAdmin, async (req, res) => {
+  try {
+    const { notes, whatsapp, name } = req.body;
+    const line = await warezApi.generateTest(notes || name || '');
+    await upsertWarezCustomer({ ...line, is_trial: 1 });
+    // Save whatsapp/name locally if provided
+    if (whatsapp || name) {
+      await pool.query(
+        `UPDATE wareztv_customers SET whatsapp=$1, name=$2, updated_at=NOW() WHERE warez_line_id=$3`,
+        [whatsapp || null, name || null, line.id]
+      );
+    }
+    res.json({ success: true, username: line.username, password: line.password, exp_date: line.exp_date, line_id: line.id });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Create paid client
+app.post('/api/wareztv/clients', requireAdmin, async (req, res) => {
+  try {
+    const { whatsapp, name, country, planId, days, notes } = req.body;
+    const line = await warezApi.createClient({ whatsapp, country, planId, days, notes: notes || name || '' });
+    await upsertWarezCustomer(line);
+    if (name) {
+      await pool.query(`UPDATE wareztv_customers SET name=$1, updated_at=NOW() WHERE warez_line_id=$2`, [name, line.id]);
+    }
+    res.json({ success: true, username: line.username, password: line.password, exp_date: line.exp_date, line_id: line.id });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Extend client
+app.post('/api/wareztv/clients/:lineId/extend', requireAdmin, async (req, res) => {
+  try {
+    const lineId = Number(req.params.lineId);
+    const credits = Number(req.body.credits || 1);
+    const line = await warezApi.extendClient(lineId, credits);
+    await upsertWarezCustomer(line);
+    res.json({ success: true, exp_date: line.exp_date });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Reset password
+app.post('/api/wareztv/clients/:lineId/reset-password', requireAdmin, async (req, res) => {
+  try {
+    const lineId = Number(req.params.lineId);
+    const line = await warezApi.resetPassword(lineId);
+    await upsertWarezCustomer(line);
+    res.json({ success: true, password: line.password });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete client
+app.delete('/api/wareztv/clients/:lineId', requireAdmin, async (req, res) => {
+  try {
+    const lineId = Number(req.params.lineId);
+    await warezApi.deleteClient(lineId);
+    await pool.query(`DELETE FROM wareztv_customers WHERE warez_line_id=$1`, [lineId]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Update local metadata (name, notes)
+app.patch('/api/wareztv/clients/:lineId', requireAdmin, async (req, res) => {
+  try {
+    const lineId = Number(req.params.lineId);
+    const { name, notes, whatsapp } = req.body;
+    await pool.query(
+      `UPDATE wareztv_customers SET name=COALESCE($1,name), notes=COALESCE($2,notes), whatsapp=COALESCE($3,whatsapp), updated_at=NOW() WHERE warez_line_id=$4`,
+      [name || null, notes || null, whatsapp || null, lineId]
+    );
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Get products/plans
+app.get('/api/wareztv/products', requireAdmin, async (req, res) => {
+  try {
+    const data = await warezApi.getProducts();
+    res.json(data);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

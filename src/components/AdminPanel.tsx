@@ -14,13 +14,24 @@ import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
   const [startflixPayments, setStartflixPayments] = useState<any[]>([]);
   const [isSyncingStartflix, setIsSyncingStartflix] = useState(false);
-  
+
+  // Wareztv state
+  const [warezClients, setWarezClients] = useState<any[]>([]);
+  const [warezTests, setWarezTests] = useState<any[]>([]);
+  const [warezReseller, setWarezReseller] = useState<any>(null);
+  const [warezTab, setWarezTab] = useState<'clients' | 'tests'>('clients');
+  const [warezLoading, setWarezLoading] = useState(false);
+  const [warezSearch, setWarezSearch] = useState('');
+  const [warezNewName, setWarezNewName] = useState('');
+  const [warezNewWhatsapp, setWarezNewWhatsapp] = useState('');
+  const [warezCreating, setWarezCreating] = useState(false);
+
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'expired'>('all');
@@ -114,6 +125,10 @@ export default function AdminPanel() {
       loadStartflixUsers();
       loadStartflixPayments();
     }
+    if (activeSubTab === 'wareztv') {
+      loadWarezClients();
+      loadWarezReseller();
+    }
   }, [activeSubTab]);
 
   const loadStartflixUsers = async () => {
@@ -130,6 +145,84 @@ export default function AdminPanel() {
       const data = await response.json();
       setStartflixPayments(Array.isArray(data) ? data : []);
     } catch (error) {}
+  };
+
+  const loadWarezClients = async () => {
+    setWarezLoading(true);
+    try {
+      const r = await authFetch('/api/wareztv/clients?perPage=200');
+      const d = await r.json();
+      setWarezClients(Array.isArray(d.items) ? d.items : []);
+      const rt = await authFetch('/api/wareztv/clients?trial=1&perPage=100');
+      const dt = await rt.json();
+      setWarezTests(Array.isArray(dt.items) ? dt.items : []);
+    } catch (e) { toast.error('Erro ao carregar clientes Wareztv'); }
+    finally { setWarezLoading(false); }
+  };
+
+  const loadWarezReseller = async () => {
+    try {
+      const r = await authFetch('/api/wareztv/reseller');
+      const d = await r.json();
+      setWarezReseller(d);
+    } catch {}
+  };
+
+  const handleWarezGenerateTest = async () => {
+    setWarezCreating(true);
+    try {
+      const r = await authFetch('/api/wareztv/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: warezNewName, whatsapp: warezNewWhatsapp }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        toast.success(`Teste criado! Usuário: ${d.username} | Senha: ${d.password}`);
+        loadWarezClients();
+        setWarezNewName(''); setWarezNewWhatsapp('');
+      } else { toast.error(d.error || 'Erro ao gerar teste'); }
+    } catch (e: any) { toast.error(e.message); }
+    finally { setWarezCreating(false); }
+  };
+
+  const handleWarezCreateClient = async () => {
+    if (!warezNewName) { toast.error('Informe o nome do cliente'); return; }
+    setWarezCreating(true);
+    try {
+      const r = await authFetch('/api/wareztv/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: warezNewName, whatsapp: warezNewWhatsapp, days: 30 }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        toast.success(`Cliente criado! Usuário: ${d.username} | Senha: ${d.password}`);
+        loadWarezClients();
+        setWarezNewName(''); setWarezNewWhatsapp('');
+      } else { toast.error(d.error || 'Erro ao criar cliente'); }
+    } catch (e: any) { toast.error(e.message); }
+    finally { setWarezCreating(false); }
+  };
+
+  const handleWarezDelete = async (lineId: number, username: string) => {
+    if (!confirm(`Deletar cliente Wareztv ${username}?`)) return;
+    try {
+      const r = await authFetch(`/api/wareztv/clients/${lineId}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) { toast.success(`${username} deletado`); loadWarezClients(); }
+      else toast.error(d.error || 'Erro ao deletar');
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleWarezResetPassword = async (lineId: number, username: string) => {
+    if (!confirm(`Resetar senha de ${username}?`)) return;
+    try {
+      const r = await authFetch(`/api/wareztv/clients/${lineId}/reset-password`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) { toast.success(`Nova senha de ${username}: ${d.password}`); loadWarezClients(); }
+      else toast.error(d.error || 'Erro ao resetar senha');
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const handleSyncStartflix = async (username: string, expirationDate: string) => {
@@ -852,13 +945,21 @@ export default function AdminPanel() {
               >
                 Dashboard IA
               </button>
-              <button 
+              <button
                 onClick={() => setActiveSubTab('startflix')}
                 className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                   activeSubTab === 'startflix' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
                 Startflix
+              </button>
+              <button
+                onClick={() => setActiveSubTab('wareztv')}
+                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                  activeSubTab === 'wareztv' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Wareztv
               </button>
             </div>
                      </div>
@@ -1636,6 +1737,172 @@ export default function AdminPanel() {
                   </div>
                 </div>
               );
+            case 'wareztv':
+              return (
+                <div className="space-y-4">
+                  {/* Header */}
+                  <div className="bg-gradient-to-br from-violet-900 to-purple-800 p-6 rounded-3xl border border-violet-700 shadow-xl">
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-400 to-purple-600 flex items-center justify-center text-white shadow-lg">
+                          <Zap size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-white font-black uppercase tracking-widest text-sm">Wareztv / Wplay</h3>
+                          <p className="text-violet-300 text-[10px] font-bold">
+                            {warezReseller ? `Créditos: ${warezReseller.credits} | Conta: ${warezReseller.username}` : 'Carregando...'}
+                          </p>
+                        </div>
+                      </div>
+                      <button onClick={loadWarezClients} className="p-3 bg-violet-800 text-violet-300 rounded-2xl hover:text-white transition-all border border-violet-700">
+                        <RefreshCw size={18} className={warezLoading ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Create / Generate Test */}
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 space-y-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Novo Cliente / Teste</h4>
+                    <div className="flex flex-wrap gap-3">
+                      <input
+                        type="text"
+                        placeholder="Nome do cliente"
+                        value={warezNewName}
+                        onChange={e => setWarezNewName(e.target.value)}
+                        className="flex-1 min-w-[140px] px-4 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-violet-400"
+                      />
+                      <input
+                        type="text"
+                        placeholder="WhatsApp (opcional)"
+                        value={warezNewWhatsapp}
+                        onChange={e => setWarezNewWhatsapp(e.target.value)}
+                        className="flex-1 min-w-[140px] px-4 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-violet-400"
+                      />
+                      <button
+                        onClick={handleWarezGenerateTest}
+                        disabled={warezCreating}
+                        className="px-5 py-2 bg-amber-500 text-white text-xs font-black uppercase tracking-widest rounded-xl hover:bg-amber-600 transition-all disabled:opacity-50"
+                      >
+                        {warezCreating ? '...' : 'Gerar Teste 6h'}
+                      </button>
+                      <button
+                        onClick={handleWarezCreateClient}
+                        disabled={warezCreating}
+                        className="px-5 py-2 bg-violet-600 text-white text-xs font-black uppercase tracking-widest rounded-xl hover:bg-violet-700 transition-all disabled:opacity-50"
+                      >
+                        {warezCreating ? '...' : 'Criar Cliente (30d)'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sub-tabs */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl w-fit">
+                    <button onClick={() => setWarezTab('clients')} className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${warezTab === 'clients' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                      Clientes ({warezClients.length})
+                    </button>
+                    <button onClick={() => setWarezTab('tests')} className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${warezTab === 'tests' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                      Testes ({warezTests.length})
+                    </button>
+                  </div>
+
+                  {/* Search */}
+                  <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2">
+                    <input
+                      type="text"
+                      placeholder="Buscar por usuário ou nome..."
+                      value={warezSearch}
+                      onChange={e => setWarezSearch(e.target.value)}
+                      className="w-full text-xs font-bold outline-none bg-transparent"
+                    />
+                  </div>
+
+                  {/* Table */}
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50">
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Usuário / Nome</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Credenciais</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Vencimento</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
+                            <th className="p-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(warezTab === 'clients' ? warezClients : warezTests)
+                            .filter(c => !warezSearch || c.username?.includes(warezSearch) || c.notes?.toLowerCase().includes(warezSearch.toLowerCase()))
+                            .map(client => {
+                              const expDate = client.exp_date ? new Date(client.exp_date) : null;
+                              const isExpired = expDate ? expDate < new Date() : false;
+                              return (
+                                <tr key={client.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-500">
+                                        <User size={14} />
+                                      </div>
+                                      <div>
+                                        <p className="text-[11px] font-black text-slate-800 font-mono">{client.username}</p>
+                                        {client.notes && <p className="text-[9px] text-slate-400 font-bold">{client.notes}</p>}
+                                        {client.whatsapp && <p className="text-[9px] text-slate-400">📱 {client.whatsapp}</p>}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <div className="bg-slate-100 p-2 rounded-xl border border-slate-200 space-y-1 font-mono text-[9px]">
+                                      <p className="text-slate-500">User: <span className="text-slate-800 font-bold">{client.username}</span></p>
+                                      <p className="text-slate-500">Pass: <span className="text-slate-800 font-bold">{client.password}</span></p>
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <p className={`text-[10px] font-black ${isExpired ? 'text-red-500' : 'text-slate-700'}`}>
+                                      {expDate ? expDate.toLocaleDateString('pt-BR') : '—'}
+                                    </p>
+                                    {client.plan && <p className="text-[9px] text-slate-400">{client.plan.name}</p>}
+                                  </td>
+                                  <td className="p-4 text-center">
+                                    <span className={`inline-block px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
+                                      client.status === 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'
+                                    }`}>
+                                      {client.status === 1 ? 'Ativo' : 'Inativo'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => handleWarezResetPassword(client.id, client.username)}
+                                        className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-all"
+                                        title="Resetar senha"
+                                      >
+                                        <Key size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleWarezDelete(client.id, client.username)}
+                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                        title="Deletar"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          {(warezTab === 'clients' ? warezClients : warezTests).length === 0 && !warezLoading && (
+                            <tr>
+                              <td colSpan={5} className="p-8 text-center text-xs text-slate-400 font-bold">
+                                {warezLoading ? 'Carregando...' : 'Nenhum cliente encontrado'}
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+
             default:
               return (
                 <div className="p-12 text-center bg-white rounded-3xl border border-slate-200">
