@@ -7,6 +7,7 @@
     "start": "tsx server.ts",
     "dev": "tsx server.ts",
     "worker": "tsx worker.ts",
+    "import-panel": "tsx import-clients-from-panel.ts",
     "build": "vite build",
     "preview": "vite preview",
     "expo": "expo start",

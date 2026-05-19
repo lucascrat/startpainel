@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
+import https from 'https';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -3779,6 +3781,132 @@ async function checkAppPayments() {
     console.error(`[AutoRenewal] Erro ao verificar pagamentos:`, e.message);
   }
 }
+
+// ============================================================
+// APP ANDROID — Master Player Pro
+// DNS relay + config management + APK download
+// ============================================================
+
+/** Fetch from a DNS server with timeout */
+async function fetchFromDns(dnsBase: string, path: string, timeoutMs = 6000): Promise<{ok: boolean; body: string; status: number}> {
+  return new Promise(resolve => {
+    const url = `${dnsBase.replace(/\/$/, '')}${path}`;
+    const mod = url.startsWith('https') ? https : http;
+    const t = setTimeout(() => resolve({ ok: false, body: '', status: 0 }), timeoutMs);
+    try {
+      const req = mod.get(url, { timeout: timeoutMs }, res => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => {
+          clearTimeout(t);
+          resolve({ ok: res.statusCode! < 500, body, status: res.statusCode! });
+        });
+      });
+      req.on('error', () => { clearTimeout(t); resolve({ ok: false, body: '', status: 0 }); });
+    } catch { clearTimeout(t); resolve({ ok: false, body: '', status: 0 }); }
+  });
+}
+
+/** Load DNS list from DB settings */
+async function getAppDnsList(): Promise<string[]> {
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'app_dns_list'");
+    if (r.rows[0]?.value) {
+      const parsed = JSON.parse(r.rows[0].value);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    }
+  } catch {}
+  return [];
+}
+
+// In-memory cache: username → working DNS (expires after 30 min)
+const dnsCache = new Map<string, { dns: string; ts: number }>();
+const DNS_CACHE_TTL = 30 * 60 * 1000;
+
+function getCachedDns(username: string): string | null {
+  const entry = dnsCache.get(username);
+  if (entry && Date.now() - entry.ts < DNS_CACHE_TTL) return entry.dns;
+  dnsCache.delete(username);
+  return null;
+}
+
+// ---- DNS Config Admin Routes ----
+
+app.get('/api/app/dns', requireAdmin, async (req, res) => {
+  try {
+    const list = await getAppDnsList();
+    res.json({ dns: list });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/app/dns', requireAdmin, async (req, res) => {
+  try {
+    const { dns } = req.body; // array of up to 5 URL strings
+    if (!Array.isArray(dns)) return res.status(400).json({ error: 'dns deve ser um array' });
+    const list = dns.filter((d: any) => typeof d === 'string' && d.trim()).slice(0, 5).map((d: string) => d.trim().replace(/\/$/, '') + '/');
+    await pool.query(
+      "INSERT INTO settings(key, value, updated_at) VALUES('app_dns_list', $1, NOW()) ON CONFLICT(key) DO UPDATE SET value=$1, updated_at=NOW()",
+      [JSON.stringify(list)]
+    );
+    dnsCache.clear(); // invalidate all cached DNS mappings
+    res.json({ success: true, dns: list });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Public endpoint — Android app checks this for config (optional, for future)
+app.get('/api/app/config', async (req, res) => {
+  const list = await getAppDnsList();
+  res.json({ version: 1, servers: list });
+});
+
+// ---- Xtream API Relay (/iptv/*) ----
+// The Android APK points to https://atendimento.appbr.pro/iptv/
+// We try each configured DNS in order and return the first successful response.
+// All Xtream API calls include username+password, so we authenticate on every call.
+
+app.use('/iptv', async (req: express.Request, res: express.Response) => {
+  try {
+    const dnsList = await getAppDnsList();
+    if (dnsList.length === 0) {
+      return res.status(503).json({ user_info: { auth: 0 }, message: 'Nenhum servidor configurado' });
+    }
+
+    const username = (req.query.username as string) || '';
+    const relayPath = req.originalUrl.replace(/^\/iptv/, '') || '/';
+
+    // Try cached DNS first
+    let orderedDns = [...dnsList];
+    const cached = username ? getCachedDns(username) : null;
+    if (cached) {
+      orderedDns = [cached, ...dnsList.filter(d => d !== cached)];
+    }
+
+    for (const dns of orderedDns) {
+      const result = await fetchFromDns(dns, relayPath, 8000);
+      if (result.ok && result.body) {
+        // Cache working DNS for this user
+        if (username) dnsCache.set(username, { dns, ts: Date.now() });
+
+        // Forward response
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('X-Relay-Dns', dns);
+        return res.send(result.body);
+      }
+    }
+
+    // All DNS failed
+    res.status(503).json({ user_info: { auth: 0 }, message: 'Servidor temporariamente indisponivel' });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- APK Download ----
+app.get('/app/download', (req, res) => {
+  const apkPath = path.join(process.cwd(), 'public', 'downloads', 'master-player-pro.apk');
+  if (!fs.existsSync(apkPath)) return res.status(404).send('APK não disponível');
+  res.download(apkPath, 'MasterPlayerPro.apk');
+});
 
 // ============================================================
 // WAREZTV (Wplay) — gerenciamento de clientes via API direta

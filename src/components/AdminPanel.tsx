@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
@@ -31,6 +31,11 @@ export default function AdminPanel() {
   const [warezNewName, setWarezNewName] = useState('');
   const [warezNewWhatsapp, setWarezNewWhatsapp] = useState('');
   const [warezCreating, setWarezCreating] = useState(false);
+
+  // App Android DNS state
+  const [appDnsList, setAppDnsList] = useState<string[]>(['', '', '', '', '']);
+  const [appDnsLoading, setAppDnsLoading] = useState(false);
+  const [appDnsSaving, setAppDnsSaving] = useState(false);
 
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -129,6 +134,9 @@ export default function AdminPanel() {
       loadWarezClients();
       loadWarezReseller();
     }
+    if (activeSubTab === 'android') {
+      loadAppDns();
+    }
   }, [activeSubTab]);
 
   const loadStartflixUsers = async () => {
@@ -223,6 +231,34 @@ export default function AdminPanel() {
       if (d.success) { toast.success(`Nova senha de ${username}: ${d.password}`); loadWarezClients(); }
       else toast.error(d.error || 'Erro ao resetar senha');
     } catch (e: any) { toast.error(e.message); }
+  };
+
+  const loadAppDns = async () => {
+    setAppDnsLoading(true);
+    try {
+      const r = await authFetch('/api/app/dns');
+      const d = await r.json();
+      const list: string[] = Array.isArray(d.dns) ? d.dns : [];
+      const padded = [...list, '', '', '', '', ''].slice(0, 5);
+      setAppDnsList(padded);
+    } catch { toast.error('Erro ao carregar DNS do app'); }
+    finally { setAppDnsLoading(false); }
+  };
+
+  const saveAppDns = async () => {
+    setAppDnsSaving(true);
+    try {
+      const dns = appDnsList.filter(d => d.trim() !== '');
+      const r = await authFetch('/api/app/dns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dns }),
+      });
+      const d = await r.json();
+      if (d.success) toast.success('DNS salvo com sucesso!');
+      else toast.error(d.error || 'Erro ao salvar DNS');
+    } catch (e: any) { toast.error(e.message); }
+    finally { setAppDnsSaving(false); }
   };
 
   const handleSyncStartflix = async (username: string, expirationDate: string) => {
@@ -960,6 +996,14 @@ export default function AdminPanel() {
                 }`}
               >
                 Wareztv
+              </button>
+              <button
+                onClick={() => setActiveSubTab('android')}
+                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                  activeSubTab === 'android' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                App Android
               </button>
             </div>
                      </div>
@@ -1898,6 +1942,128 @@ export default function AdminPanel() {
                           )}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                </div>
+              );
+
+            case 'android':
+              return (
+                <div className="space-y-6">
+                  {/* Header */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                        <Smartphone size={20} className="text-white" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-black text-slate-900">App Android — Master Player Pro</h2>
+                        <p className="text-xs text-slate-500 font-medium">Configure até 5 servidores DNS. O app tenta cada um em ordem até autenticar.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* DNS List */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-black text-slate-700 uppercase tracking-widest">Servidores DNS</h3>
+                      {appDnsLoading && <span className="text-xs text-slate-400 font-medium">Carregando...</span>}
+                    </div>
+                    <div className="space-y-3">
+                      {appDnsList.map((dns, idx) => (
+                        <div key={idx} className="flex items-center gap-3">
+                          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black flex items-center justify-center flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <input
+                            type="url"
+                            value={dns}
+                            onChange={e => {
+                              const next = [...appDnsList];
+                              next[idx] = e.target.value;
+                              setAppDnsList(next);
+                            }}
+                            placeholder={idx === 0 ? 'https://servidor-principal.com/iptv/' : `DNS ${idx + 1} (opcional)`}
+                            className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          />
+                          {dns && (
+                            <button
+                              onClick={() => {
+                                const next = [...appDnsList];
+                                next[idx] = '';
+                                setAppDnsList(next);
+                              }}
+                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                              title="Limpar"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-5 flex gap-3">
+                      <button
+                        onClick={saveAppDns}
+                        disabled={appDnsSaving}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white text-xs font-black rounded-xl transition-all disabled:opacity-50"
+                      >
+                        <Save size={14} />
+                        {appDnsSaving ? 'Salvando...' : 'Salvar DNS'}
+                      </button>
+                      <button
+                        onClick={loadAppDns}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-black rounded-xl transition-all"
+                      >
+                        <RefreshCw size={14} />
+                        Recarregar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* APK Download */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6">
+                    <h3 className="text-xs font-black text-slate-700 uppercase tracking-widest mb-4">APK do App</h3>
+                    <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0">
+                        <Smartphone size={22} className="text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-black text-slate-800">Master Player Pro</p>
+                        <p className="text-xs text-slate-500 font-medium">APK com relay configurado para <span className="font-bold text-slate-700">atendimento.appbr.pro/iptv/</span></p>
+                      </div>
+                      <a
+                        href="/app/download"
+                        download="MasterPlayerPro.apk"
+                        className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white text-xs font-black rounded-xl transition-all"
+                      >
+                        <ExternalLink size={14} />
+                        Baixar APK
+                      </a>
+                    </div>
+                    <p className="mt-3 text-[10px] text-slate-400 font-medium">
+                      O APK aponta para o nosso servidor relay. Configure os DNS acima para que o app redirecione para o provedor correto.
+                    </p>
+                  </div>
+
+                  {/* How it works */}
+                  <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-6 text-white">
+                    <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-slate-300">Como funciona</h3>
+                    <div className="space-y-3">
+                      {[
+                        { step: '1', text: 'Usuário abre o app e digita login + senha' },
+                        { step: '2', text: 'App envia requisição para atendimento.appbr.pro/iptv/' },
+                        { step: '3', text: 'Nosso servidor tenta autenticar no DNS 1, 2, 3... até obter resposta válida' },
+                        { step: '4', text: 'A resposta do provedor é repassada ao app transparentemente' },
+                        { step: '5', text: 'O DNS bem-sucedido fica em cache por 30 min para esse usuário' },
+                      ].map(({ step, text }) => (
+                        <div key={step} className="flex items-start gap-3">
+                          <span className="w-6 h-6 rounded-full bg-white/10 text-[10px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">
+                            {step}
+                          </span>
+                          <span className="text-xs text-slate-300 font-medium">{text}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
