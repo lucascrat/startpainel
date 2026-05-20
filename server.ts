@@ -3859,7 +3859,32 @@ app.get('/api/app/config', async (req, res) => {
   res.json({ version: 1, servers: list });
 });
 
-// App login — autentica cliente pelo painel e retorna o servidor Xtream resolvido
+/** Retorna a URL de streaming WarezTV cadastrada no painel */
+async function getWareztvStreamUrl(): Promise<string | null> {
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'wareztv_stream_url'");
+    return r.rows[0]?.value?.trim() || null;
+  } catch { return null; }
+}
+
+// Admin: GET/POST da URL de streaming WarezTV
+app.get('/api/app/dns/wareztv', requireAdmin, async (req, res) => {
+  res.json({ url: await getWareztvStreamUrl() });
+});
+
+app.post('/api/app/dns/wareztv', requireAdmin, async (req, res) => {
+  try {
+    let url = String(req.body?.url || '').trim().replace(/\/$/, '');
+    if (url) url += '/';
+    await pool.query(
+      "INSERT INTO settings(key, value, updated_at) VALUES('wareztv_stream_url', $1, NOW()) ON CONFLICT(key) DO UPDATE SET value=$1, updated_at=NOW()",
+      [url || null]
+    );
+    res.json({ success: true, url: url || null });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// App login — autentica cliente pelo painel (customers OU wareztv_customers)
 app.post('/api/app/login', async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
   if (!rateLimit(`app_login:${ip}`, 10, 60_000)) {
@@ -3874,65 +3899,70 @@ app.post('/api/app/login', async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
+    // 1. Tenta na tabela principal de clientes
+    const custResult = await pool.query(
       'SELECT id, username, password, name, dns, expiration_date, status FROM customers WHERE LOWER(username) = LOWER($1)',
       [username]
     );
-    const customer = result.rows[0];
 
-    // Mesmo erro genérico para usuário inexistente ou senha errada (evita enumeração)
-    if (!customer || customer.password !== password) {
-      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-    }
+    if (custResult.rows[0]) {
+      const c = custResult.rows[0];
+      if (c.password !== password) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
 
-    // Verifica expiração
-    if (customer.expiration_date) {
-      const exp = new Date(customer.expiration_date);
-      exp.setHours(23, 59, 59, 999);
-      if (exp < new Date()) {
-        return res.status(403).json({ error: 'Conta expirada. Contate o suporte.' });
+      if (c.expiration_date) {
+        const exp = new Date(c.expiration_date);
+        exp.setHours(23, 59, 59, 999);
+        if (exp < new Date()) return res.status(403).json({ error: 'Conta expirada. Contate o suporte.' });
       }
-    }
 
-    // Resolve o servidor: DNS do cliente → lista global → erro
-    const dnsCandidates: string[] = [];
-    if (customer.dns?.trim()) {
-      const d = customer.dns.trim().replace(/\/$/, '') + '/';
-      dnsCandidates.push(d);
-    }
-    const globalList = await getAppDnsList();
-    for (const d of globalList) {
-      if (!dnsCandidates.includes(d)) dnsCandidates.push(d);
-    }
-
-    if (dnsCandidates.length === 0) {
-      return res.status(503).json({ error: 'Nenhum servidor disponível. Contate o suporte.' });
-    }
-
-    // Tenta cada DNS até encontrar um que autentica este usuário
-    const authPath = `/player_api.php?username=${encodeURIComponent(customer.username)}&password=${encodeURIComponent(customer.password)}`;
-    let resolvedServer: string | null = null;
-
-    for (const dns of dnsCandidates) {
-      const r = await fetchFromDns(dns, authPath, 6000);
-      if (isDnsResponseValid(r.body, r.status, true)) {
-        resolvedServer = dns;
-        dnsCache.set(customer.username, { dns, ts: Date.now() });
-        break;
+      const dnsCandidates: string[] = [];
+      if (c.dns?.trim()) dnsCandidates.push(c.dns.trim().replace(/\/$/, '') + '/');
+      for (const d of await getAppDnsList()) {
+        if (!dnsCandidates.includes(d)) dnsCandidates.push(d);
       }
+      if (dnsCandidates.length === 0) return res.status(503).json({ error: 'Nenhum servidor disponível. Contate o suporte.' });
+
+      const authPath = `/player_api.php?username=${encodeURIComponent(c.username)}&password=${encodeURIComponent(c.password)}`;
+      let server = dnsCandidates[0];
+      for (const dns of dnsCandidates) {
+        const r = await fetchFromDns(dns, authPath, 6000);
+        if (isDnsResponseValid(r.body, r.status, true)) {
+          server = dns;
+          dnsCache.set(c.username, { dns, ts: Date.now() });
+          break;
+        }
+      }
+
+      return res.json({ ok: true, server, username: c.username, password: c.password, name: c.name, expires_at: c.expiration_date });
     }
 
-    // Se nenhum DNS respondeu com auth válido, usa o primeiro disponível mesmo assim
-    if (!resolvedServer) resolvedServer = dnsCandidates[0];
+    // 2. Tenta na tabela de clientes WarezTV
+    const warezResult = await pool.query(
+      'SELECT username, password, name, exp_date, status FROM wareztv_customers WHERE LOWER(username) = LOWER($1)',
+      [username]
+    );
 
-    res.json({
-      ok: true,
-      server: resolvedServer,
-      username: customer.username,
-      password: customer.password,
-      name: customer.name,
-      expires_at: customer.expiration_date,
-    });
+    if (warezResult.rows[0]) {
+      const w = warezResult.rows[0];
+      if (w.password !== password) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+
+      if (w.status === 'inactive') return res.status(403).json({ error: 'Conta inativa. Contate o suporte.' });
+
+      if (w.exp_date) {
+        const exp = new Date(w.exp_date);
+        exp.setHours(23, 59, 59, 999);
+        if (exp < new Date()) return res.status(403).json({ error: 'Conta expirada. Contate o suporte.' });
+      }
+
+      const warezUrl = await getWareztvStreamUrl();
+      if (!warezUrl) return res.status(503).json({ error: 'Servidor WarezTV não configurado. Contate o suporte.' });
+
+      return res.json({ ok: true, server: warezUrl, username: w.username, password: w.password, name: w.name, expires_at: w.exp_date });
+    }
+
+    // Usuário não encontrado em nenhuma tabela
+    return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+
   } catch (e: any) {
     console.error('[app/login]', e.message);
     res.status(500).json({ error: 'Erro interno. Tente novamente.' });
