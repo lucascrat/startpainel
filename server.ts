@@ -3859,31 +3859,6 @@ app.get('/api/app/config', async (req, res) => {
   res.json({ version: 1, servers: list });
 });
 
-/** Retorna a URL de streaming WarezTV cadastrada no painel */
-async function getWareztvStreamUrl(): Promise<string | null> {
-  try {
-    const r = await pool.query("SELECT value FROM settings WHERE key = 'wareztv_stream_url'");
-    return r.rows[0]?.value?.trim() || null;
-  } catch { return null; }
-}
-
-// Admin: GET/POST da URL de streaming WarezTV
-app.get('/api/app/dns/wareztv', requireAdmin, async (req, res) => {
-  res.json({ url: await getWareztvStreamUrl() });
-});
-
-app.post('/api/app/dns/wareztv', requireAdmin, async (req, res) => {
-  try {
-    let url = String(req.body?.url || '').trim().replace(/\/$/, '');
-    if (url) url += '/';
-    await pool.query(
-      "INSERT INTO settings(key, value, updated_at) VALUES('wareztv_stream_url', $1, NOW()) ON CONFLICT(key) DO UPDATE SET value=$1, updated_at=NOW()",
-      [url || null]
-    );
-    res.json({ success: true, url: url || null });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
-
 // App login — autentica cliente pelo painel (customers OU wareztv_customers)
 app.post('/api/app/login', async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
@@ -3954,10 +3929,17 @@ app.post('/api/app/login', async (req, res) => {
         if (exp < new Date()) return res.status(403).json({ error: 'Conta expirada. Contate o suporte.' });
       }
 
-      const warezUrl = await getWareztvStreamUrl();
-      if (!warezUrl) return res.status(503).json({ error: 'Servidor WarezTV não configurado. Contate o suporte.' });
+      const dnsCandidates = await getAppDnsList();
+      if (dnsCandidates.length === 0) return res.status(503).json({ error: 'Nenhum servidor disponível. Contate o suporte.' });
 
-      return res.json({ ok: true, server: warezUrl, username: w.username, password: w.password, name: w.name, expires_at: w.exp_date });
+      const authPath = `/player_api.php?username=${encodeURIComponent(w.username)}&password=${encodeURIComponent(w.password)}`;
+      let server = dnsCandidates[0];
+      for (const dns of dnsCandidates) {
+        const r = await fetchFromDns(dns, authPath, 6000);
+        if (isDnsResponseValid(r.body, r.status, true)) { server = dns; break; }
+      }
+
+      return res.json({ ok: true, server, username: w.username, password: w.password, name: w.name, expires_at: w.exp_date });
     }
 
     // Usuário não encontrado em nenhuma tabela

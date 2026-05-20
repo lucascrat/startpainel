@@ -37,10 +37,6 @@ export default function AdminPanel() {
   const [appDnsLoading, setAppDnsLoading] = useState(false);
   const [appDnsSaving, setAppDnsSaving] = useState(false);
 
-  // WarezTV stream URL state
-  const [wareztvUrl, setWareztvUrl] = useState('');
-  const [wareztvUrlLoading, setWareztvUrlLoading] = useState(false);
-  const [wareztvUrlSaving, setWareztvUrlSaving] = useState(false);
 
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -141,7 +137,6 @@ export default function AdminPanel() {
     }
     if (activeSubTab === 'android') {
       loadAppDns();
-      loadWareztvUrl();
     }
   }, [activeSubTab]);
 
@@ -265,31 +260,6 @@ export default function AdminPanel() {
       else toast.error(d.error || 'Erro ao salvar DNS');
     } catch (e: any) { toast.error(e.message); }
     finally { setAppDnsSaving(false); }
-  };
-
-  const loadWareztvUrl = async () => {
-    setWareztvUrlLoading(true);
-    try {
-      const r = await authFetch('/api/app/dns/wareztv');
-      const d = await r.json();
-      setWareztvUrl(d.url || '');
-    } catch { toast.error('Erro ao carregar URL WarezTV'); }
-    finally { setWareztvUrlLoading(false); }
-  };
-
-  const saveWareztvUrl = async () => {
-    setWareztvUrlSaving(true);
-    try {
-      const r = await authFetch('/api/app/dns/wareztv', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: wareztvUrl }),
-      });
-      const d = await r.json();
-      if (d.success) { toast.success('URL WarezTV salva!'); setWareztvUrl(d.url || ''); }
-      else toast.error(d.error || 'Erro ao salvar URL WarezTV');
-    } catch (e: any) { toast.error(e.message); }
-    finally { setWareztvUrlSaving(false); }
   };
 
   const handleSyncStartflix = async (username: string, expirationDate: string) => {
@@ -2044,43 +2014,6 @@ export default function AdminPanel() {
                       </button>
                       <button
                         onClick={loadAppDns}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-black rounded-xl transition-all"
-                      >
-                        <RefreshCw size={14} />
-                        Recarregar
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* WarezTV Stream URL */}
-                  <div className="bg-white rounded-3xl border border-slate-200 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="text-xs font-black text-slate-700 uppercase tracking-widest">Servidor WarezTV</h3>
-                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">URL base do servidor de streaming dos clientes WarezTV.</p>
-                      </div>
-                      {wareztvUrlLoading && <span className="text-xs text-slate-400 font-medium">Carregando...</span>}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="url"
-                        value={wareztvUrl}
-                        onChange={e => setWareztvUrl(e.target.value)}
-                        placeholder="https://servidor-wareztv.com/"
-                        className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div className="mt-4 flex gap-3">
-                      <button
-                        onClick={saveWareztvUrl}
-                        disabled={wareztvUrlSaving}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black rounded-xl transition-all disabled:opacity-50"
-                      >
-                        <Save size={14} />
-                        {wareztvUrlSaving ? 'Salvando...' : 'Salvar URL WarezTV'}
-                      </button>
-                      <button
-                        onClick={loadWareztvUrl}
                         className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-black rounded-xl transition-all"
                       >
                         <RefreshCw size={14} />
