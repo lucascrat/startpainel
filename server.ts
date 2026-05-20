@@ -3859,6 +3859,86 @@ app.get('/api/app/config', async (req, res) => {
   res.json({ version: 1, servers: list });
 });
 
+// App login — autentica cliente pelo painel e retorna o servidor Xtream resolvido
+app.post('/api/app/login', async (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  if (!rateLimit(`app_login:${ip}`, 10, 60_000)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 minuto.' });
+  }
+
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Informe usuário e senha.' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id, username, password, name, dns, expiration_date, status FROM customers WHERE LOWER(username) = LOWER($1)',
+      [username]
+    );
+    const customer = result.rows[0];
+
+    // Mesmo erro genérico para usuário inexistente ou senha errada (evita enumeração)
+    if (!customer || customer.password !== password) {
+      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    }
+
+    // Verifica expiração
+    if (customer.expiration_date) {
+      const exp = new Date(customer.expiration_date);
+      exp.setHours(23, 59, 59, 999);
+      if (exp < new Date()) {
+        return res.status(403).json({ error: 'Conta expirada. Contate o suporte.' });
+      }
+    }
+
+    // Resolve o servidor: DNS do cliente → lista global → erro
+    const dnsCandidates: string[] = [];
+    if (customer.dns?.trim()) {
+      const d = customer.dns.trim().replace(/\/$/, '') + '/';
+      dnsCandidates.push(d);
+    }
+    const globalList = await getAppDnsList();
+    for (const d of globalList) {
+      if (!dnsCandidates.includes(d)) dnsCandidates.push(d);
+    }
+
+    if (dnsCandidates.length === 0) {
+      return res.status(503).json({ error: 'Nenhum servidor disponível. Contate o suporte.' });
+    }
+
+    // Tenta cada DNS até encontrar um que autentica este usuário
+    const authPath = `/player_api.php?username=${encodeURIComponent(customer.username)}&password=${encodeURIComponent(customer.password)}`;
+    let resolvedServer: string | null = null;
+
+    for (const dns of dnsCandidates) {
+      const r = await fetchFromDns(dns, authPath, 6000);
+      if (isDnsResponseValid(r.body, r.status, true)) {
+        resolvedServer = dns;
+        dnsCache.set(customer.username, { dns, ts: Date.now() });
+        break;
+      }
+    }
+
+    // Se nenhum DNS respondeu com auth válido, usa o primeiro disponível mesmo assim
+    if (!resolvedServer) resolvedServer = dnsCandidates[0];
+
+    res.json({
+      ok: true,
+      server: resolvedServer,
+      username: customer.username,
+      password: customer.password,
+      name: customer.name,
+      expires_at: customer.expiration_date,
+    });
+  } catch (e: any) {
+    console.error('[app/login]', e.message);
+    res.status(500).json({ error: 'Erro interno. Tente novamente.' });
+  }
+});
+
 // ---- Xtream API Relay (/iptv/* e /ip/*) ----
 // /ip/ = alias de mesmo tamanho que a URL original do APK (patch direto no DEX, 33 chars)
 // /iptv/ = rota principal (usada em versões rebuild com apktool)
