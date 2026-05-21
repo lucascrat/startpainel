@@ -163,6 +163,15 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_last_summary_at TIMESTAMP`,
         // === PROVEDOR DO CLIENTE (startpainel | wareztv | outro) ===
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'startpainel'`,
+        // === MÚLTIPLOS NÚMEROS POR CLIENTE ===
+        `CREATE TABLE IF NOT EXISTS customer_phones (
+          id SERIAL PRIMARY KEY,
+          customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+          phone TEXT NOT NULL,
+          label TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS customer_phones_norm_idx ON customer_phones(regexp_replace(phone, '\\D', '', 'g'))`,
         // === DADOS WAREZTV (clientes unificados no banco geral) ===
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS warez_line_id INTEGER`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_trial BOOLEAN DEFAULT false`,
@@ -763,7 +772,8 @@ function sanitizeTestUsername(username: string): string {
 // Aceita ate 2 JIDs (remoteJid + remoteJidAlt) pra cobrir o caso do WhatsApp moderno
 // que envia mensagens com JID @lid (identidade mascarada) e o numero REAL fica no
 // campo remoteJidAlt. Sem o alt, clientes com @lid NUNCA seriam reconhecidos.
-async function findCustomerByJid(remoteJid: string, altJid?: string | null): Promise<any | null> {
+// Retorna { customer, phoneLabel } — phoneLabel é o nome do contato vinculado (ex: "Solange")
+async function findCustomerByJid(remoteJid: string, altJid?: string | null): Promise<{ customer: any; phoneLabel: string | null } | null> {
   // Tenta cada JID, e pra cada um as variacoes do '9' brasileiro
   const candidates: string[] = [];
   for (const jid of [remoteJid, altJid].filter(Boolean) as string[]) {
@@ -784,12 +794,28 @@ async function findCustomerByJid(remoteJid: string, altJid?: string | null): Pro
 
   if (candidates.length === 0) return null;
 
-  // Uma unica query usando ANY pra checar todos os candidatos de vez
+  // 1. Busca no campo principal customers.whatsapp
   const r = await pool.query(
     `SELECT * FROM customers WHERE regexp_replace(COALESCE(whatsapp,''), '\\D', '', 'g') = ANY($1::text[]) LIMIT 1`,
     [candidates]
   );
-  return r.rows[0] || null;
+  if (r.rows[0]) return { customer: r.rows[0], phoneLabel: null };
+
+  // 2. Busca em customer_phones (números secundários vinculados)
+  const r2 = await pool.query(
+    `SELECT cp.label, c.*
+     FROM customer_phones cp
+     JOIN customers c ON c.id = cp.customer_id
+     WHERE regexp_replace(cp.phone, '\\D', '', 'g') = ANY($1::text[])
+     LIMIT 1`,
+    [candidates]
+  );
+  if (r2.rows[0]) {
+    const { label, ...customer } = r2.rows[0];
+    return { customer, phoneLabel: label || null };
+  }
+
+  return null;
 }
 
 // Formata BRL pra exibir bonito ("R$ 49,90")
@@ -876,9 +902,9 @@ async function maybeRecomputeAISummary(remoteJid: string, kind: 'lead' | 'custom
 
     if (kind === 'customer') {
       // Para clientes: resolve pelo JID → pega o ID do cadastro
-      const cust = await findCustomerByJid(remoteJid, altJid);
-      if (!cust) return;
-      customerId = cust.id;
+      const found = await findCustomerByJid(remoteJid, altJid);
+      if (!found) return;
+      customerId = found.customer.id;
       const rec = await pool.query(
         `SELECT ai_last_summary_at FROM customers WHERE id = $1`, [customerId]
       );
@@ -987,7 +1013,9 @@ async function buildLeadContext(remoteJid: string): Promise<string> {
 }
 
 async function buildCustomerContext(remoteJid: string, pushName: string, altJid?: string | null): Promise<string> {
-  const customer = await findCustomerByJid(remoteJid, altJid);
+  const found = await findCustomerByJid(remoteJid, altJid);
+  const customer = found?.customer ?? null;
+  const phoneLabel = found?.phoneLabel ?? null;  // ex: "Solange" quando é número secundário
   // Pra exibir o numero, prefere o alt (real) se disponivel
   const phone = normalizePhone(altJid || remoteJid);
 
@@ -1090,14 +1118,20 @@ REGRAS:
 
   const firstName = customer.name?.split(' ')[0] || 'cliente';
 
+  // Quem está falando agora (pode ser um número secundário vinculado)
+  const quemFala = phoneLabel
+    ? `${phoneLabel} (número secundário vinculado ao cliente ${firstName})`
+    : firstName;
+
   let ctx = `\n\n=== CONTEXTO DO CLIENTE (CADASTRADO) ===
 ${situacaoEmoji} ${firstName} — ${situacao}
-
+${phoneLabel ? `\n⚠️ ATENÇÃO: quem está falando agora é *${phoneLabel}* (número vinculado ao cadastro de ${firstName}). Trate pelo nome "${phoneLabel}" nesta conversa.\n` : ''}
 DADOS PESSOAIS:
 - Nome completo: ${customer.name || '(nao cadastrado)'}
 - Primeiro nome: ${firstName}
+- Quem está falando: ${quemFala}
 - Username (login): ${customer.username}
-- WhatsApp: ${customer.whatsapp || '+' + phone}
+- WhatsApp principal: ${customer.whatsapp || '+' + phone}
 
 PLANO:
 - Status atual: ${customer.status}
@@ -2876,8 +2910,8 @@ app.post('/api/webhooks/evolution/:event?',
     // Usa void pra nao bloquear — buildLeadContext vai ler o resultado na proxima mensagem.
     void (async () => {
       try {
-        const existingCustomer = await findCustomerByJid(remoteJid, altJid);
-        if (!existingCustomer) {
+        const existingFound = await findCustomerByJid(remoteJid, altJid);
+        if (!existingFound) {
           await upsertLead(remoteJid, pushName, storedText, altJid);
         }
       } catch (e) { console.error('[Lead] upsertLead background error:', e); }
@@ -2979,8 +3013,8 @@ app.post('/api/webhooks/evolution/:event?',
     // Recomputa memoria IA em background (cooldown 30 min — nao bloqueia resposta).
     void (async () => {
       try {
-        const cust = await findCustomerByJid(remoteJid, altJid);
-        await maybeRecomputeAISummary(remoteJid, cust ? 'customer' : 'lead', altJid);
+        const custFound = await findCustomerByJid(remoteJid, altJid);
+        await maybeRecomputeAISummary(remoteJid, custFound ? 'customer' : 'lead', altJid);
       } catch (e) { console.error('[AI Memory] background recompute error:', e); }
     })();
 
@@ -3000,8 +3034,8 @@ async function handleRegisterPixReceipt(
     // Reusa findCustomerByJid que ja faz match com remoteJidAlt (@lid)
     let customerId: number | null = null;
     let customerUsername: string | null = null;
-    const c = await findCustomerByJid(remoteJid, altJid);
-    if (c) { customerId = c.id; customerUsername = c.username; }
+    const cf = await findCustomerByJid(remoteJid, altJid);
+    if (cf) { customerId = cf.customer.id; customerUsername = cf.customer.username; }
 
     let parsedDate: Date | null = null;
     try { const d = new Date(paidAt); if (!isNaN(d.getTime())) parsedDate = d; } catch {}
@@ -4173,6 +4207,56 @@ app.post('/api/wareztv/clients/:lineId/reset-password', requireAdmin, async (req
     const line = await warezApi.resetPassword(lineId);
     await upsertWarezCustomer(line);
     res.json({ success: true, password: line.password });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// MÚLTIPLOS NÚMEROS POR CLIENTE — CRUD
+// ============================================================
+
+// Listar números vinculados
+app.get('/api/admin/customers/:id/phones', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, phone, label, created_at FROM customer_phones WHERE customer_id=$1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Adicionar número vinculado
+app.post('/api/admin/customers/:id/phones', requireAdmin, async (req, res) => {
+  try {
+    const { phone, label } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Número obrigatório' });
+    // Verifica se já está vinculado a outro cliente
+    const norm = phone.replace(/\D/g, '');
+    const conflict = await pool.query(
+      `SELECT cp.id, c.name FROM customer_phones cp JOIN customers c ON c.id=cp.customer_id
+       WHERE regexp_replace(cp.phone,'\\D','','g')=$1 AND cp.customer_id!=$2`,
+      [norm, req.params.id]
+    );
+    if (conflict.rows[0]) {
+      return res.status(409).json({ error: `Número já vinculado ao cliente "${conflict.rows[0].name}"` });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO customer_phones (customer_id, phone, label) VALUES ($1,$2,$3)
+       ON CONFLICT DO NOTHING RETURNING *`,
+      [req.params.id, norm, label || null]
+    );
+    res.json(rows[0] || { error: 'Número já cadastrado' });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Remover número vinculado
+app.delete('/api/admin/customers/:id/phones/:phoneId', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM customer_phones WHERE id=$1 AND customer_id=$2`,
+      [req.params.phoneId, req.params.id]
+    );
+    res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

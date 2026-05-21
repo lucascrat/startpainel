@@ -7,7 +7,7 @@ import {
   Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle,
   Brain, Save, Key, QrCode, DollarSign, TrendingUp,
   Tv, Monitor, Globe, ChevronRight, Calendar, Info, X, Eye,
-  Cpu, ExternalLink, Zap, ArrowRightLeft
+  Cpu, ExternalLink, Zap, ArrowRightLeft, Phone, UserPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -98,6 +98,13 @@ export default function AdminPanel() {
 
   const [autoCreateCms, setAutoCreateCms] = useState(false);
   const [autoActivateStartflix, setAutoActivateStartflix] = useState(false);
+
+  // Números vinculados por cliente
+  const [phonesCustomer, setPhonesCustomer] = useState<Customer | null>(null);
+  const [phonesList, setPhonesList] = useState<{id: number; phone: string; label: string | null}[]>([]);
+  const [newPhone, setNewPhone] = useState('');
+  const [newPhoneLabel, setNewPhoneLabel] = useState('');
+  const [phonesLoading, setPhonesLoading] = useState(false);
 
   // Migração de provedor (Start → WarezTV)
   const [migrateCustomer, setMigrateCustomer] = useState<Customer | null>(null);
@@ -643,6 +650,40 @@ export default function AdminPanel() {
     } catch (error: any) {
       toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
+  };
+
+  const openPhonesModal = async (customer: Customer) => {
+    setPhonesCustomer(customer);
+    setNewPhone(''); setNewPhoneLabel('');
+    setPhonesLoading(true);
+    try {
+      const res = await authFetch(`/api/admin/customers/${customer.id}/phones`);
+      setPhonesList(await res.json());
+    } catch { setPhonesList([]); }
+    finally { setPhonesLoading(false); }
+  };
+
+  const handleAddPhone = async () => {
+    if (!phonesCustomer || !newPhone.trim()) return;
+    try {
+      const res = await authFetch(`/api/admin/customers/${phonesCustomer.id}/phones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: newPhone.trim(), label: newPhoneLabel.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error); return; }
+      setPhonesList(prev => [...prev, data]);
+      setNewPhone(''); setNewPhoneLabel('');
+      toast.success('Número vinculado!');
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleDeletePhone = async (phoneId: number) => {
+    if (!phonesCustomer) return;
+    await authFetch(`/api/admin/customers/${phonesCustomer.id}/phones/${phoneId}`, { method: 'DELETE' });
+    setPhonesList(prev => prev.filter(p => p.id !== phoneId));
+    toast.success('Número removido');
   };
 
   const handleMigrateToWarez = async () => {
@@ -1459,6 +1500,14 @@ export default function AdminPanel() {
                               title="Renovação Manual"
                             >
                               <RefreshCw size={16} />
+                            </button>
+                            {/* Números vinculados */}
+                            <button
+                              onClick={() => openPhonesModal(customer)}
+                              className="p-2.5 text-teal-500 bg-teal-50 rounded-xl hover:bg-teal-100 transition-all"
+                              title="Gerenciar números vinculados"
+                            >
+                              <Phone size={16} />
                             </button>
                             {/* Migrar para WarezTV — só para clientes não-WarezTV */}
                             {customer.provider !== 'wareztv' && (
@@ -2739,6 +2788,113 @@ export default function AdminPanel() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* ===================== MODAL: NÚMEROS VINCULADOS ===================== */}
+      <AnimatePresence>
+        {phonesCustomer && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget) setPhonesCustomer(null); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-teal-500 to-emerald-500 p-5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                    <Phone size={18} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-black text-sm">Números Vinculados</h3>
+                    <p className="text-teal-100 text-[10px] font-bold">{phonesCustomer.name || phonesCustomer.username}</p>
+                  </div>
+                </div>
+                <button onClick={() => setPhonesCustomer(null)} className="text-white/70 hover:text-white transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Número principal */}
+                <div className="bg-slate-50 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Número principal</p>
+                  <div className="flex items-center gap-2">
+                    <Phone size={12} className="text-slate-400" />
+                    <span className="text-sm font-black text-slate-700">{phonesCustomer.whatsapp || '—'}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 bg-teal-100 text-teal-700 rounded-full font-black">{phonesCustomer.name?.split(' ')[0] || 'Principal'}</span>
+                  </div>
+                </div>
+
+                {/* Lista de números secundários */}
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Números secundários</p>
+                  {phonesLoading ? (
+                    <div className="text-center py-4 text-slate-400 text-xs">Carregando...</div>
+                  ) : phonesList.length === 0 ? (
+                    <div className="text-center py-4 text-slate-300 text-xs">Nenhum número vinculado</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {phonesList.map(p => (
+                        <div key={p.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <Phone size={13} className="text-teal-500" />
+                            <div>
+                              <p className="text-xs font-black text-slate-800">{p.phone}</p>
+                              {p.label && <p className="text-[10px] text-slate-400 font-bold">{p.label}</p>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeletePhone(p.id)}
+                            className="p-1.5 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Adicionar número */}
+                <div className="border-t border-slate-100 pt-4 space-y-2">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Vincular novo número</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Ex: 85999991234"
+                      value={newPhone}
+                      onChange={e => setNewPhone(e.target.value)}
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-teal-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Nome (ex: Solange)"
+                      value={newPhoneLabel}
+                      onChange={e => setNewPhoneLabel(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAddPhone()}
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-teal-400"
+                    />
+                  </div>
+                  <button
+                    onClick={handleAddPhone}
+                    disabled={!newPhone.trim()}
+                    className="w-full bg-teal-500 text-white py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 hover:bg-teal-600 transition-all disabled:opacity-40"
+                  >
+                    <UserPlus size={14} /> Vincular número
+                  </button>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <p className="text-[10px] text-blue-600 font-bold">💡 Quando este número entrar em contato, a IA vai identificar automaticamente o cliente e tratar pelo nome vinculado.</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
