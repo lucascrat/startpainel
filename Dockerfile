@@ -7,7 +7,8 @@ FROM node:20-slim
 WORKDIR /app
 
 # Tini = PID 1 com SIGTERM correto. ca-certificates pra TLS sair.
-RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates \
+# curl = necessário pro health check do Coolify (que roda curl dentro do container).
+RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Retries do npm pra tolerar ECONNRESET do Coolify.
@@ -29,7 +30,7 @@ EXPOSE 3000
 # Healthcheck — Docker/Coolify só consideram o container "saudável" quando o
 # /api/health responde. start-period generoso (40s) cobre o boot do servidor.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["npm", "start"]
