@@ -4160,7 +4160,7 @@ app.get('/api/wareztv/clients', requireAdmin, async (req, res) => {
     const data = isTrial ? await warezApi.listTests(page, perPage) : await warezApi.listClients(page, perPage);
     // Sync to local DB in background
     if (data.items?.length) {
-      Promise.all(data.items.map(upsertWarezCustomer)).catch(e => console.error('[WarezSync]', e.message));
+      Promise.all(data.items.map((line) => upsertWarezCustomer(line))).catch(e => console.error('[WarezSync]', e.message));
     }
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

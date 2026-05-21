@@ -86,6 +86,8 @@ export default function CustomerMenu() {
   });
   // App do catálogo selecionado para o novo cliente
   const [newCustAppId, setNewCustAppId] = useState<number | null>(null);
+  // Números adicionais (esposa, familiar etc.) para vincular ao cadastrar
+  const [extraPhones, setExtraPhones] = useState<{ phone: string; label: string }[]>([]);
 
   // App Management States
   const [isAppModalOpen, setIsAppModalOpen] = useState(false);
@@ -310,6 +312,20 @@ export default function CustomerMenu() {
         const savedExpDate = created.expiration_date;
         const shouldSync = newCust.autoActivateStartflix;
         const savedAppId = newCustAppId;
+        const savedExtraPhones = extraPhones.filter(p => p.phone.trim());
+
+        // Vincula os números adicionais ao novo cliente
+        for (const ph of savedExtraPhones) {
+          try {
+            await authFetch(`/api/admin/customers/${created.id}/phones`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: ph.phone.trim(), label: ph.label.trim() || null }),
+            });
+          } catch (e) {
+            console.error('[CustomerMenu] Erro ao vincular número adicional:', e);
+          }
+        }
 
         await loadCustomers();
         setIsAdding(false);
@@ -327,6 +343,7 @@ export default function CustomerMenu() {
           autoActivateStartflix: false
         });
         setNewCustAppId(null);
+        setExtraPhones([]);
 
         // Registra o app do catálogo escolhido para este novo cliente
         if (savedAppId) {
@@ -961,13 +978,69 @@ export default function CustomerMenu() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Vencimento Inicial</label>
-                    <input 
+                    <input
                       type="date"
                       value={newCust.expiration_date}
                       onChange={e => setNewCust({...newCust, expiration_date: e.target.value})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                     />
                   </div>
+                </div>
+
+                {/* Números adicionais (esposa, familiares...) */}
+                <div className="space-y-2 bg-teal-50/40 border border-teal-100 rounded-2xl p-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                      <Phone size={11} /> Outros números deste cliente
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setExtraPhones([...extraPhones, { phone: '', label: '' }])}
+                      className="text-[9px] font-black text-teal-600 uppercase tracking-wider hover:text-teal-800 flex items-center gap-1"
+                    >
+                      <Plus size={12} /> Adicionar
+                    </button>
+                  </div>
+                  {extraPhones.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 font-bold ml-1">
+                      Ex: número da esposa, filho — a IA identifica cada um pelo nome.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {extraPhones.map((ph, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <input
+                            value={ph.phone}
+                            onChange={e => {
+                              const next = [...extraPhones];
+                              next[idx].phone = e.target.value;
+                              setExtraPhones(next);
+                            }}
+                            placeholder="85999991234"
+                            inputMode="tel"
+                            className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono focus:ring-2 focus:ring-teal-500 outline-none"
+                          />
+                          <input
+                            value={ph.label}
+                            onChange={e => {
+                              const next = [...extraPhones];
+                              next[idx].label = e.target.value;
+                              setExtraPhones(next);
+                            }}
+                            placeholder="Nome (ex: Solange)"
+                            className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-teal-500 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setExtraPhones(extraPhones.filter((_, i) => i !== idx))}
+                            className="p-2 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
