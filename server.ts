@@ -4176,6 +4176,72 @@ app.post('/api/wareztv/clients/:lineId/reset-password', requireAdmin, async (req
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Migrar cliente Start → WarezTV
+// Cria uma linha WarezTV e vincula ao cliente existente no banco unificado
+app.post('/api/admin/customers/:id/migrate-to-wareztv', requireAdmin, async (req, res) => {
+  try {
+    const customerId = Number(req.params.id);
+    const { days = 30, planId, whatsapp, name } = req.body;
+
+    // Busca cliente atual
+    const custRes = await pool.query('SELECT * FROM customers WHERE id=$1', [customerId]);
+    if (!custRes.rows[0]) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const customer = custRes.rows[0];
+
+    if (customer.provider === 'wareztv' && customer.warez_line_id) {
+      return res.status(400).json({ error: 'Cliente já é WarezTV (warez_line_id: ' + customer.warez_line_id + ')' });
+    }
+
+    // Cria linha na WarezTV
+    const line = await warezApi.createClient({
+      whatsapp: whatsapp || customer.whatsapp || '',
+      notes: name || customer.name || customer.username,
+      days: Number(days),
+      ...(planId ? { planId: Number(planId) } : {}),
+    });
+
+    const exp = line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null;
+
+    // Atualiza o cliente no banco unificado
+    await pool.query(
+      `UPDATE customers SET
+         provider        = 'wareztv',
+         warez_line_id   = $1,
+         username        = $2,
+         password        = $3,
+         expiration_date = $4,
+         status          = 'active',
+         is_trial        = false,
+         plan_name       = $5,
+         max_connections = $6,
+         updated_at      = NOW()
+       WHERE id = $7`,
+      [line.id, line.username, line.password, exp,
+       line.plan?.name || 'Essencial', line.max_connections || 2, customerId]
+    );
+
+    // Garante que também existe em wareztv_customers
+    await upsertWarezCustomer(
+      { ...line, name: name || customer.name, whatsapp: whatsapp || customer.whatsapp },
+      name || customer.name
+    );
+
+    console.log(`[MigraçãoWarez] Cliente id=${customerId} migrado → WarezTV linha ${line.id} (${line.username})`);
+
+    res.json({
+      success: true,
+      warez_username: line.username,
+      warez_password: line.password,
+      warez_line_id: line.id,
+      exp_date: line.exp_date,
+      plan: line.plan?.name || 'Essencial',
+    });
+  } catch (e: any) {
+    console.error('[MigraçãoWarez] Erro:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Delete client
 app.delete('/api/wareztv/clients/:lineId', requireAdmin, async (req, res) => {
   try {

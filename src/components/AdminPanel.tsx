@@ -3,11 +3,11 @@ import axios from 'axios';
 import { Customer, CustomerApp } from '../types';
 import { authFetch } from '../lib/auth';
 import { toast } from 'sonner';
-import { 
-  Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle, 
-  Brain, Save, Key, QrCode, DollarSign, TrendingUp, 
+import {
+  Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle,
+  Brain, Save, Key, QrCode, DollarSign, TrendingUp,
   Tv, Monitor, Globe, ChevronRight, Calendar, Info, X, Eye,
-  Cpu, ExternalLink, Zap
+  Cpu, ExternalLink, Zap, ArrowRightLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -98,6 +98,12 @@ export default function AdminPanel() {
 
   const [autoCreateCms, setAutoCreateCms] = useState(false);
   const [autoActivateStartflix, setAutoActivateStartflix] = useState(false);
+
+  // Migração de provedor (Start → WarezTV)
+  const [migrateCustomer, setMigrateCustomer] = useState<Customer | null>(null);
+  const [migrateDays, setMigrateDays] = useState('30');
+  const [migrateLoading, setMigrateLoading] = useState(false);
+  const [migrateResult, setMigrateResult] = useState<{warez_username: string; warez_password: string; exp_date: string; plan: string} | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
@@ -637,6 +643,28 @@ export default function AdminPanel() {
     } catch (error: any) {
       toast.error(`Erro: ${error.message}`);
     } finally { setIsLoading(false); }
+  };
+
+  const handleMigrateToWarez = async () => {
+    if (!migrateCustomer) return;
+    setMigrateLoading(true);
+    setMigrateResult(null);
+    try {
+      const res = await authFetch(`/api/admin/customers/${migrateCustomer.id}/migrate-to-wareztv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: Number(migrateDays), name: migrateCustomer.name, whatsapp: migrateCustomer.whatsapp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao migrar');
+      setMigrateResult(data);
+      toast.success(`✅ Cliente migrado para WarezTV!`);
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setMigrateLoading(false);
+    }
   };
 
   const handleDeleteCustomer = async (id: number) => {
@@ -1419,27 +1447,37 @@ export default function AdminPanel() {
                           </div>
 
                           <div className="flex items-center gap-2 pt-2 border-t border-slate-50">
-                            <button 
+                            <button
                               onClick={() => { setSelectedCustomerId(Number(customer.id)); setIsAppModalOpen(true); }}
                               className="flex-1 bg-indigo-50 text-indigo-600 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
                             >
                               <Tv size={14} /> Apps ({customer.apps?.length || 0})
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleManualRenewal(customer.username)}
                               className="p-2.5 text-amber-500 bg-amber-50 rounded-xl hover:bg-amber-100 transition-all"
                               title="Renovação Manual"
                             >
                               <RefreshCw size={16} />
                             </button>
-                            <button 
+                            {/* Migrar para WarezTV — só para clientes não-WarezTV */}
+                            {customer.provider !== 'wareztv' && (
+                              <button
+                                onClick={() => { setMigrateCustomer(customer); setMigrateResult(null); setMigrateDays('30'); }}
+                                className="p-2.5 text-orange-500 bg-orange-50 rounded-xl hover:bg-orange-100 transition-all"
+                                title="Migrar para WarezTV"
+                              >
+                                <ArrowRightLeft size={16} />
+                              </button>
+                            )}
+                            <button
                               onClick={() => handleSyncStartflix(customer.username, customer.expiration_date!)}
                               className="p-2.5 text-blue-500 bg-blue-50 rounded-xl hover:bg-blue-100 transition-all"
                               title="Sincronizar com Startflix (Supabase)"
                             >
                               <Zap size={16} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDeleteCustomer(Number(customer.id))}
                               className="p-2.5 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
                             >
@@ -2701,6 +2739,135 @@ export default function AdminPanel() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* ===================== MODAL: MIGRAR PARA WAREZTV ===================== */}
+      <AnimatePresence>
+        {migrateCustomer && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget && !migrateLoading) { setMigrateCustomer(null); setMigrateResult(null); } }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                    <ArrowRightLeft size={18} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-black text-sm">Migrar para WarezTV</h3>
+                    <p className="text-orange-100 text-[10px] font-bold">{migrateCustomer.name || migrateCustomer.username}</p>
+                  </div>
+                </div>
+                {!migrateLoading && !migrateResult && (
+                  <button onClick={() => setMigrateCustomer(null)} className="text-white/70 hover:text-white transition-colors">
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+
+              <div className="p-5 space-y-4">
+                {!migrateResult ? (
+                  <>
+                    {/* Info do cliente */}
+                    <div className="bg-slate-50 rounded-xl p-3 space-y-1">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cliente atual</p>
+                      <p className="text-sm font-black text-slate-800">{migrateCustomer.name || '—'} <span className="text-slate-400 font-normal">@{migrateCustomer.username}</span></p>
+                      <p className="text-xs text-slate-500">{migrateCustomer.whatsapp || 'Sem WhatsApp'}</p>
+                      <span className="inline-block text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest bg-indigo-100 text-indigo-600">
+                        {migrateCustomer.provider === 'startpainel' ? 'Start' : migrateCustomer.provider || 'Start'}
+                      </span>
+                    </div>
+
+                    {/* Prazo */}
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Prazo do plano WarezTV</label>
+                      <div className="flex gap-2 mt-1.5">
+                        {['30', '60', '90'].map(d => (
+                          <button
+                            key={d}
+                            onClick={() => setMigrateDays(d)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${migrateDays === d ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                          >
+                            {d} dias
+                          </button>
+                        ))}
+                        <input
+                          type="number"
+                          value={migrateDays}
+                          onChange={e => setMigrateDays(e.target.value)}
+                          className="w-20 px-2 py-2 bg-slate-100 rounded-xl text-xs font-black text-center outline-none border border-slate-200"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                      <p className="text-xs text-amber-700 font-bold">⚠️ Isso vai criar uma nova linha na WarezTV e atualizar as credenciais do cliente. O badge mudará para <span className="text-orange-600">WarezTV</span>.</p>
+                    </div>
+
+                    <button
+                      onClick={handleMigrateToWarez}
+                      disabled={migrateLoading}
+                      className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all disabled:opacity-50"
+                    >
+                      {migrateLoading ? (
+                        <><RefreshCw size={16} className="animate-spin" /> Criando linha WarezTV...</>
+                      ) : (
+                        <><ArrowRightLeft size={16} /> Confirmar Migração</>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  /* Resultado */
+                  <div className="space-y-3">
+                    <div className="text-center py-2">
+                      <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <CheckCircle size={24} className="text-emerald-500" />
+                      </div>
+                      <p className="font-black text-slate-800">Migração concluída!</p>
+                      <p className="text-xs text-slate-500">{migrateCustomer.name || migrateCustomer.username} agora é WarezTV</p>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Novas credenciais WarezTV</p>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-500">Usuário</span>
+                        <span className="text-xs font-black text-slate-800 font-mono">{migrateResult.warez_username}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-500">Senha</span>
+                        <span className="text-xs font-black text-slate-800 font-mono">{migrateResult.warez_password}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-500">Vencimento</span>
+                        <span className="text-xs font-black text-emerald-600">
+                          {migrateResult.exp_date ? new Date(migrateResult.exp_date).toLocaleDateString('pt-BR') : '—'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-500">Plano</span>
+                        <span className="text-xs font-bold text-orange-600">{migrateResult.plan}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => { setMigrateCustomer(null); setMigrateResult(null); }}
+                      className="w-full bg-slate-100 text-slate-700 py-2.5 rounded-xl font-black text-sm hover:bg-slate-200 transition-all"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
