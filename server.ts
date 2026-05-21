@@ -4187,6 +4187,100 @@ app.get('/api/wareztv/products', requireAdmin, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// AUTO-REGISTRO DO WEBHOOK DA EVOLUTION API NO STARTUP
+// Garante que mesmo após deploy/restart os webhooks cheguem.
+// ============================================================
+async function autoRegisterEvolutionWebhook() {
+  try {
+    await new Promise(r => setTimeout(r, 3000)); // aguarda DB estabilizar
+    const settings = await pool.query("SELECT key, value FROM settings WHERE key LIKE 'evolution_%'");
+    const cfg: any = {};
+    settings.rows.forEach((r: any) => cfg[r.key] = r.value);
+
+    if (!cfg.evolution_api_url || !cfg.evolution_token || !cfg.evolution_instance) {
+      console.log('[Webhook] Evolution API não configurada no DB — webhook auto-registro pulado.');
+      return;
+    }
+
+    const webhookUrl = `https://atendimento.appbr.pro/api/webhooks/evolution`;
+
+    // Evolution API v2 — registra webhook único (não by-events)
+    const res = await fetch(`${cfg.evolution_api_url}/webhook/set/${cfg.evolution_instance}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolution_token },
+      body: JSON.stringify({
+        url: webhookUrl,
+        webhook_by_events: false,
+        webhook_base64: false,
+        events: [
+          'MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE',
+          'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'SEND_MESSAGE',
+          'CONTACTS_UPSERT', 'CONTACTS_UPDATE',
+          'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_DELETE',
+        ],
+      }),
+    });
+
+    if (res.ok) {
+      console.log(`[Webhook] ✅ Webhook Evolution registrado com sucesso → ${webhookUrl}`);
+    } else {
+      const err = await res.text();
+      console.warn(`[Webhook] ⚠️ Falha ao registrar webhook Evolution (${res.status}): ${err.slice(0, 200)}`);
+    }
+
+    // Também verifica status da instância
+    const statusRes = await fetch(`${cfg.evolution_api_url}/instance/connectionState/${cfg.evolution_instance}`, {
+      headers: { 'apikey': cfg.evolution_token },
+    });
+    if (statusRes.ok) {
+      const statusData = await statusRes.json();
+      console.log(`[Webhook] Estado da instância Evolution: ${JSON.stringify(statusData)}`);
+    }
+  } catch (e: any) {
+    console.warn('[Webhook] Erro no auto-registro do webhook Evolution:', e.message);
+  }
+}
+
+// Endpoint admin para forçar re-registro manualmente
+app.post('/api/admin/evolution/setup-webhook', requireAdmin, async (req, res) => {
+  try {
+    const settings = await pool.query("SELECT key, value FROM settings WHERE key LIKE 'evolution_%'");
+    const cfg: any = {};
+    settings.rows.forEach((r: any) => cfg[r.key] = r.value);
+
+    if (!cfg.evolution_api_url || !cfg.evolution_token || !cfg.evolution_instance) {
+      return res.status(400).json({ error: 'Evolution API não configurada' });
+    }
+
+    const webhookUrl = `https://atendimento.appbr.pro/api/webhooks/evolution`;
+
+    const wRes = await fetch(`${cfg.evolution_api_url}/webhook/set/${cfg.evolution_instance}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolution_token },
+      body: JSON.stringify({
+        url: webhookUrl,
+        webhook_by_events: false,
+        webhook_base64: false,
+        events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+      }),
+    });
+
+    const statusRes = await fetch(`${cfg.evolution_api_url}/instance/connectionState/${cfg.evolution_instance}`, {
+      headers: { 'apikey': cfg.evolution_token },
+    });
+    const statusData = statusRes.ok ? await statusRes.json() : null;
+
+    res.json({
+      webhook: { ok: wRes.ok, status: wRes.status, body: await wRes.text() },
+      connection: statusData,
+      webhookUrl,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: true, host: '0.0.0.0' }, appType: 'spa' });
@@ -4203,6 +4297,8 @@ async function startServer() {
     // Inicia verificador de pagamentos do app (a cada 5 minutos)
     checkAppPayments();
     setInterval(checkAppPayments, 1000 * 60 * 5);
+    // Registra webhook da Evolution API automaticamente
+    autoRegisterEvolutionWebhook();
   });
 }
 startServer();
