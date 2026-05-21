@@ -37,6 +37,12 @@ export default function AdminPanel() {
   const [appDnsLoading, setAppDnsLoading] = useState(false);
   const [appDnsSaving, setAppDnsSaving] = useState(false);
 
+  // Catálogo de apps para seleção ao cadastrar cliente
+  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null}[]>([]);
+  const [selectedCatalogAppId, setSelectedCatalogAppId] = useState<number | null>(null);
+  // Catálogo selecionado no modal "Gerenciar Dispositivos"
+  const [modalCatalogAppId, setModalCatalogAppId] = useState<number | null>(null);
+
 
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -246,6 +252,14 @@ export default function AdminPanel() {
     finally { setAppDnsLoading(false); }
   };
 
+  const loadCatalogApps = async () => {
+    try {
+      const r = await fetch('/api/app-catalog');
+      const d = await r.json();
+      setCatalogApps(Array.isArray(d) ? d : []);
+    } catch {}
+  };
+
   const saveAppDns = async () => {
     setAppDnsSaving(true);
     try {
@@ -309,7 +323,8 @@ export default function AdminPanel() {
       loadFinancials(),
       loadAutomations(),
       loadStartflixUsers(),
-      loadStartflixPayments()
+      loadStartflixPayments(),
+      loadCatalogApps()
     ]);
   };
 
@@ -416,6 +431,7 @@ export default function AdminPanel() {
       const created = await response.json();
       const savedUsername = created.username;
       const savedExpDate = created.expiration_date;
+      const savedCatalogAppId = selectedCatalogAppId;
 
       setNewUsername('');
       setNewName('');
@@ -425,9 +441,30 @@ export default function AdminPanel() {
       setNewExpirationDate('');
       setNewLinesCount('1');
       setNewPlaylistUrl('');
+      setSelectedCatalogAppId(null);
       setStatusFilter('all');
       setSearchTerm('');
       loadCustomers();
+
+      // Registrar app do catálogo selecionado para o novo cliente
+      if (savedCatalogAppId) {
+        const catalogApp = catalogApps.find(a => a.id === savedCatalogAppId);
+        if (catalogApp) {
+          try {
+            await fetch(`/api/customers/${created.id}/apps`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                appName: catalogApp.name,
+                appModel: catalogApp.name,
+                accessType: 'mac_key',
+              })
+            });
+          } catch (e) {
+            console.error('[AdminPanel] Erro ao registrar app do catálogo:', e);
+          }
+        }
+      }
 
       if (autoCreateCms) {
         toast.success('Cliente local cadastrado! Iniciando automação no StartPainel para buscar a M3U...');
@@ -505,6 +542,7 @@ export default function AdminPanel() {
         setIosLink('');
         setIconUrl('');
         setAppSiteUrl('');
+        setModalCatalogAppId(null);
         loadCustomers();
         toast.success('App cadastrado com sucesso!');
       } else {
@@ -1103,6 +1141,59 @@ export default function AdminPanel() {
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">DNS / Provedor</label>
                         <input type="text" value={newDns} onChange={e => setNewDns(e.target.value)} placeholder="Ex: http://dns.com:8080" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
+
+                      {/* Seletor de app do catálogo */}
+                      {catalogApps.filter(a => a.is_active).length > 0 && (
+                        <div className="sm:col-span-2 lg:col-span-4 space-y-2">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                            App que o cliente vai usar
+                            {selectedCatalogAppId && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCatalogAppId(null)}
+                                className="ml-2 text-rose-400 hover:text-rose-600 normal-case tracking-normal font-bold"
+                              >
+                                Limpar seleção ×
+                              </button>
+                            )}
+                          </label>
+                          <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
+                            {catalogApps.filter(a => a.is_active).map(app => {
+                              const selected = selectedCatalogAppId === app.id;
+                              return (
+                                <button
+                                  key={app.id}
+                                  type="button"
+                                  onClick={() => setSelectedCatalogAppId(selected ? null : app.id)}
+                                  className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[76px] ${
+                                    selected
+                                      ? 'border-emerald-500 bg-emerald-50 shadow-sm shadow-emerald-100'
+                                      : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                                  }`}
+                                >
+                                  <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                    {app.app_image_url ? (
+                                      <img src={app.app_image_url} alt={app.name} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <Smartphone size={18} className="text-slate-300" />
+                                    )}
+                                  </div>
+                                  <span className="text-[9px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                                  {selected && (
+                                    <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider">✓ Selecionado</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {selectedCatalogAppId && (
+                            <p className="text-[10px] text-emerald-600 font-bold ml-1">
+                              App "{catalogApps.find(a => a.id === selectedCatalogAppId)?.name}" será registrado automaticamente para este cliente.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       <div className="sm:col-span-2 lg:col-span-4 flex items-center gap-2 mt-2">
                         <input 
                           type="checkbox" 
@@ -2391,22 +2482,79 @@ export default function AdminPanel() {
                       <input value={appName} onChange={e => setAppName(e.target.value)} placeholder="TV Sala" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
                     </div>
                     
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Modelo / Player</label>
-                      <select value={appModel} onChange={e => setAppModel(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-                        <option>IBO PLAYER</option>
-                        <option>IBO PRO</option>
-                        <option>ULTRA PLAYER</option>
-                        <option>FUN PLAY</option>
-                        <option>X-CLOUD</option>
-                        <option>QUICKPLAYER</option>
-                        <option>LAZER PLAYER</option>
-                        <option>SMARTERS PLAYER LITE</option>
-                        <option>XC PLAYER</option>
-                      </select>
+                    <div className="col-span-2 space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
+                        Modelo / Player
+                        {modalCatalogAppId && (
+                          <button
+                            type="button"
+                            onClick={() => { setModalCatalogAppId(null); setAppModel('IBO PLAYER'); setIconUrl(''); setAndroidLink(''); setIosLink(''); setAppSiteUrl(''); }}
+                            className="ml-2 text-rose-400 hover:text-rose-600 normal-case tracking-normal font-bold"
+                          >
+                            Limpar ×
+                          </button>
+                        )}
+                      </label>
+                      {catalogApps.filter(a => a.is_active).length > 0 ? (
+                        <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
+                          {catalogApps.filter(a => a.is_active).map(app => {
+                            const sel = modalCatalogAppId === app.id;
+                            return (
+                              <button
+                                key={app.id}
+                                type="button"
+                                onClick={() => {
+                                  setModalCatalogAppId(sel ? null : app.id);
+                                  if (!sel) {
+                                    setAppModel(app.name);
+                                    setIconUrl(app.app_image_url || '');
+                                    setAndroidLink(app.android_link || '');
+                                    setIosLink(app.ios_link || '');
+                                    setAppSiteUrl(app.web_link || '');
+                                    setIsTv(app.device_type === 'tv' || app.device_type === 'todos');
+                                  } else {
+                                    setAppModel('IBO PLAYER');
+                                    setIconUrl('');
+                                    setAndroidLink('');
+                                    setIosLink('');
+                                    setAppSiteUrl('');
+                                  }
+                                }}
+                                className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[72px] ${
+                                  sel
+                                    ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                                    : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                                }`}
+                              >
+                                <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                  {app.app_image_url ? (
+                                    <img src={app.app_image_url} alt={app.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <Tv size={16} className="text-slate-300" />
+                                  )}
+                                </div>
+                                <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                                {sel && <span className="text-[7px] font-black text-emerald-600 uppercase">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <select value={appModel} onChange={e => setAppModel(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                          <option>IBO PLAYER</option>
+                          <option>IBO PRO</option>
+                          <option>ULTRA PLAYER</option>
+                          <option>FUN PLAY</option>
+                          <option>X-CLOUD</option>
+                          <option>QUICKPLAYER</option>
+                          <option>LAZER PLAYER</option>
+                          <option>SMARTERS PLAYER LITE</option>
+                          <option>XC PLAYER</option>
+                        </select>
+                      )}
                     </div>
 
-                    <div className="space-y-1">
+                    <div className="col-span-2 space-y-1">
                       <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
                       <select value={accessType} onChange={e => setAccessType(e.target.value as any)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                         <option value="mac_key">MAC & Device Key</option>
@@ -2484,44 +2632,16 @@ export default function AdminPanel() {
                       <input value={appSiteUrl} onChange={e => setAppSiteUrl(e.target.value)} placeholder="https://..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none font-mono" />
                     </div>
 
-                    <div className="col-span-2 space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Ícone / Imagem do App</label>
-                      <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 overflow-hidden shadow-sm">
-                          {iconUrl ? <img src={iconUrl} className="w-full h-full object-cover" /> : <Tv size={20} />}
+                    {/* Preview do app selecionado do catálogo */}
+                    {modalCatalogAppId && iconUrl && (
+                      <div className="col-span-2 flex items-center gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                        <img src={iconUrl} className="w-10 h-10 rounded-lg object-cover border border-emerald-200 shrink-0" />
+                        <div>
+                          <p className="text-xs font-black text-emerald-800">{appModel}</p>
+                          <p className="text-[9px] text-emerald-600 font-bold">Imagem e links carregados do catálogo</p>
                         </div>
-                        <div className="flex-1">
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0])}
-                            className="text-[10px] text-slate-500 font-bold block w-full file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer" 
-                          />
-                          <p className="text-[8px] text-slate-400 font-bold uppercase mt-1">PNG, JPG ou GIF (Max 5MB)</p>
-                        </div>
-                        {iconUrl && (
-                          <button onClick={() => setIconUrl('')} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg">
-                            <Trash2 size={16} />
-                          </button>
-                        )}
                       </div>
-                    </div>
-
-                    <div className="col-span-2 grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Link Android</label>
-                        <input value={androidLink} onChange={e => setAndroidLink(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Link iPhone</label>
-                        <input value={iosLink} onChange={e => setIosLink(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
-                      </div>
-                    </div>
-
-                    <div className="col-span-2 space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase ml-1">URL da Imagem / Ícone do App</label>
-                      <input value={iconUrl} onChange={e => setIconUrl(e.target.value)} placeholder="https://..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none" />
-                    </div>
+                    )}
 
                     <div className="col-span-2 flex items-center gap-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
                       <p className="text-[9px] font-black text-slate-400 uppercase">Dispositivo:</p>
