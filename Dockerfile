@@ -26,5 +26,10 @@ RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
 
+# Healthcheck — Docker/Coolify só consideram o container "saudável" quando o
+# /api/health responde. start-period generoso (40s) cobre o boot do servidor.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["npm", "start"]

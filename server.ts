@@ -23,6 +23,19 @@ import * as warezApi from './src/services/wareztv-api.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ============================================================
+// HANDLERS GLOBAIS DE CRASH — evitam que o processo morra (e cause 502)
+// por causa de uma promessa rejeitada sem .catch (ex: fetch p/ Evolution,
+// WarezTV, Gemini falhando). Loga e mantém o servidor no ar.
+// ============================================================
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[CRASH-GUARD] Unhandled Rejection (servidor continua):', reason?.message || reason);
+});
+process.on('uncaughtException', (err: any) => {
+  console.error('[CRASH-GUARD] Uncaught Exception (servidor continua):', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+});
+
 // Database Connection Logic — DATABASE_URL deve vir das envs (sem fallback hardcoded por seguranca)
 const DB_URL = process.env.DATABASE_URL;
 if (!DB_URL) {
