@@ -31,6 +31,7 @@ export interface Customer {
   expiration_date?: string;
   last_renewal?: string;
   playlist_url?: string;
+  provider?: string; // 'startpainel' | 'wareztv' | 'outro'
   created_at?: any; // For Postgres compat
   createdAt?: any;
   apps?: CustomerApp[];

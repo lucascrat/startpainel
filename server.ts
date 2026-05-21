@@ -161,6 +161,8 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_summary TEXT`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_facts JSONB DEFAULT '{}'::jsonb`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_last_summary_at TIMESTAMP`,
+        // === PROVEDOR DO CLIENTE (startpainel | wareztv | outro) ===
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'startpainel'`,
         // === LEADS (potenciais clientes — capturados automaticamente) ===
         `CREATE TABLE IF NOT EXISTS leads (
           id SERIAL PRIMARY KEY,
@@ -1986,8 +1988,8 @@ app.get('/api/customers', async (req, res) => {
 
 app.post('/api/customers', async (req, res) => {
   try {
-    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid } = req.body;
-    
+    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid, provider } = req.body;
+
     const cleanPrice = (p: any) => {
       if (typeof p === 'number') return p;
       if (!p) return 0;
@@ -1995,9 +1997,9 @@ app.post('/api/customers', async (req, res) => {
     };
 
     const result = await pool.query(
-      `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [username, name, whatsapp, password, dns, cleanPrice(renewal_price) || 25, expiration_date, playlist_url, Number(lines_count) || 1, cleanPrice(cost_per_credit) || 0, cleanPrice(amount_paid) || 0]
+      `INSERT INTO customers (username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, lines_count, cost_per_credit, amount_paid, provider)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [username, name, whatsapp, password, dns, cleanPrice(renewal_price) || 25, expiration_date, playlist_url, Number(lines_count) || 1, cleanPrice(cost_per_credit) || 0, cleanPrice(amount_paid) || 0, provider || 'startpainel']
     );
     res.json(result.rows[0]);
   } catch (e: any) {
@@ -2008,7 +2010,7 @@ app.post('/api/customers', async (req, res) => {
 app.put('/api/customers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid } = req.body;
+    const { username, name, whatsapp, password, dns, renewal_price, expiration_date, playlist_url, status, lines_count, cost_per_credit, amount_paid, provider } = req.body;
 
     const cleanPrice = (p: any) => {
       if (typeof p === 'number') return p;
@@ -2036,9 +2038,10 @@ app.put('/api/customers/:id', async (req, res) => {
          amount_paid=COALESCE($10, amount_paid),
          password=COALESCE($11, password),
          dns=COALESCE($12, dns),
+         provider=COALESCE($13, provider),
          updated_at=NOW()
-       WHERE id=$13 RETURNING *`,
-      [username, name, whatsapp, renewal_price !== undefined ? cleanPrice(renewal_price) : null, expiration_date, playlist_url, status, lines_count !== undefined ? Number(lines_count) : null, cost_per_credit !== undefined ? cleanPrice(cost_per_credit) : null, amount_paid !== undefined ? cleanPrice(amount_paid) : null, password, dns, id]
+       WHERE id=$14 RETURNING *`,
+      [username, name, whatsapp, renewal_price !== undefined ? cleanPrice(renewal_price) : null, expiration_date, playlist_url, status, lines_count !== undefined ? Number(lines_count) : null, cost_per_credit !== undefined ? cleanPrice(cost_per_credit) : null, amount_paid !== undefined ? cleanPrice(amount_paid) : null, password, dns, provider || null, id]
     );
   
   const updated = result.rows[0];

@@ -58,6 +58,7 @@ export default function AdminPanel() {
   const [newPlaylistUrl, setNewPlaylistUrl] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newDns, setNewDns] = useState('');
+  const [newProvider, setNewProvider] = useState('startpainel');
   
   // App Management
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
@@ -419,7 +420,8 @@ export default function AdminPanel() {
           renewalPrice: parseFloat(newRenewalPrice),
           linesCount: parseInt(newLinesCount),
           costPerCredit: parseFloat(defaultCostPerLine),
-          expirationDate: newExpirationDate || null
+          expirationDate: newExpirationDate || null,
+          provider: newProvider
         })
       });
       
@@ -441,6 +443,7 @@ export default function AdminPanel() {
       setNewExpirationDate('');
       setNewLinesCount('1');
       setNewPlaylistUrl('');
+      setNewProvider('startpainel');
       setSelectedCatalogAppId(null);
       setStatusFilter('all');
       setSearchTerm('');
@@ -1142,6 +1145,29 @@ export default function AdminPanel() {
                         <input type="text" value={newDns} onChange={e => setNewDns(e.target.value)} placeholder="Ex: http://dns.com:8080" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
 
+                      {/* Provedor do cliente */}
+                      <div className="sm:col-span-2 lg:col-span-4 space-y-2">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Provedor</label>
+                        <div className="flex gap-2">
+                          {[
+                            { value: 'startpainel', label: 'Start',   active: 'border-indigo-500 bg-indigo-50 text-indigo-700' },
+                            { value: 'wareztv',     label: 'WarezTV', active: 'border-orange-400 bg-orange-50 text-orange-700' },
+                            { value: 'outro',       label: 'Outro',   active: 'border-slate-400 bg-slate-100 text-slate-700'   },
+                          ].map(p => (
+                            <button
+                              key={p.value}
+                              type="button"
+                              onClick={() => setNewProvider(p.value)}
+                              className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all ${
+                                newProvider === p.value ? p.active : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300'
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       {/* Seletor de app do catálogo */}
                       {catalogApps.filter(a => a.is_active).length > 0 && (
                         <div className="sm:col-span-2 lg:col-span-4 space-y-2">
@@ -1368,11 +1394,18 @@ export default function AdminPanel() {
                                 <User size={20} />
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <h4 className="font-black text-slate-800 text-sm tracking-tight">{customer.name || customer.username}</h4>
                                   {customer.status === 'teste' && (
                                     <span className="text-[8px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest border border-amber-200">Teste</span>
                                   )}
+                                  {/* Badge de provedor */}
+                                  {(() => {
+                                    const badges: Record<string, string> = { startpainel: 'bg-indigo-100 text-indigo-600', wareztv: 'bg-orange-100 text-orange-600', outro: 'bg-slate-100 text-slate-500' };
+                                    const labels: Record<string, string> = { startpainel: 'Start', wareztv: 'WarezTV', outro: 'Outro' };
+                                    const p = customer.provider || 'startpainel';
+                                    return <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest ${badges[p] || 'bg-slate-100 text-slate-500'}`}>{labels[p] || p}</span>;
+                                  })()}
                                 </div>
                                 <p className="text-[10px] text-slate-400 font-bold">@{customer.username} • {customer.whatsapp || 'Sem WhatsApp'}</p>
                               </div>
