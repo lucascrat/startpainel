@@ -73,11 +73,16 @@ export default function CustomerMenu() {
     dns: '',
     autoActivateStartflix: false
   });
+  // App do catálogo selecionado para o novo cliente
+  const [newCustAppId, setNewCustAppId] = useState<number | null>(null);
 
   // App Management States
   const [isAppModalOpen, setIsAppModalOpen] = useState(false);
   const [viewingApp, setViewingApp] = useState<CustomerApp | null>(null);
   const [isEditingApp, setIsEditingApp] = useState(false);
+  // Catálogo de apps (com imagens) para seleção rápida
+  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null}[]>([]);
+  const [selectedModalAppId, setSelectedModalAppId] = useState<number | null>(null);
   const [appForm, setAppForm] = useState({
     appName: '',
     appModel: 'IBO PLAYER',
@@ -101,6 +106,7 @@ export default function CustomerMenu() {
 
   useEffect(() => {
     loadCustomers();
+    loadCatalogApps();
   }, []);
 
   const loadCustomers = async () => {
@@ -115,6 +121,14 @@ export default function CustomerMenu() {
       setIsLoading(false);
       setLoading(false);
     }
+  };
+
+  const loadCatalogApps = async () => {
+    try {
+      const r = await fetch('/api/app-catalog');
+      const d = await r.json();
+      setCatalogApps(Array.isArray(d) ? d : []);
+    } catch {}
   };
 
   const handleSyncStartflix = async (username: string, expirationDate: string) => {
@@ -212,6 +226,7 @@ export default function CustomerMenu() {
           providerUrl: '', appHost: '', androidLink: '', iosLink: '', iconUrl: '',
           appSiteUrl: '', isTv: true
         });
+        setSelectedModalAppId(null);
         loadCustomers();
         const updated = await fetch(`/api/customers/${selectedCustomer.id}`).then(r => r.json());
         setSelectedCustomer(updated);
@@ -283,6 +298,7 @@ export default function CustomerMenu() {
         const savedUsername = created.username;
         const savedExpDate = created.expiration_date;
         const shouldSync = newCust.autoActivateStartflix;
+        const savedAppId = newCustAppId;
 
         await loadCustomers();
         setIsAdding(false);
@@ -298,6 +314,32 @@ export default function CustomerMenu() {
           dns: '',
           autoActivateStartflix: false
         });
+        setNewCustAppId(null);
+
+        // Registra o app do catálogo escolhido para este novo cliente
+        if (savedAppId) {
+          const catApp = catalogApps.find(a => a.id === savedAppId);
+          if (catApp) {
+            try {
+              await fetch(`/api/customers/${created.id}/apps`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  appName: catApp.name,
+                  appModel: catApp.name,
+                  accessType: 'mac_key',
+                  iconUrl: catApp.app_image_url || '',
+                  androidLink: catApp.android_link || '',
+                  iosLink: catApp.ios_link || '',
+                  appSiteUrl: catApp.web_link || '',
+                  isTv: catApp.device_type === 'tv' || catApp.device_type === 'todos',
+                })
+              });
+            } catch (e) {
+              console.error('[CustomerMenu] Erro ao registrar app do catálogo:', e);
+            }
+          }
+        }
 
         if (shouldSync) {
           handleSyncStartflix(savedUsername, savedExpDate);
@@ -967,8 +1009,53 @@ export default function CustomerMenu() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-mono focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                     />
                   </div>
+                  {/* Seletor de app do catálogo para o novo cliente */}
+                  {catalogApps.filter(a => a.is_active).length > 0 && (
+                    <div className="col-span-2 space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        App que o cliente vai usar
+                        {newCustAppId && (
+                          <button
+                            type="button"
+                            onClick={() => setNewCustAppId(null)}
+                            className="ml-2 text-rose-400 hover:text-rose-600 normal-case tracking-normal font-bold"
+                          >
+                            Limpar ×
+                          </button>
+                        )}
+                      </label>
+                      <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
+                        {catalogApps.filter(a => a.is_active).map(app => {
+                          const sel = newCustAppId === app.id;
+                          return (
+                            <button
+                              key={app.id}
+                              type="button"
+                              onClick={() => setNewCustAppId(sel ? null : app.id)}
+                              className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[72px] ${
+                                sel
+                                  ? 'border-indigo-500 bg-indigo-50 shadow-sm'
+                                  : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                              }`}
+                            >
+                              <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                {app.app_image_url ? (
+                                  <img src={app.app_image_url} alt={app.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Tv size={16} className="text-slate-300" />
+                                )}
+                              </div>
+                              <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                              {sel && <span className="text-[7px] font-black text-indigo-600 uppercase">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="col-span-2 flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100">
-                    <input 
+                    <input
                       type="checkbox"
                       id="menuAutoStartflix"
                       checked={newCust.autoActivateStartflix}
@@ -1176,20 +1263,77 @@ export default function CustomerMenu() {
                         <input value={appForm.appName} onChange={e => setAppForm({...appForm, appName: e.target.value})} placeholder="TV Sala" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
                       </div>
                       
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Modelo / Player</label>
-                        <select value={appForm.appModel} onChange={e => setAppForm({...appForm, appModel: e.target.value})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-                          <option>IBO PLAYER</option>
-                          <option>IBO PRO</option>
-                          <option>ULTRA PLAYER</option>
-                          <option>FUN PLAY</option>
-                          <option>QUICKPLAYER</option>
-                          <option>LAZER PLAYER</option>
-                          <option>SMARTERS PLAYER LITE</option>
-                        </select>
+                      <div className="col-span-2 space-y-2">
+                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">
+                          Modelo / Player
+                          {selectedModalAppId && (
+                            <button
+                              type="button"
+                              onClick={() => { setSelectedModalAppId(null); setAppForm({...appForm, appModel: 'IBO PLAYER', iconUrl: '', androidLink: '', iosLink: '', appSiteUrl: ''}); }}
+                              className="ml-2 text-rose-400 hover:text-rose-600 normal-case tracking-normal font-bold"
+                            >
+                              Limpar ×
+                            </button>
+                          )}
+                        </label>
+                        {catalogApps.filter(a => a.is_active).length > 0 ? (
+                          <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
+                            {catalogApps.filter(a => a.is_active).map(app => {
+                              const sel = selectedModalAppId === app.id;
+                              return (
+                                <button
+                                  key={app.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (sel) {
+                                      setSelectedModalAppId(null);
+                                      setAppForm({...appForm, appModel: 'IBO PLAYER', iconUrl: '', androidLink: '', iosLink: '', appSiteUrl: ''});
+                                    } else {
+                                      setSelectedModalAppId(app.id);
+                                      setAppForm({
+                                        ...appForm,
+                                        appModel: app.name,
+                                        iconUrl: app.app_image_url || '',
+                                        androidLink: app.android_link || '',
+                                        iosLink: app.ios_link || '',
+                                        appSiteUrl: app.web_link || '',
+                                        isTv: app.device_type === 'tv' || app.device_type === 'todos',
+                                      });
+                                    }
+                                  }}
+                                  className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[72px] ${
+                                    sel
+                                      ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                                      : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                                  }`}
+                                >
+                                  <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                    {app.app_image_url ? (
+                                      <img src={app.app_image_url} alt={app.name} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <Tv size={16} className="text-slate-300" />
+                                    )}
+                                  </div>
+                                  <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                                  {sel && <span className="text-[7px] font-black text-emerald-600 uppercase">✓</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <select value={appForm.appModel} onChange={e => setAppForm({...appForm, appModel: e.target.value})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                            <option>IBO PLAYER</option>
+                            <option>IBO PRO</option>
+                            <option>ULTRA PLAYER</option>
+                            <option>FUN PLAY</option>
+                            <option>QUICKPLAYER</option>
+                            <option>LAZER PLAYER</option>
+                            <option>SMARTERS PLAYER LITE</option>
+                          </select>
+                        )}
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="col-span-2 space-y-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Tipo de Acesso</label>
                         <select value={appForm.accessType} onChange={e => setAppForm({...appForm, accessType: e.target.value as any})} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
                           <option value="mac_key">MAC & Device Key</option>
@@ -1244,24 +1388,17 @@ export default function CustomerMenu() {
                         </>
                       )}
 
-                      <div className="col-span-2 space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Ícone do App</label>
-                        <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                          <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0 overflow-hidden shadow-sm">
-                            {appForm.iconUrl ? <img src={appForm.iconUrl} className="w-full h-full object-cover" /> : <Tv size={20} />}
-                          </div>
-                          <div className="flex-1">
-                            <input 
-                              type="file" 
-                              accept="image/*" 
-                              onChange={e => e.target.files?.[0] && handleUploadIcon(e.target.files[0])}
-                              className="text-[10px] text-slate-500 font-bold block w-full file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer" 
-                            />
+                      {selectedModalAppId && appForm.iconUrl && (
+                        <div className="col-span-2 flex items-center gap-3 p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
+                          <img src={appForm.iconUrl} className="w-10 h-10 rounded-lg object-cover border border-emerald-200 shrink-0" />
+                          <div>
+                            <p className="text-xs font-black text-emerald-800">{appForm.appModel}</p>
+                            <p className="text-[9px] text-emerald-600 font-bold">Imagem carregada do catálogo de apps</p>
                           </div>
                         </div>
-                      </div>
+                      )}
 
-                      <button 
+                      <button
                         onClick={handleSaveApp}
                         disabled={isLoading}
                         className="col-span-2 bg-slate-900 text-white py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-slate-200"
