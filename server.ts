@@ -163,6 +163,12 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_last_summary_at TIMESTAMP`,
         // === PROVEDOR DO CLIENTE (startpainel | wareztv | outro) ===
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'startpainel'`,
+        // === DADOS WAREZTV (clientes unificados no banco geral) ===
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS warez_line_id INTEGER`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_trial BOOLEAN DEFAULT false`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS plan_name TEXT`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS max_connections INTEGER DEFAULT 1`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS customers_warez_line_id_idx ON customers(warez_line_id) WHERE warez_line_id IS NOT NULL`,
         // === LEADS (potenciais clientes — capturados automaticamente) ===
         `CREATE TABLE IF NOT EXISTS leads (
           id SERIAL PRIMARY KEY,
@@ -3640,14 +3646,8 @@ async function handleWareztvGenerateTest(remoteJid: string, args: any): Promise<
 
     const line = await warezApi.generateTest(notes);
 
-    // Persiste no DB local
-    await pool.query(
-      `INSERT INTO wareztv_customers (warez_line_id, username, password, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
-       VALUES ($1,$2,$3,$4,$5,'trial',true,'Teste 6h',1,NOW())
-       ON CONFLICT (warez_line_id) DO UPDATE SET password=EXCLUDED.password, updated_at=NOW()`,
-      [line.id, line.username, line.password, notes,
-       line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null]
-    );
+    // Persiste em wareztv_customers E customers (banco unificado)
+    await upsertWarezCustomer({ ...line, is_trial: 1 });
 
     const expFormatted = line.exp_date
       ? new Date(line.exp_date).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
@@ -3689,14 +3689,8 @@ async function handleWareztvCreateClient(remoteJid: string, args: any): Promise<
       days: days || 30,
     });
 
-    await pool.query(
-      `INSERT INTO wareztv_customers (warez_line_id, username, password, name, whatsapp, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',false,$8,$9,NOW())
-       ON CONFLICT (warez_line_id) DO UPDATE SET password=EXCLUDED.password, name=EXCLUDED.name, exp_date=EXCLUDED.exp_date, updated_at=NOW()`,
-      [line.id, line.username, line.password, name || null, whatsapp || null, name || '',
-       line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null,
-       line.plan?.name || 'Essencial', line.max_connections || 2]
-    );
+    // Persiste em wareztv_customers E customers (banco unificado)
+    await upsertWarezCustomer({ ...line, whatsapp: whatsapp || line.whatsapp }, name || null);
 
     const expDate = line.exp_date
       ? new Date(line.exp_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
@@ -3914,9 +3908,10 @@ app.post('/api/app/login', async (req, res) => {
       return res.json({ ok: true, server, username: c.username, password: c.password, name: c.name, expires_at: c.expiration_date });
     }
 
-    // 2. Tenta na tabela de clientes WarezTV
+    // 2. Tenta clientes WarezTV — agora unificados em customers (provider='wareztv')
     const warezResult = await pool.query(
-      'SELECT username, password, name, exp_date, status FROM wareztv_customers WHERE LOWER(username) = LOWER($1)',
+      `SELECT username, password, name, expiration_date AS exp_date, status
+       FROM customers WHERE LOWER(username) = LOWER($1) AND provider = 'wareztv'`,
       [username]
     );
 
@@ -4065,20 +4060,52 @@ app.get('/app/download', (req, res) => {
 // WAREZTV (Wplay) — gerenciamento de clientes via API direta
 // ============================================================
 
-/** Sincroniza dados de uma WarezLine no nosso DB local */
-async function upsertWarezCustomer(line: any) {
+/** Sincroniza dados de uma WarezLine no banco local (wareztv_customers) E no banco unificado (customers) */
+async function upsertWarezCustomer(line: any, extraName?: string) {
   const exp = line.exp_date ? new Date(line.exp_date).toISOString().split('T')[0] : null;
-  const status = line.status === 1 ? (line.is_trial ? 'trial' : 'active') : 'inactive';
+  const warezStatus = line.status === 1 ? (line.is_trial ? 'trial' : 'active') : 'inactive';
+  const isTrial = line.is_trial === 1 || line.is_trial === true;
+  const planName = line.plan?.name || line.plan_name || (isTrial ? 'Teste 6h' : 'Essencial');
+  const maxConns = line.max_connections || 1;
+  const name = extraName || line.name || line.notes || null;
+  const whatsapp = line.whatsapp || null;
+
+  // 1. Mantém wareztv_customers para compatibilidade
   await pool.query(
-    `INSERT INTO wareztv_customers (warez_line_id, username, password, whatsapp, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+    `INSERT INTO wareztv_customers (warez_line_id, username, password, whatsapp, name, notes, exp_date, status, is_trial, plan_name, max_connections, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
      ON CONFLICT (warez_line_id) DO UPDATE SET
-       username=EXCLUDED.username, password=EXCLUDED.password, whatsapp=EXCLUDED.whatsapp,
-       notes=EXCLUDED.notes, exp_date=EXCLUDED.exp_date, status=EXCLUDED.status,
+       username=EXCLUDED.username, password=EXCLUDED.password, whatsapp=COALESCE(EXCLUDED.whatsapp, wareztv_customers.whatsapp),
+       name=COALESCE(EXCLUDED.name, wareztv_customers.name), notes=EXCLUDED.notes,
+       exp_date=EXCLUDED.exp_date, status=EXCLUDED.status,
        is_trial=EXCLUDED.is_trial, plan_name=EXCLUDED.plan_name, max_connections=EXCLUDED.max_connections,
        updated_at=NOW()`,
-    [line.id, line.username, line.password, line.whatsapp || null, line.notes || '',
-     exp, status, line.is_trial === 1, line.plan?.name || null, line.max_connections || 1]
+    [line.id, line.username, line.password, whatsapp, name, line.notes || '',
+     exp, warezStatus, isTrial, planName, maxConns]
+  );
+
+  // 2. UNIFICA no banco geral de clientes (customers)
+  // status: active/trial → 'active' | inactive → 'expired'
+  const custStatus = warezStatus === 'inactive' ? 'expired' : 'active';
+  await pool.query(
+    `INSERT INTO customers
+       (username, password, name, whatsapp, expiration_date, status, provider,
+        warez_line_id, is_trial, plan_name, max_connections, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'wareztv',$7,$8,$9,$10,NOW(),NOW())
+     ON CONFLICT (username) DO UPDATE SET
+       password        = EXCLUDED.password,
+       name            = COALESCE(EXCLUDED.name, customers.name),
+       whatsapp        = COALESCE(EXCLUDED.whatsapp, customers.whatsapp),
+       expiration_date = EXCLUDED.expiration_date,
+       status          = EXCLUDED.status,
+       provider        = 'wareztv',
+       warez_line_id   = EXCLUDED.warez_line_id,
+       is_trial        = EXCLUDED.is_trial,
+       plan_name       = EXCLUDED.plan_name,
+       max_connections = EXCLUDED.max_connections,
+       updated_at      = NOW()`,
+    [line.username, line.password, name, whatsapp, exp, custStatus,
+     line.id, isTrial, planName, maxConns]
   );
 }
 
@@ -4110,14 +4137,9 @@ app.post('/api/wareztv/test', requireAdmin, async (req, res) => {
   try {
     const { notes, whatsapp, name } = req.body;
     const line = await warezApi.generateTest(notes || name || '');
-    await upsertWarezCustomer({ ...line, is_trial: 1 });
-    // Save whatsapp/name locally if provided
-    if (whatsapp || name) {
-      await pool.query(
-        `UPDATE wareztv_customers SET whatsapp=$1, name=$2, updated_at=NOW() WHERE warez_line_id=$3`,
-        [whatsapp || null, name || null, line.id]
-      );
-    }
+    // extraName passa nome/whatsapp para upsertWarezCustomer gravar em ambas as tabelas
+    const lineWithMeta = { ...line, is_trial: 1, whatsapp: whatsapp || line.whatsapp, name: name || null };
+    await upsertWarezCustomer(lineWithMeta, name || null);
     res.json({ success: true, username: line.username, password: line.password, exp_date: line.exp_date, line_id: line.id });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -4127,10 +4149,8 @@ app.post('/api/wareztv/clients', requireAdmin, async (req, res) => {
   try {
     const { whatsapp, name, country, planId, days, notes } = req.body;
     const line = await warezApi.createClient({ whatsapp, country, planId, days, notes: notes || name || '' });
-    await upsertWarezCustomer(line);
-    if (name) {
-      await pool.query(`UPDATE wareztv_customers SET name=$1, updated_at=NOW() WHERE warez_line_id=$2`, [name, line.id]);
-    }
+    const lineWithMeta = { ...line, whatsapp: whatsapp || line.whatsapp, name: name || null };
+    await upsertWarezCustomer(lineWithMeta, name || null);
     res.json({ success: true, username: line.username, password: line.password, exp_date: line.exp_date, line_id: line.id });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -4161,19 +4181,27 @@ app.delete('/api/wareztv/clients/:lineId', requireAdmin, async (req, res) => {
   try {
     const lineId = Number(req.params.lineId);
     await warezApi.deleteClient(lineId);
+    // Remove de ambas as tabelas
     await pool.query(`DELETE FROM wareztv_customers WHERE warez_line_id=$1`, [lineId]);
+    await pool.query(`DELETE FROM customers WHERE warez_line_id=$1`, [lineId]);
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// Update local metadata (name, notes)
+// Update local metadata (name, notes, whatsapp)
 app.patch('/api/wareztv/clients/:lineId', requireAdmin, async (req, res) => {
   try {
     const lineId = Number(req.params.lineId);
     const { name, notes, whatsapp } = req.body;
+    // Atualiza wareztv_customers
     await pool.query(
       `UPDATE wareztv_customers SET name=COALESCE($1,name), notes=COALESCE($2,notes), whatsapp=COALESCE($3,whatsapp), updated_at=NOW() WHERE warez_line_id=$4`,
       [name || null, notes || null, whatsapp || null, lineId]
+    );
+    // Atualiza customers (banco unificado)
+    await pool.query(
+      `UPDATE customers SET name=COALESCE($1,name), whatsapp=COALESCE($2,whatsapp), updated_at=NOW() WHERE warez_line_id=$3`,
+      [name || null, whatsapp || null, lineId]
     );
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4287,6 +4315,47 @@ app.post('/api/admin/evolution/setup-webhook', requireAdmin, async (req, res) =>
   }
 });
 
+// ============================================================
+// MIGRAÇÃO ONE-TIME: copia wareztv_customers → customers
+// Idempotente (ON CONFLICT DO UPDATE) — seguro rodar sempre
+// ============================================================
+async function migrateWarezCustomersToUnified() {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM wareztv_customers`);
+    if (rows.length === 0) return;
+    let migrated = 0;
+    for (const w of rows) {
+      const custStatus = w.status === 'inactive' ? 'expired' : 'active';
+      await pool.query(
+        `INSERT INTO customers
+           (username, password, name, whatsapp, expiration_date, status, provider,
+            warez_line_id, is_trial, plan_name, max_connections, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'wareztv',$7,$8,$9,$10,COALESCE($11,NOW()),NOW())
+         ON CONFLICT (username) DO UPDATE SET
+           password        = EXCLUDED.password,
+           name            = COALESCE(EXCLUDED.name, customers.name),
+           whatsapp        = COALESCE(EXCLUDED.whatsapp, customers.whatsapp),
+           expiration_date = EXCLUDED.expiration_date,
+           status          = EXCLUDED.status,
+           provider        = 'wareztv',
+           warez_line_id   = EXCLUDED.warez_line_id,
+           is_trial        = EXCLUDED.is_trial,
+           plan_name       = EXCLUDED.plan_name,
+           max_connections = EXCLUDED.max_connections,
+           updated_at      = NOW()`,
+        [w.username, w.password, w.name || null, w.whatsapp || null,
+         w.exp_date || null, custStatus, w.warez_line_id,
+         w.is_trial || false, w.plan_name || null, w.max_connections || 1,
+         w.created_at || null]
+      );
+      migrated++;
+    }
+    console.log(`[MigraçãoWarezTV] ✅ ${migrated} cliente(s) migrado(s) para o banco unificado.`);
+  } catch (e: any) {
+    console.warn('[MigraçãoWarezTV] Erro na migração:', e.message);
+  }
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: true, host: '0.0.0.0' }, appType: 'spa' });
@@ -4305,6 +4374,8 @@ async function startServer() {
     setInterval(checkAppPayments, 1000 * 60 * 5);
     // Registra webhook da Evolution API automaticamente
     autoRegisterEvolutionWebhook();
+    // Migra clientes WarezTV existentes para o banco unificado (customers)
+    migrateWarezCustomersToUnified();
   });
 }
 startServer();
