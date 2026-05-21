@@ -4205,20 +4205,23 @@ async function autoRegisterEvolutionWebhook() {
 
     const webhookUrl = `https://atendimento.appbr.pro/api/webhooks/evolution`;
 
-    // Evolution API v2 — registra webhook único (não by-events)
+    // Evolution API v2 — payload encapsulado em "webhook" (formato correto da v2)
     const res = await fetch(`${cfg.evolution_api_url}/webhook/set/${cfg.evolution_instance}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolution_token },
       body: JSON.stringify({
-        url: webhookUrl,
-        webhook_by_events: false,
-        webhook_base64: false,
-        events: [
-          'MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE',
-          'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'SEND_MESSAGE',
-          'CONTACTS_UPSERT', 'CONTACTS_UPDATE',
-          'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_DELETE',
-        ],
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events: [
+            'MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE',
+            'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'SEND_MESSAGE',
+            'CONTACTS_UPSERT', 'CONTACTS_UPDATE',
+            'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_DELETE',
+          ],
+        },
       }),
     });
 
@@ -4259,10 +4262,13 @@ app.post('/api/admin/evolution/setup-webhook', requireAdmin, async (req, res) =>
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolution_token },
       body: JSON.stringify({
-        url: webhookUrl,
-        webhook_by_events: false,
-        webhook_base64: false,
-        events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'SEND_MESSAGE', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_DELETE'],
+        },
       }),
     });
 
