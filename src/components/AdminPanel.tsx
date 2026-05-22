@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
@@ -1122,6 +1122,14 @@ export default function AdminPanel() {
               >
                 App Android
               </button>
+              <button
+                onClick={() => setActiveSubTab('settings')}
+                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                  activeSubTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                ⚙️ Configurações
+              </button>
             </div>
                      </div>
           </div>
@@ -1326,96 +1334,6 @@ export default function AdminPanel() {
                     </form>
                   </motion.div>
 
-                  {/* AI & Branding Config */}
-                  <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl space-y-6">
-                    <div className="flex items-center gap-2 border-b border-slate-800 pb-4">
-                      <Brain size={18} className="text-emerald-400" />
-                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Personalização & IA</h3>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                          Chave API Gemini {geminiKeyConfigured && <span className="text-emerald-400 normal-case tracking-normal">• configurada ({geminiKeyMasked})</span>}
-                        </label>
-                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
-                          <Key size={18} className="text-emerald-400" />
-                          <input
-                            type="password"
-                            value={geminiKey}
-                            onChange={e => setGeminiKey(e.target.value)}
-                            placeholder={geminiKeyConfigured ? 'Digite para substituir a chave atual' : 'Cole a chave AIza...'}
-                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome do Atendente</label>
-                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
-                          <User size={18} className="text-blue-400" />
-                          <input type="text" value={attendantName} onChange={e => setAttendantName(e.target.value)} placeholder="Ex: Suporte VIP" className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">📱 WhatsApp Suporte (App)</label>
-                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
-                          <span className="text-green-400 text-base leading-none">🟢</span>
-                          <input
-                            type="text"
-                            value={whatsappSupport}
-                            onChange={e => setWhatsappSupport(e.target.value)}
-                            placeholder="5511999999999  (com código do país, sem espaço)"
-                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
-                          />
-                        </div>
-                        <p className="text-[9px] text-slate-500 ml-1">Exibido como botão flutuante na tela de login do app Android.</p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">URL Imagem Perfil</label>
-                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
-                          <QrCode size={18} className="text-purple-400" />
-                          <input type="text" value={attendantImage} onChange={e => setAttendantImage(e.target.value)} placeholder="https://..." className="bg-transparent border-none text-white text-[10px] font-mono w-full focus:ring-0 outline-none" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Custo Padrão por Linha</label>
-                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
-                          <DollarSign size={18} className="text-rose-400" />
-                          <input type="number" value={defaultCostPerLine} onChange={e => setDefaultCostPerLine(e.target.value)} className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 md:col-span-2 lg:col-span-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Instruções do Atendente (Prompt da IA)</label>
-                          <div className="flex gap-2">
-                             <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{userInfo.name}}"}</span>
-                             <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{clientPricesContext}}"}</span>
-                          </div>
-                        </div>
-                        <textarea 
-                          value={aiSystemPrompt} 
-                          onChange={e => setAiSystemPrompt(e.target.value)}
-                          placeholder="Digite aqui as regras de atendimento, valores de planos, etc..."
-                          className="w-full h-48 bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-white text-[11px] leading-relaxed focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
-                        />
-                        <p className="text-[8px] text-slate-500 font-medium mt-2 italic px-1">
-                          * Use as tags acima para inserir o nome do cliente e a tabela de preços automaticamente.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end pt-2">
-                      <button onClick={handleSaveSettings} disabled={isSavingKey} className="bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20">
-                        {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Broadcast Section */}
                   <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 border-b border-slate-50 pb-3">
@@ -1569,6 +1487,100 @@ export default function AdminPanel() {
                         </div>
                       </motion.div>
                     ))}
+                  </div>
+                </div>
+              );
+            case 'settings':
+              return (
+                <div className="space-y-6">
+                  {/* AI & Branding Config */}
+                  <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl space-y-6">
+                    <div className="flex items-center gap-2 border-b border-slate-800 pb-4">
+                      <Brain size={18} className="text-emerald-400" />
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Personalização & IA</h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                          Chave API Gemini {geminiKeyConfigured && <span className="text-emerald-400 normal-case tracking-normal">• configurada ({geminiKeyMasked})</span>}
+                        </label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <Key size={18} className="text-emerald-400" />
+                          <input
+                            type="password"
+                            value={geminiKey}
+                            onChange={e => setGeminiKey(e.target.value)}
+                            placeholder={geminiKeyConfigured ? 'Digite para substituir a chave atual' : 'Cole a chave AIza...'}
+                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome do Atendente</label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <User size={18} className="text-blue-400" />
+                          <input type="text" value={attendantName} onChange={e => setAttendantName(e.target.value)} placeholder="Ex: Suporte VIP" className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">📱 WhatsApp Suporte (App)</label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <span className="text-green-400 text-base leading-none">🟢</span>
+                          <input
+                            type="text"
+                            value={whatsappSupport}
+                            onChange={e => setWhatsappSupport(e.target.value)}
+                            placeholder="5511999999999  (com código do país, sem espaço)"
+                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
+                          />
+                        </div>
+                        <p className="text-[9px] text-slate-500 ml-1">Exibido como botão flutuante na tela de login do app Android.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">URL Imagem Perfil</label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <QrCode size={18} className="text-purple-400" />
+                          <input type="text" value={attendantImage} onChange={e => setAttendantImage(e.target.value)} placeholder="https://..." className="bg-transparent border-none text-white text-[10px] font-mono w-full focus:ring-0 outline-none" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Custo Padrão por Linha</label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <DollarSign size={18} className="text-rose-400" />
+                          <input type="number" value={defaultCostPerLine} onChange={e => setDefaultCostPerLine(e.target.value)} className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2 lg:col-span-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Instruções do Atendente (Prompt da IA)</label>
+                          <div className="flex gap-2">
+                            <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{userInfo.name}}"}</span>
+                            <span className="text-[8px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{"{{clientPricesContext}}"}</span>
+                          </div>
+                        </div>
+                        <textarea
+                          value={aiSystemPrompt}
+                          onChange={e => setAiSystemPrompt(e.target.value)}
+                          placeholder="Digite aqui as regras de atendimento, valores de planos, etc..."
+                          className="w-full h-48 bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-white text-[11px] leading-relaxed focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                        />
+                        <p className="text-[8px] text-slate-500 font-medium mt-2 italic px-1">
+                          * Use as tags acima para inserir o nome do cliente e a tabela de preços automaticamente.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button onClick={handleSaveSettings} disabled={isSavingKey} className="bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20">
+                        {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
