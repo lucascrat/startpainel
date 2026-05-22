@@ -118,6 +118,7 @@ export default function AdminPanel() {
   const [attendantName, setAttendantName] = useState('Suporte StartPainel');
   const [attendantImage, setAttendantImage] = useState('https://cdn-icons-png.flaticon.com/512/4712/4712027.png');
   const [aiSystemPrompt, setAiSystemPrompt] = useState('');
+  const [whatsappSupport, setWhatsappSupport] = useState('');
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSavingKey, setIsSavingKey] = useState(false);
@@ -374,6 +375,10 @@ export default function AdminPanel() {
       const resPrompt = await authFetch('/api/settings/ai_system_prompt');
       const dataPrompt = await resPrompt.json();
       if (dataPrompt.value) setAiSystemPrompt(dataPrompt.value);
+
+      const resWa = await authFetch('/api/settings/whatsapp_support');
+      const dataWa = await resWa.json();
+      if (dataWa.value) setWhatsappSupport(dataWa.value);
     } catch (error) {}
   };
 
@@ -746,6 +751,7 @@ export default function AdminPanel() {
       await saveSetting('attendant_name', attendantName);
       await saveSetting('attendant_image', attendantImage);
       await saveSetting('ai_system_prompt', aiSystemPrompt);
+      await saveSetting('whatsapp_support', whatsappSupport);
       toast.success('Configurações salvas!');
       loadSettings();
     } catch (error) {} finally { setIsSavingKey(false); }
@@ -1350,6 +1356,21 @@ export default function AdminPanel() {
                           <User size={18} className="text-blue-400" />
                           <input type="text" value={attendantName} onChange={e => setAttendantName(e.target.value)} placeholder="Ex: Suporte VIP" className="bg-transparent border-none text-white text-xs font-bold w-full focus:ring-0 outline-none" />
                         </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">📱 WhatsApp Suporte (App)</label>
+                        <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                          <span className="text-green-400 text-base leading-none">🟢</span>
+                          <input
+                            type="text"
+                            value={whatsappSupport}
+                            onChange={e => setWhatsappSupport(e.target.value)}
+                            placeholder="5511999999999  (com código do país, sem espaço)"
+                            className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
+                          />
+                        </div>
+                        <p className="text-[9px] text-slate-500 ml-1">Exibido como botão flutuante na tela de login do app Android.</p>
                       </div>
 
                       <div className="space-y-2">

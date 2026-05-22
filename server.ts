@@ -254,7 +254,7 @@ if (!ADMIN_PASSWORD) {
   console.warn('AUTH: ADMIN_PASSWORD ausente — login admin desativado.');
 }
 
-const PUBLIC_SETTING_KEYS = new Set(['attendant_name', 'attendant_image']);
+const PUBLIC_SETTING_KEYS = new Set(['attendant_name', 'attendant_image', 'whatsapp_support']);
 const SENSITIVE_SETTING_KEYS = new Set(['gemini_api_key']);
 
 function maskSecret(value: string | null | undefined): string | null {
