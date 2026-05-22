@@ -1226,7 +1226,14 @@ export default function AdminPanel() {
                       </div>
                       <div className="sm:col-span-1 lg:col-span-2 space-y-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">DNS / Provedor</label>
-                        <input type="text" value={newDns} onChange={e => setNewDns(e.target.value)} placeholder="Ex: http://dns.com:8080" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                        {newProvider === 'zaplay' ? (
+                          <div className="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-xs font-bold text-green-700 flex items-center gap-2">
+                            <span>🌐</span>
+                            <span>Usa DNS global (⚙️ Configurações → Servidores DNS)</span>
+                          </div>
+                        ) : (
+                          <input type="text" value={newDns} onChange={e => setNewDns(e.target.value)} placeholder="Ex: http://dns.com:8080 (vazio = usa DNS global)" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                        )}
                       </div>
 
                       {/* Provedor do cliente */}
@@ -1234,18 +1241,15 @@ export default function AdminPanel() {
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Provedor</label>
                         <div className="flex gap-2">
                           {[
-                            { value: 'startpainel', label: 'Start',   active: 'border-indigo-500 bg-indigo-50 text-indigo-700',  dns: '' },
-                            { value: 'zaplay',      label: 'Zaplay',  active: 'border-green-500 bg-green-50 text-green-700',     dns: 'http://zeusplay.site' },
-                            { value: 'wareztv',     label: 'WarezTV', active: 'border-orange-400 bg-orange-50 text-orange-700',  dns: '' },
-                            { value: 'outro',       label: 'Outro',   active: 'border-slate-400 bg-slate-100 text-slate-700',    dns: '' },
+                            { value: 'startpainel', label: 'Start',   active: 'border-indigo-500 bg-indigo-50 text-indigo-700' },
+                            { value: 'zaplay',      label: 'Zaplay',  active: 'border-green-500 bg-green-50 text-green-700'    },
+                            { value: 'wareztv',     label: 'WarezTV', active: 'border-orange-400 bg-orange-50 text-orange-700' },
+                            { value: 'outro',       label: 'Outro',   active: 'border-slate-400 bg-slate-100 text-slate-700'   },
                           ].map(p => (
                             <button
                               key={p.value}
                               type="button"
-                              onClick={() => {
-                                setNewProvider(p.value);
-                                if (p.dns) setNewDns(p.dns);
-                              }}
+                              onClick={() => setNewProvider(p.value)}
                               className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all ${
                                 newProvider === p.value ? p.active : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300'
                               }`}
