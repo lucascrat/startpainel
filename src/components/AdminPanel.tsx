@@ -47,6 +47,7 @@ export default function AdminPanel() {
   // Search and Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'expired'>('all');
+  const [providerFilter, setProviderFilter] = useState<'all' | 'startpainel' | 'zaplay' | 'wareztv' | 'outro'>('all');
   
   // New Customer Form
   const [newUsername, setNewUsername] = useState('');
@@ -1233,14 +1234,18 @@ export default function AdminPanel() {
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Provedor</label>
                         <div className="flex gap-2">
                           {[
-                            { value: 'startpainel', label: 'Start',   active: 'border-indigo-500 bg-indigo-50 text-indigo-700' },
-                            { value: 'wareztv',     label: 'WarezTV', active: 'border-orange-400 bg-orange-50 text-orange-700' },
-                            { value: 'outro',       label: 'Outro',   active: 'border-slate-400 bg-slate-100 text-slate-700'   },
+                            { value: 'startpainel', label: 'Start',   active: 'border-indigo-500 bg-indigo-50 text-indigo-700',  dns: '' },
+                            { value: 'zaplay',      label: 'Zaplay',  active: 'border-green-500 bg-green-50 text-green-700',     dns: 'http://zeusplay.site' },
+                            { value: 'wareztv',     label: 'WarezTV', active: 'border-orange-400 bg-orange-50 text-orange-700',  dns: '' },
+                            { value: 'outro',       label: 'Outro',   active: 'border-slate-400 bg-slate-100 text-slate-700',    dns: '' },
                           ].map(p => (
                             <button
                               key={p.value}
                               type="button"
-                              onClick={() => setNewProvider(p.value)}
+                              onClick={() => {
+                                setNewProvider(p.value);
+                                if (p.dns) setNewDns(p.dns);
+                              }}
                               className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all ${
                                 newProvider === p.value ? p.active : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300'
                               }`}
@@ -1371,8 +1376,8 @@ export default function AdminPanel() {
                       onChange={e => setSearchTerm(e.target.value)}
                       className="flex-1 px-4 py-3 rounded-2xl border border-slate-200 shadow-sm text-xs font-bold outline-none focus:border-emerald-500"
                     />
-                    <select 
-                      value={statusFilter} 
+                    <select
+                      value={statusFilter}
                       onChange={e => setStatusFilter(e.target.value as any)}
                       className="px-4 py-3 rounded-2xl border border-slate-200 shadow-sm text-xs font-bold outline-none focus:border-emerald-500 bg-white"
                     >
@@ -1381,6 +1386,17 @@ export default function AdminPanel() {
                       <option value="teste">Clientes em Teste</option>
                       <option value="expired">Vencidos</option>
                     </select>
+                    <select
+                      value={providerFilter}
+                      onChange={e => setProviderFilter(e.target.value as any)}
+                      className="px-4 py-3 rounded-2xl border border-slate-200 shadow-sm text-xs font-bold outline-none focus:border-emerald-500 bg-white"
+                    >
+                      <option value="all">Todos os Provedores</option>
+                      <option value="startpainel">Start</option>
+                      <option value="zaplay">Zaplay</option>
+                      <option value="wareztv">WarezTV</option>
+                      <option value="outro">Outro</option>
+                    </select>
                   </div>
 
                   {/* Customers Grid */}
@@ -1388,11 +1404,12 @@ export default function AdminPanel() {
                     {customers.filter(c => {
                       const matchesSearch = c.username.toLowerCase().includes(searchTerm.toLowerCase()) || (c.whatsapp && c.whatsapp.includes(searchTerm));
                       const isExpired = c.expiration_date ? new Date(c.expiration_date) < new Date() : false;
-                      const matchesStatus = statusFilter === 'all' ? true : 
-                                           (statusFilter === 'active' ? (!isExpired && c.status !== 'teste') : 
-                                           (statusFilter === 'expired' ? isExpired : 
+                      const matchesStatus = statusFilter === 'all' ? true :
+                                           (statusFilter === 'active' ? (!isExpired && c.status !== 'teste') :
+                                           (statusFilter === 'expired' ? isExpired :
                                            (statusFilter === 'teste' ? c.status === 'teste' : true)));
-                      return matchesSearch && matchesStatus;
+                      const matchesProvider = providerFilter === 'all' ? true : (c.provider || 'startpainel') === providerFilter;
+                      return matchesSearch && matchesStatus && matchesProvider;
                     }).map(customer => (
                       <motion.div key={customer.id} layout className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group hover:border-emerald-200 transition-all">
                         <div className="p-4 space-y-4">
@@ -1409,8 +1426,8 @@ export default function AdminPanel() {
                                   )}
                                   {/* Badge de provedor */}
                                   {(() => {
-                                    const badges: Record<string, string> = { startpainel: 'bg-indigo-100 text-indigo-600', wareztv: 'bg-orange-100 text-orange-600', outro: 'bg-slate-100 text-slate-500' };
-                                    const labels: Record<string, string> = { startpainel: 'Start', wareztv: 'WarezTV', outro: 'Outro' };
+                                    const badges: Record<string, string> = { startpainel: 'bg-indigo-100 text-indigo-600', zaplay: 'bg-green-100 text-green-700', wareztv: 'bg-orange-100 text-orange-600', outro: 'bg-slate-100 text-slate-500' };
+                                    const labels: Record<string, string> = { startpainel: 'Start', zaplay: 'Zaplay', wareztv: 'WarezTV', outro: 'Outro' };
                                     const p = customer.provider || 'startpainel';
                                     return <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest ${badges[p] || 'bg-slate-100 text-slate-500'}`}>{labels[p] || p}</span>;
                                   })()}
