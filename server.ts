@@ -163,6 +163,8 @@ async function initDB(retries = 5) {
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS app_site_url TEXT`,
         `ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS host TEXT`,
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS dns TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS install_video_url TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS youtube_url TEXT`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
@@ -1935,6 +1937,8 @@ function normalizeAppCatalogPayload(b: any) {
     device_type:         b.device_type ?? b.deviceType ?? 'todos',
     is_active:           b.is_active ?? b.isActive ?? true,
     dns:                 b.dns ?? null,
+    install_video_url:   b.install_video_url ?? b.installVideoUrl ?? null,
+    youtube_url:         b.youtube_url ?? b.youtubeUrl ?? null,
   };
 }
 
@@ -1944,10 +1948,12 @@ app.post('/api/app-catalog', requireAdmin, async (req, res) => {
     if (!a.name) return res.status(400).json({ error: 'name e obrigatorio' });
     const result = await pool.query(
       `INSERT INTO app_catalog (name, display_order, description, app_image_url, example_image_url,
-                                example_instruction, android_link, ios_link, web_link, device_type, is_active, dns)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+                                example_instruction, android_link, ios_link, web_link, device_type, is_active, dns,
+                                install_video_url, youtube_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
       [a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
-       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns]
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
+       a.install_video_url, a.youtube_url]
     );
     res.json(result.rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1970,10 +1976,13 @@ app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
          device_type = COALESCE($11, device_type),
          is_active = COALESCE($12, is_active),
          dns = COALESCE($13, dns),
+         install_video_url = $14,
+         youtube_url = $15,
          updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [req.params.id, a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
-       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns]
+       a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
+       a.install_video_url, a.youtube_url]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
     res.json(result.rows[0]);
@@ -3545,12 +3554,35 @@ async function handleSendAppInfo(remoteJid: string, appId: number, customMessage
       if (img) {
         await evo.sendMedia(remoteJid, img.base64, caption, `${app.name}.${img.mimeType.split('/')[1] || 'jpg'}`);
         console.log(`[Tool] send_app_info: enviou ${app.name} pro ${remoteJid}`);
-        return true;
+      } else {
+        console.warn(`[Tool send_app_info] imagem ${app.app_image_url} nao baixou, enviando so texto`);
+        await evo.sendMessage(remoteJid, caption);
       }
-      console.warn(`[Tool send_app_info] imagem ${app.app_image_url} nao baixou, enviando so texto`);
+    } else {
+      await evo.sendMessage(remoteJid, caption);
+      console.log(`[Tool] send_app_info: enviou ${app.name} (texto-only) pro ${remoteJid}`);
     }
-    await evo.sendMessage(remoteJid, caption);
-    console.log(`[Tool] send_app_info: enviou ${app.name} (texto-only) pro ${remoteJid}`);
+
+    // Envia link do YouTube de instalação (se cadastrado)
+    if (app.youtube_url) {
+      await evo.sendMessage(remoteJid,
+        `🎬 *Tutorial de instalação — ${app.name}:*\n${app.youtube_url}`
+      );
+    }
+
+    // Envia vídeo de instalação (se cadastrado)
+    if (app.install_video_url) {
+      try {
+        const vid = await urlToBase64(app.install_video_url);
+        if (vid) {
+          await evo.sendMedia(remoteJid, vid.base64, `📹 Tutorial de instalação — ${app.name}`, `tutorial_${app.name}.mp4`);
+          console.log(`[Tool] send_app_info: enviou vídeo de instalação do ${app.name}`);
+        }
+      } catch (ve) {
+        console.warn(`[Tool send_app_info] falha ao enviar vídeo de ${app.name}:`, ve);
+      }
+    }
+
     return true;
   } catch (e: any) {
     console.error('[Tool send_app_info] erro:', e?.message);

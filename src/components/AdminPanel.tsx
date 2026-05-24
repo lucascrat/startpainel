@@ -54,8 +54,19 @@ export default function AdminPanel() {
   const [m3uTab, setM3uTab] = useState<'lists' | 'codes' | 'leases'>('lists');
   const [m3uLastUpdated, setM3uLastUpdated] = useState<Date | null>(null);
 
+  // === Gerenciamento do Catálogo de Apps ===
+  const [editingCatalogId, setEditingCatalogId] = useState<number | 'new' | null>(null);
+  const [catalogForm, setCatalogForm] = useState({
+    name: '', device_type: 'todos', description: '',
+    android_link: '', ios_link: '', web_link: '',
+    youtube_url: '', display_order: 0, is_active: true,
+    app_image_url: '', install_video_url: '',
+  });
+  const [catalogUploading, setCatalogUploading] = useState<'image' | 'video' | null>(null);
+  const [catalogSaving, setCatalogSaving] = useState(false);
+
   // Catálogo de apps para seleção ao cadastrar cliente
-  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null}[]>([]);
+  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null; install_video_url: string | null; youtube_url: string | null; description: string | null; display_order: number}[]>([]);
   const [selectedCatalogAppId, setSelectedCatalogAppId] = useState<number | null>(null);
   // Catálogo selecionado no modal "Gerenciar Dispositivos"
   const [modalCatalogAppId, setModalCatalogAppId] = useState<number | null>(null);
@@ -397,6 +408,77 @@ export default function AdminPanel() {
       const d = await r.json();
       setCatalogApps(Array.isArray(d) ? d : []);
     } catch {}
+  };
+
+  const openNewCatalogForm = () => {
+    setCatalogForm({ name: '', device_type: 'todos', description: '', android_link: '', ios_link: '', web_link: '', youtube_url: '', display_order: 0, is_active: true, app_image_url: '', install_video_url: '' });
+    setEditingCatalogId('new');
+  };
+
+  const openEditCatalogForm = (app: typeof catalogApps[0]) => {
+    setCatalogForm({
+      name: app.name || '', device_type: app.device_type || 'todos',
+      description: app.description || '', android_link: app.android_link || '',
+      ios_link: app.ios_link || '', web_link: app.web_link || '',
+      youtube_url: app.youtube_url || '', display_order: app.display_order ?? 0,
+      is_active: app.is_active ?? true, app_image_url: app.app_image_url || '',
+      install_video_url: app.install_video_url || '',
+    });
+    setEditingCatalogId(app.id);
+  };
+
+  const handleCatalogUpload = async (file: File, field: 'app_image_url' | 'install_video_url') => {
+    const isVideo = field === 'install_video_url';
+    if (isVideo && !file.type.startsWith('video/')) { toast.error('Selecione um arquivo de vídeo (MP4, etc.)'); return; }
+    if (!isVideo && !file.type.startsWith('image/')) { toast.error('Selecione um arquivo de imagem'); return; }
+    const maxMb = isVideo ? 50 : 5;
+    if (file.size > maxMb * 1024 * 1024) { toast.error(`Arquivo muito grande. Máximo ${maxMb}MB.`); return; }
+    setCatalogUploading(isVideo ? 'video' : 'image');
+    try {
+      const dataUrl: string = await new Promise((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file);
+      });
+      const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+      const resp = await authFetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64, mimeType: file.type, prefix: isVideo ? 'tutorials' : 'app-icons' }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.url) throw new Error(json.error || 'Upload falhou');
+      setCatalogForm(f => ({ ...f, [field]: json.url }));
+      toast.success(isVideo ? 'Vídeo enviado!' : 'Imagem enviada!');
+    } catch (e: any) { toast.error(e.message); }
+    finally { setCatalogUploading(null); }
+  };
+
+  const handleSaveCatalogApp = async () => {
+    if (!catalogForm.name.trim()) { toast.error('Nome do app é obrigatório'); return; }
+    setCatalogSaving(true);
+    try {
+      const isNew = editingCatalogId === 'new';
+      const url = isNew ? '/api/app-catalog' : `/api/app-catalog/${editingCatalogId}`;
+      const method = isNew ? 'POST' : 'PUT';
+      const r = await authFetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(catalogForm),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      toast.success(isNew ? 'App adicionado ao catálogo!' : 'App atualizado!');
+      setEditingCatalogId(null);
+      loadCatalogApps();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setCatalogSaving(false); }
+  };
+
+  const handleDeleteCatalogApp = async (id: number, name: string) => {
+    if (!confirm(`Remover "${name}" do catálogo?`)) return;
+    try {
+      await authFetch(`/api/app-catalog/${id}`, { method: 'DELETE' });
+      toast.success('App removido do catálogo');
+      loadCatalogApps();
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const saveAppDns = async () => {
@@ -1686,6 +1768,223 @@ export default function AdminPanel() {
                         <Save size={14} />
                         {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
                       </button>
+                    </div>
+                  </div>
+
+                  {/* ───── Catálogo de Apps ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone size={18} className="text-indigo-500" />
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Catálogo de Apps</h3>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full">{catalogApps.length} apps</span>
+                      </div>
+                      <button
+                        onClick={openNewCatalogForm}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl transition-all"
+                      >
+                        <Plus size={13} /> Novo App
+                      </button>
+                    </div>
+
+                    {/* Formulário (novo ou editar) */}
+                    <AnimatePresence>
+                      {editingCatalogId !== null && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 space-y-4">
+                            <p className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
+                              {editingCatalogId === 'new' ? '+ Novo App no Catálogo' : `Editando: ${catalogApps.find(a => a.id === editingCatalogId)?.name}`}
+                            </p>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Nome */}
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Nome *</label>
+                                <input value={catalogForm.name} onChange={e => setCatalogForm(f => ({...f, name: e.target.value}))}
+                                  placeholder="ex: IBO Player Pro" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+
+                              {/* Tipo */}
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Dispositivo</label>
+                                <select value={catalogForm.device_type} onChange={e => setCatalogForm(f => ({...f, device_type: e.target.value}))}
+                                  className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500">
+                                  <option value="todos">Todos</option>
+                                  <option value="celular">Celular</option>
+                                  <option value="tv">TV / TV Box</option>
+                                  <option value="pc">PC / Mac</option>
+                                </select>
+                              </div>
+
+                              {/* Descrição */}
+                              <div className="space-y-1 sm:col-span-2">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Descrição curta</label>
+                                <input value={catalogForm.description} onChange={e => setCatalogForm(f => ({...f, description: e.target.value}))}
+                                  placeholder="ex: Melhor app para Smart TV Samsung" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+
+                              {/* Links */}
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Link Android</label>
+                                <input value={catalogForm.android_link} onChange={e => setCatalogForm(f => ({...f, android_link: e.target.value}))}
+                                  placeholder="https://play.google.com/..." className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Link iOS</label>
+                                <input value={catalogForm.ios_link} onChange={e => setCatalogForm(f => ({...f, ios_link: e.target.value}))}
+                                  placeholder="https://apps.apple.com/..." className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+                              <div className="space-y-1 sm:col-span-2">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Link Web / APK direto</label>
+                                <input value={catalogForm.web_link} onChange={e => setCatalogForm(f => ({...f, web_link: e.target.value}))}
+                                  placeholder="https://..." className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+
+                              {/* ── Vídeos ── */}
+                              <div className="sm:col-span-2 border-t border-indigo-100 pt-3 space-y-3">
+                                <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">🎬 Tutorial de Instalação</p>
+
+                                {/* YouTube URL */}
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-black text-slate-500 uppercase ml-1">URL do YouTube <span className="text-slate-400 normal-case font-normal">(enviado como link ao cliente)</span></label>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-lg">▶️</span>
+                                    <input value={catalogForm.youtube_url} onChange={e => setCatalogForm(f => ({...f, youtube_url: e.target.value}))}
+                                      placeholder="https://youtube.com/watch?v=..." className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-red-400" />
+                                    {catalogForm.youtube_url && (
+                                      <a href={catalogForm.youtube_url} target="_blank" rel="noreferrer"
+                                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Abrir">
+                                        <ExternalLink size={14} />
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Vídeo upload */}
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Vídeo de exemplo <span className="text-slate-400 normal-case font-normal">(enviado direto pelo WhatsApp, máx 50MB)</span></label>
+                                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                                    {catalogForm.install_video_url ? (
+                                      <div className="flex items-center gap-2 flex-1 bg-white border border-emerald-200 rounded-xl px-3 py-2">
+                                        <span className="text-base">📹</span>
+                                        <span className="text-[10px] font-bold text-emerald-700 flex-1 truncate">Vídeo enviado</span>
+                                        <a href={catalogForm.install_video_url} target="_blank" rel="noreferrer"
+                                          className="text-[9px] text-emerald-600 hover:text-emerald-800 font-black underline">Ver</a>
+                                        <button onClick={() => setCatalogForm(f => ({...f, install_video_url: ''}))}
+                                          className="text-rose-400 hover:text-rose-600 ml-1"><X size={13} /></button>
+                                      </div>
+                                    ) : (
+                                      <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
+                                        catalogUploading === 'video' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 text-slate-500'
+                                      }`}>
+                                        <input type="file" accept="video/*" className="hidden"
+                                          onChange={e => e.target.files?.[0] && handleCatalogUpload(e.target.files[0], 'install_video_url')} />
+                                        <span className="text-base">📹</span>
+                                        <span className="text-[10px] font-black uppercase">
+                                          {catalogUploading === 'video' ? 'Enviando...' : 'Selecionar vídeo'}
+                                        </span>
+                                      </label>
+                                    )}
+
+                                    {/* Imagem do app */}
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                        {catalogForm.app_image_url ? (
+                                          <img src={catalogForm.app_image_url} alt="" className="w-full h-full object-cover" />
+                                        ) : (
+                                          <Smartphone size={16} className="text-slate-300" />
+                                        )}
+                                      </div>
+                                      <label className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed cursor-pointer transition-all text-[10px] font-black uppercase ${
+                                        catalogUploading === 'image' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 text-slate-500'
+                                      }`}>
+                                        <input type="file" accept="image/*" className="hidden"
+                                          onChange={e => e.target.files?.[0] && handleCatalogUpload(e.target.files[0], 'app_image_url')} />
+                                        {catalogUploading === 'image' ? 'Enviando...' : 'Ícone do App'}
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Ordem + Status */}
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Ordem de exibição</label>
+                                <input type="number" value={catalogForm.display_order} onChange={e => setCatalogForm(f => ({...f, display_order: Number(e.target.value)}))}
+                                  className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+                              <div className="flex items-center gap-3 pt-4">
+                                <button
+                                  onClick={() => setCatalogForm(f => ({...f, is_active: !f.is_active}))}
+                                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all border ${
+                                    catalogForm.is_active ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-100 border-slate-300 text-slate-500'
+                                  }`}
+                                >
+                                  {catalogForm.is_active ? '✅ Ativo' : '⏸️ Inativo'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Botões ação */}
+                            <div className="flex gap-3 pt-1">
+                              <button onClick={handleSaveCatalogApp} disabled={catalogSaving || !!catalogUploading}
+                                className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50">
+                                <Save size={13} /> {catalogSaving ? 'Salvando...' : editingCatalogId === 'new' ? 'Adicionar ao Catálogo' : 'Salvar Alterações'}
+                              </button>
+                              <button onClick={() => setEditingCatalogId(null)}
+                                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase transition-all">
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Lista de apps */}
+                    <div className="space-y-2">
+                      {catalogApps.length === 0 && (
+                        <div className="py-10 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Nenhum app no catálogo</p>
+                        </div>
+                      )}
+                      {catalogApps.map(app => (
+                        <div key={app.id} className={`flex items-center gap-3 p-3 rounded-2xl border transition-all ${
+                          editingCatalogId === app.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-100 bg-slate-50 hover:border-slate-200'
+                        }`}>
+                          {/* Ícone */}
+                          <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
+                            {app.app_image_url ? (
+                              <img src={app.app_image_url} alt={app.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <Smartphone size={16} className="text-slate-300" />
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black text-slate-800 truncate">{app.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">{app.device_type}</span>
+                              {!app.is_active && <span className="text-[8px] font-black bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full uppercase">Inativo</span>}
+                              {app.youtube_url && <span className="text-[8px] font-black bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">▶ YouTube</span>}
+                              {app.install_video_url && <span className="text-[8px] font-black bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">📹 Vídeo</span>}
+                            </div>
+                          </div>
+
+                          {/* Ações */}
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => editingCatalogId === app.id ? setEditingCatalogId(null) : openEditCatalogForm(app)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all text-[10px] font-black uppercase">
+                              {editingCatalogId === app.id ? 'Fechar' : 'Editar'}
+                            </button>
+                            <button onClick={() => handleDeleteCatalogApp(app.id, app.name)}
+                              className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
