@@ -2384,6 +2384,22 @@ function generateM3uCode(): string {
   return crypto.randomBytes(4).toString('hex').toUpperCase(); // ex: A3F92B1C
 }
 
+/**
+ * Tenta extrair credenciais Xtream de uma URL M3U no formato:
+ * http://server:port/get.php?username=xxx&password=yyy&type=m3u_plus
+ */
+function parseXtreamFromM3u(m3uUrl: string): { dns: string; username: string; password: string } | null {
+  try {
+    const u = new URL(m3uUrl);
+    const username = u.searchParams.get('username');
+    const password = u.searchParams.get('password');
+    if (username && password) {
+      return { dns: `${u.protocol}//${u.host}`, username, password };
+    }
+  } catch { /* URL inválida */ }
+  return null;
+}
+
 /** Retorna a lease ativa de um código (se existir) */
 async function getActiveLease(code: string) {
   const r = await pool.query(
@@ -2598,12 +2614,14 @@ app.post('/api/m3u/access', async (req, res) => {
       await pool.query(
         `UPDATE m3u_leases SET last_heartbeat = NOW() WHERE id = $1`, [existing.id]
       );
+      const xtream = parseXtreamFromM3u(existing.m3u_url);
       return res.json({
         success: true,
         lease_id: existing.id,
         m3u_url: existing.m3u_url,
         list_name: existing.list_name,
         reused: true,
+        ...(xtream ?? {}),
       });
     }
 
@@ -2616,13 +2634,15 @@ app.post('/api/m3u/access', async (req, res) => {
       });
     }
 
-    console.log(`[M3U] Lease criada: code=${codeUpper} → lista="${lease.list_name}" (id=${lease.id})`);
+    const xtream = parseXtreamFromM3u(lease.m3u_url);
+    console.log(`[M3U] Lease criada: code=${codeUpper} → lista="${lease.list_name}" (id=${lease.id})${xtream ? ' [xtream]' : ''}`);
     res.json({
       success: true,
       lease_id: lease.id,
       m3u_url: lease.m3u_url,
       list_name: lease.list_name,
       reused: false,
+      ...(xtream ?? {}),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
