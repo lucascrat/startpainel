@@ -1025,18 +1025,19 @@ export default function AdminPanel() {
 
   return (
     <div className="p-2 sm:p-4 bg-slate-50 min-h-full">
-      <div className="max-w-5xl mx-auto space-y-4 pb-20">
+      <div className="max-w-5xl mx-auto space-y-3 sm:space-y-4 pb-24 sm:pb-20">
         
         {/* Header with Navigation */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="p-3 sm:p-4 flex flex-col gap-3">
+            {/* Logo + status */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shrink-0">
-                <Brain size={20} className="text-emerald-400" />
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shrink-0">
+                <Brain size={18} className="text-emerald-400" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">StartPainel Admin</h2>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2 mt-0.5">
                   <div className="flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full ${dbStatus.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                     <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{dbStatus.status}</span>
@@ -1044,18 +1045,15 @@ export default function AdminPanel() {
                   {queueStatus.isBusy && (
                     <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
                       <RefreshCw size={10} className="text-amber-500 animate-spin" />
-                      <span className="text-[8px] text-amber-600 font-black uppercase tracking-widest">
-                        Processando: {queueStatus.processing?.type} {queueStatus.pending.length > 0 ? `(+${queueStatus.pending.length})` : ''}
+                      <span className="text-[8px] text-amber-600 font-black uppercase tracking-widest truncate max-w-[160px]">
+                        {queueStatus.processing?.type} {queueStatus.pending.length > 0 ? `(+${queueStatus.pending.length})` : ''}
                       </span>
                     </div>
                   )}
-                  {/* Indicador de worker (PC) online/offline — so mostra quando ha jobs OU PC offline. */}
                   {(queueStatus.pending.length > 0 || queueStatus.isBusy || queueStatus.workerOnline === false) && (
                     <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${
-                      queueStatus.workerOnline
-                        ? 'bg-emerald-50 border-emerald-100'
-                        : 'bg-rose-50 border-rose-100'
-                    }`} title={queueStatus.workerOnline ? 'PC com worker online' : 'PC offline — automacoes nao vao executar ate o worker voltar'}>
+                      queueStatus.workerOnline ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'
+                    }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${queueStatus.workerOnline ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`} />
                       <span className={`text-[8px] font-black uppercase tracking-widest ${queueStatus.workerOnline ? 'text-emerald-700' : 'text-rose-700'}`}>
                         PC {queueStatus.workerOnline ? 'online' : 'offline'}
@@ -1066,71 +1064,33 @@ export default function AdminPanel() {
               </div>
             </div>
             
-            <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
-              <button 
-                onClick={() => setActiveSubTab('users')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Clientes
-              </button>
-              <button 
-                onClick={() => setActiveSubTab('financial')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'financial' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Financeiro
-              </button>
-              <button 
-                onClick={() => setActiveSubTab('automations')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'automations' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Automações
-              </button>
-              <button 
-                onClick={() => setActiveSubTab('ai')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'ai' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Dashboard IA
-              </button>
-              <button
-                onClick={() => setActiveSubTab('startflix')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'startflix' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Startflix
-              </button>
-              <button
-                onClick={() => setActiveSubTab('wareztv')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'wareztv' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Wareztv
-              </button>
-              <button
-                onClick={() => setActiveSubTab('android')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'android' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                App Android
-              </button>
-              <button
-                onClick={() => setActiveSubTab('settings')}
-                className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                  activeSubTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                ⚙️ Configurações
-              </button>
+            {/* Navegação por abas — scrollável no mobile */}
+            <div className="overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+              <div className="flex bg-slate-100 p-1 rounded-xl min-w-max sm:min-w-0">
+                {(
+                  [
+                    { id: 'users',       label: 'Clientes',      icon: <User size={12} /> },
+                    { id: 'financial',   label: 'Financeiro',    icon: <DollarSign size={12} /> },
+                    { id: 'automations', label: 'Automações',    icon: <Cpu size={12} /> },
+                    { id: 'ai',          label: 'Dashboard IA',  icon: <Brain size={12} /> },
+                    { id: 'startflix',   label: 'Startflix',     icon: <Monitor size={12} /> },
+                    { id: 'wareztv',     label: 'Wareztv',       icon: <Tv size={12} /> },
+                    { id: 'android',     label: 'App Android',   icon: <Smartphone size={12} /> },
+                    { id: 'settings',    label: 'Config',        icon: <Save size={12} /> },
+                  ] as { id: typeof activeSubTab; label: string; icon: React.ReactNode }[]
+                ).map(({ id, label, icon }) => (
+                  <button
+                    key={id}
+                    onClick={() => setActiveSubTab(id)}
+                    className={`flex items-center gap-1.5 px-4 sm:px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${
+                      activeSubTab === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <span className="sm:hidden">{icon}</span>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
                      </div>
           </div>
@@ -1598,7 +1558,8 @@ export default function AdminPanel() {
                     </div>
 
                     <div className="flex justify-end pt-2">
-                      <button onClick={handleSaveSettings} disabled={isSavingKey} className="bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20">
+                      <button onClick={handleSaveSettings} disabled={isSavingKey} className="w-full sm:w-auto bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2">
+                        <Save size={14} />
                         {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
                       </button>
                     </div>

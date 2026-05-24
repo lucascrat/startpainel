@@ -504,6 +504,22 @@ if (!EVOLUTION_WEBHOOK_SECRET) {
   console.warn('SECURITY: EVOLUTION_WEBHOOK_SECRET ausente — usando evolution_token do DB pra validar webhooks.');
 }
 
+// Cache da chave Gemini vinda da tabela settings (refresh a cada 60s).
+// O banco tem prioridade; GEMINI_API_KEY do .env serve de fallback.
+// Invalidado imediatamente quando o admin salva uma nova chave via painel.
+let _geminiKeyCache: { value: string | null; ts: number } = { value: null, ts: 0 };
+async function getGeminiApiKey(): Promise<string | null> {
+  if (Date.now() - _geminiKeyCache.ts < 60_000) return _geminiKeyCache.value;
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'gemini_api_key'");
+    const dbKey = r.rows[0]?.value?.trim() || null;
+    _geminiKeyCache = { value: dbKey || process.env.GEMINI_API_KEY || null, ts: Date.now() };
+  } catch {
+    _geminiKeyCache = { value: _geminiKeyCache.value ?? process.env.GEMINI_API_KEY ?? null, ts: Date.now() };
+  }
+  return _geminiKeyCache.value;
+}
+
 // Cache em memoria do evolution_token (refresh a cada 60s) — usado pra validar webhooks
 // quando EVOLUTION_WEBHOOK_SECRET nao esta setado. Evolution naturalmente envia 'apikey'
 // header com esse valor, entao a gente reaproveita pra autenticacao sem config extra.
@@ -650,7 +666,7 @@ function pcmToWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSamp
 
 async function generateGeminiTTS(text: string): Promise<{ base64: string; mimeType: string } | null> {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = await getGeminiApiKey();
     if (!apiKey || !text?.trim()) return null;
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
@@ -965,7 +981,7 @@ Responda APENAS com JSON valido neste formato exato:
   }
 }`;
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = await getGeminiApiKey();
     if (!apiKey) return;
     const genAISummary = new GoogleGenerativeAI(apiKey);
     const summaryModel = genAISummary.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -1315,8 +1331,8 @@ async function buildAppCatalogContext(): Promise<string> {
 
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not defined");
+    const apiKey = await getGeminiApiKey();
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada — adicione em Admin → ⚙️ Configurações");
     const GEMINI_MODEL = 'gemini-2.5-flash';
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
@@ -2306,6 +2322,8 @@ app.get('/api/settings/:key', async (req, res) => {
 app.post('/api/settings', requireAdmin, async (req, res) => {
   const { key, value } = req.body;
   await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()', [key, value]);
+  // Invalida caches que dependem de settings para que a nova valor seja lido imediatamente.
+  if (key === 'gemini_api_key') _geminiKeyCache = { value: null, ts: 0 };
   res.json({ success: true });
 });
 
