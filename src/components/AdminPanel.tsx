@@ -52,6 +52,7 @@ export default function AdminPanel() {
   const [m3uNewCodeCustom, setM3uNewCodeCustom] = useState('');
   const [m3uSaving, setM3uSaving] = useState(false);
   const [m3uTab, setM3uTab] = useState<'lists' | 'codes' | 'leases'>('lists');
+  const [m3uLastUpdated, setM3uLastUpdated] = useState<Date | null>(null);
 
   // Catálogo de apps para seleção ao cadastrar cliente
   const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null}[]>([]);
@@ -181,6 +182,15 @@ export default function AdminPanel() {
     }
   }, [activeSubTab]);
 
+  // Auto-refresh do Pool M3U a cada 5 segundos enquanto a aba estiver aberta
+  useEffect(() => {
+    if (activeSubTab !== 'm3u') return;
+    const interval = setInterval(() => {
+      loadM3uAll();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [activeSubTab]);
+
   const loadStartflixUsers = async () => {
     try {
       const response = await fetch('/api/startflix/users');
@@ -292,7 +302,8 @@ export default function AdminPanel() {
       setM3uCodes(Array.isArray(codes) ? codes : []);
       setM3uLeases(Array.isArray(leases) ? leases : []);
       setM3uStats(stats);
-    } catch (e: any) { toast.error('Erro ao carregar Pool M3U'); }
+      setM3uLastUpdated(new Date());
+    } catch (e: any) { /* silencioso no auto-refresh */ }
     finally { setM3uLoading(false); }
   };
 
@@ -1682,6 +1693,23 @@ export default function AdminPanel() {
             case 'm3u':
               return (
                 <div className="space-y-4">
+                  {/* Header com indicador de auto-refresh */}
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xs font-black text-slate-700 uppercase tracking-widest">Pool M3U</h2>
+                    <span className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                      </span>
+                      Ao vivo · atualiza a cada 5s
+                      {m3uLastUpdated && (
+                        <span className="text-emerald-400 ml-1">
+                          {m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
                   {/* Stats bar */}
                   {m3uStats && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1899,9 +1927,19 @@ export default function AdminPanel() {
                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
                           {m3uLeases.length} usuário(s) conectado(s) agora
                         </p>
-                        <button onClick={loadM3uAll} className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase transition-all">
-                          <RefreshCw size={12} /> Atualizar
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {/* Indicador live — atualiza a cada 5s */}
+                          <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-500 uppercase tracking-wide">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                            </span>
+                            Ao vivo · {m3uLastUpdated ? m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                          </span>
+                          <button onClick={loadM3uAll} className="flex items-center gap-1 text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase transition-all">
+                            <RefreshCw size={11} />
+                          </button>
+                        </div>
                       </div>
                       {m3uLoading && <p className="text-center text-xs text-slate-400 py-8">Carregando...</p>}
                       {!m3uLoading && m3uLeases.length === 0 && (
