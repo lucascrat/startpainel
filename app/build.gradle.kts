@@ -13,8 +13,8 @@ android {
         applicationId = "com.chegoja.usuario"
         minSdk = 21
         targetSdk = 35
-        versionCode = 15
-        versionName = "8.7"
+        versionCode = 16
+        versionName = "8.8"
     }
 
     signingConfigs {

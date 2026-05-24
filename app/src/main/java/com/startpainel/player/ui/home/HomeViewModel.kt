@@ -85,11 +85,12 @@ data class SearchResults(
 
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val store = ServiceLocator.credentialsStore(app)
-    private val repo  = ServiceLocator.repository()
-    private val downloadsStore = ServiceLocator.downloadsStore(app)
-    private val recordingsStore = ServiceLocator.recordingsStore(app)
-    private val contentCache = ServiceLocator.contentCache(app)
+    private val store       = ServiceLocator.credentialsStore(app)
+    private val leaseStore  = ServiceLocator.m3uLeaseStore(app)
+    private val repo        = ServiceLocator.repository()
+    private val downloadsStore   = ServiceLocator.downloadsStore(app)
+    private val recordingsStore  = ServiceLocator.recordingsStore(app)
+    private val contentCache     = ServiceLocator.contentCache(app)
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -270,6 +271,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         viewModelScope.launch {
             store.clear()
+            leaseStore.clear()     // garante que a lease M3U não é reutilizada após logout
             contentCache.clear()   // limpa cache pra próxima conta não herdar conteúdo
             allLive = emptyList(); allMovies = emptyList(); allSeries = emptyList()
             _state.update { HomeUiState() }
