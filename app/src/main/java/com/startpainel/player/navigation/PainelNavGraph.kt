@@ -48,14 +48,35 @@ fun PainelNavGraph() {
     LaunchedEffect(Unit) {
         val initial = store.account.first()
 
-        // Se há uma lease M3U salva, reinicia o heartbeat ao abrir o app
+        // Se há uma lease M3U salva, renova-a no servidor (pode ter expirado se o app ficou
+        // fechado por mais de 5 min e o servidor fez auto-release por inatividade).
         val savedLease = leaseStore.lease.first()
         if (savedLease != null && !M3uLeaseManager.hasActiveLease) {
-            M3uLeaseManager.start(
-                code       = savedLease.code,
-                leaseId    = savedLease.leaseId,
-                repository = ServiceLocator.panelRepository(),
-            )
+            val repo = ServiceLocator.panelRepository()
+            try {
+                // /api/m3u/access renova a lease existente (se ainda ativa) ou cria uma nova
+                val result = repo.m3uAccess(savedLease.code)
+                val resp   = result.getOrNull()
+                if (resp != null && resp.leaseId != null) {
+                    // Lease renovada/recriada — salva o leaseId atualizado e inicia heartbeat
+                    leaseStore.save(savedLease.copy(leaseId = resp.leaseId))
+                    M3uLeaseManager.start(
+                        code       = savedLease.code,
+                        leaseId    = resp.leaseId,
+                        repository = repo,
+                    )
+                } else {
+                    // Código inválido ou pool esgotado — limpa lease salva
+                    leaseStore.clear()
+                }
+            } catch (_: Exception) {
+                // Sem rede? Usa o leaseId salvo como fallback (servidor libera após 5 min sem hb)
+                M3uLeaseManager.start(
+                    code       = savedLease.code,
+                    leaseId    = savedLease.leaseId,
+                    repository = ServiceLocator.panelRepository(),
+                )
+            }
         }
 
         startDestination = if (initial != null) Routes.HOME else Routes.LOGIN

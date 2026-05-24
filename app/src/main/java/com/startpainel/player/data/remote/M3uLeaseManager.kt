@@ -39,7 +39,7 @@ object M3uLeaseManager {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive) {
-                delay(150_000L) // 2.5 minutos
+                delay(120_000L) // 2 minutos (servidor libera após 5 min sem heartbeat)
                 try {
                     repository.m3uHeartbeat(code, leaseId)
                 } catch (_: Exception) { /* falha silenciosa — servidor libera após 5 min */ }
