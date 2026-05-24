@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Fundo preto -->
+    <path
+        android:fillColor="#080808"
+        android:pathData="M0,0h320v180h-320z" />
+
+    <!-- Fundo vermelho arredondado (logo) -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M120,54 L148,54 C152.4,54 156,57.6 156,62 L156,118 C156,122.4 152.4,126 148,126 L120,126 C115.6,126 112,122.4 112,118 L112,62 C112,57.6 115.6,54 120,54 Z" />
+
+    <!-- Play triangle (branco) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M122,68 L122,112 L150,90 Z" />
+
+    <!-- Texto STARTFLIX -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M166,78 L170,78 L170,102 L166,102 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M174,78 L186,78 L186,82 L174,82 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M174,88 L184,88 L184,92 L174,92 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M174,98 L186,98 L186,102 L174,102 Z" />
+
+</vector>
