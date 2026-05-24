@@ -177,19 +177,18 @@ export default function AdminPanel() {
     if (activeSubTab === 'android') {
       loadAppDns();
     }
-    if (activeSubTab === 'm3u') {
-      loadM3uAll();
-    }
+    // Pool M3U não precisa aqui — o intervalo persistente já mantém os dados frescos
   }, [activeSubTab]);
 
-  // Auto-refresh do Pool M3U a cada 5 segundos enquanto a aba estiver aberta
+  // Auto-refresh persistente do Pool M3U — roda SEMPRE, independente da aba ativa.
+  // Inicia junto com o componente e só para quando o painel é desmontado.
   useEffect(() => {
-    if (activeSubTab !== 'm3u') return;
-    const interval = setInterval(() => {
-      loadM3uAll();
-    }, 5000);
+    // Carga inicial imediata
+    loadM3uAll(true);
+    const interval = setInterval(() => loadM3uAll(true), 5000);
     return () => clearInterval(interval);
-  }, [activeSubTab]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadStartflixUsers = async () => {
     try {
@@ -286,8 +285,9 @@ export default function AdminPanel() {
   };
 
   // === M3U Pool ===
-  const loadM3uAll = async () => {
-    setM3uLoading(true);
+  // silent=true → não ativa spinner (usado pelo intervalo em background)
+  const loadM3uAll = async (silent = false) => {
+    if (!silent) setM3uLoading(true);
     try {
       const [rLists, rCodes, rLeases, rStats] = await Promise.all([
         authFetch('/api/m3u/lists'),
@@ -303,8 +303,8 @@ export default function AdminPanel() {
       setM3uLeases(Array.isArray(leases) ? leases : []);
       setM3uStats(stats);
       setM3uLastUpdated(new Date());
-    } catch (e: any) { /* silencioso no auto-refresh */ }
-    finally { setM3uLoading(false); }
+    } catch { /* falha silenciosa — não quebra o painel */ }
+    finally { if (!silent) setM3uLoading(false); }
   };
 
   const handleM3uAddList = async () => {
