@@ -62,12 +62,13 @@ export default function AdminPanel() {
     android_link: '', ios_link: '', web_link: '',
     youtube_url: '', display_order: 0, is_active: true,
     app_image_url: '', install_video_url: '',
+    image_1_url: '', image_2_url: '', image_3_url: '', image_4_url: '', image_5_url: '',
   });
-  const [catalogUploading, setCatalogUploading] = useState<'image' | 'video' | null>(null);
+  const [catalogUploading, setCatalogUploading] = useState<string | null>(null);
   const [catalogSaving, setCatalogSaving] = useState(false);
 
   // Catálogo de apps para seleção ao cadastrar cliente
-  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null; install_video_url: string | null; youtube_url: string | null; description: string | null; display_order: number}[]>([]);
+  const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null; install_video_url: string | null; youtube_url: string | null; description: string | null; display_order: number; image_1_url: string | null; image_2_url: string | null; image_3_url: string | null; image_4_url: string | null; image_5_url: string | null}[]>([]);
   const [selectedCatalogAppId, setSelectedCatalogAppId] = useState<number | null>(null);
   // Catálogo selecionado no modal "Gerenciar Dispositivos"
   const [modalCatalogAppId, setModalCatalogAppId] = useState<number | null>(null);
@@ -424,8 +425,14 @@ export default function AdminPanel() {
     } catch {}
   };
 
+  const emptyCatalogForm = {
+    name: '', device_type: 'todos', description: '', android_link: '', ios_link: '', web_link: '',
+    youtube_url: '', display_order: 0, is_active: true, app_image_url: '', install_video_url: '',
+    image_1_url: '', image_2_url: '', image_3_url: '', image_4_url: '', image_5_url: '',
+  };
+
   const openNewCatalogForm = () => {
-    setCatalogForm({ name: '', device_type: 'todos', description: '', android_link: '', ios_link: '', web_link: '', youtube_url: '', display_order: 0, is_active: true, app_image_url: '', install_video_url: '' });
+    setCatalogForm(emptyCatalogForm);
     setEditingCatalogId('new');
   };
 
@@ -437,17 +444,21 @@ export default function AdminPanel() {
       youtube_url: app.youtube_url || '', display_order: app.display_order ?? 0,
       is_active: app.is_active ?? true, app_image_url: app.app_image_url || '',
       install_video_url: app.install_video_url || '',
+      image_1_url: app.image_1_url || '', image_2_url: app.image_2_url || '',
+      image_3_url: app.image_3_url || '', image_4_url: app.image_4_url || '',
+      image_5_url: app.image_5_url || '',
     });
     setEditingCatalogId(app.id);
   };
 
-  const handleCatalogUpload = async (file: File, field: 'app_image_url' | 'install_video_url') => {
+  // field: 'app_image_url' | 'install_video_url' | 'image_1_url'..'image_5_url'
+  const handleCatalogUpload = async (file: File, field: string) => {
     const isVideo = field === 'install_video_url';
     if (isVideo && !file.type.startsWith('video/')) { toast.error('Selecione um arquivo de vídeo (MP4, etc.)'); return; }
     if (!isVideo && !file.type.startsWith('image/')) { toast.error('Selecione um arquivo de imagem'); return; }
     const maxMb = isVideo ? 50 : 5;
     if (file.size > maxMb * 1024 * 1024) { toast.error(`Arquivo muito grande. Máximo ${maxMb}MB.`); return; }
-    setCatalogUploading(isVideo ? 'video' : 'image');
+    setCatalogUploading(field);
     try {
       const dataUrl: string = await new Promise((res, rej) => {
         const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file);
@@ -1889,13 +1900,13 @@ export default function AdminPanel() {
                                       </div>
                                     ) : (
                                       <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
-                                        catalogUploading === 'video' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 text-slate-500'
+                                        catalogUploading === 'install_video_url' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 text-slate-500'
                                       }`}>
                                         <input type="file" accept="video/*" className="hidden"
                                           onChange={e => e.target.files?.[0] && handleCatalogUpload(e.target.files[0], 'install_video_url')} />
                                         <span className="text-base">📹</span>
                                         <span className="text-[10px] font-black uppercase">
-                                          {catalogUploading === 'video' ? 'Enviando...' : 'Selecionar vídeo'}
+                                          {catalogUploading === 'install_video_url' ? 'Enviando...' : 'Selecionar vídeo'}
                                         </span>
                                       </label>
                                     )}
@@ -1910,13 +1921,50 @@ export default function AdminPanel() {
                                         )}
                                       </div>
                                       <label className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed cursor-pointer transition-all text-[10px] font-black uppercase ${
-                                        catalogUploading === 'image' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 text-slate-500'
+                                        catalogUploading === 'app_image_url' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 text-slate-500'
                                       }`}>
                                         <input type="file" accept="image/*" className="hidden"
                                           onChange={e => e.target.files?.[0] && handleCatalogUpload(e.target.files[0], 'app_image_url')} />
-                                        {catalogUploading === 'image' ? 'Enviando...' : 'Ícone do App'}
+                                        {catalogUploading === 'app_image_url' ? 'Enviando...' : 'Ícone do App'}
                                       </label>
                                     </div>
+                                  </div>
+                                </div>
+
+                                {/* Imagens tutoriais 1 a 5 (enviadas em sequência ao cliente) */}
+                                <div className="space-y-2 sm:col-span-2">
+                                  <label className="text-[9px] font-black text-slate-500 uppercase ml-1">
+                                    Imagens do tutorial (1 a 5) <span className="text-slate-400 normal-case font-normal">— enviadas em ordem como passos pelo WhatsApp, máx 5MB cada</span>
+                                  </label>
+                                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                    {([1, 2, 3, 4, 5] as const).map(n => {
+                                      const field = `image_${n}_url` as keyof typeof catalogForm;
+                                      const url = catalogForm[field] as string;
+                                      return (
+                                        <div key={n} className="relative">
+                                          <label className={`group flex flex-col items-center justify-center gap-1 aspect-square rounded-xl border-2 border-dashed cursor-pointer transition-all overflow-hidden ${
+                                            catalogUploading === field ? 'border-indigo-300 bg-indigo-50' : url ? 'border-emerald-300 bg-white' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50'
+                                          }`}>
+                                            <input type="file" accept="image/*" className="hidden"
+                                              onChange={e => e.target.files?.[0] && handleCatalogUpload(e.target.files[0], field)} />
+                                            {url ? (
+                                              <img src={url} alt={`Passo ${n}`} className="w-full h-full object-cover" />
+                                            ) : (
+                                              <>
+                                                <span className="text-[10px] font-black text-slate-400">{catalogUploading === field ? '...' : `+ ${n}`}</span>
+                                                <span className="text-[7px] font-bold text-slate-400 uppercase">Passo {n}</span>
+                                              </>
+                                            )}
+                                          </label>
+                                          {url && (
+                                            <button onClick={() => setCatalogForm(f => ({ ...f, [field]: '' }))}
+                                              className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 shadow-md hover:bg-rose-600 transition-all" title="Remover">
+                                              <X size={11} />
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               </div>

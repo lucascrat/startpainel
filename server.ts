@@ -165,6 +165,12 @@ async function initDB(retries = 5) {
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS dns TEXT`,
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS install_video_url TEXT`,
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS youtube_url TEXT`,
+        // Até 5 imagens tutoriais/screenshots enviadas ao cliente junto com o app
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_1_url TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_2_url TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_3_url TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_4_url TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_5_url TEXT`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
@@ -1942,6 +1948,11 @@ function normalizeAppCatalogPayload(b: any) {
     dns:                 b.dns ?? null,
     install_video_url:   b.install_video_url ?? b.installVideoUrl ?? null,
     youtube_url:         b.youtube_url ?? b.youtubeUrl ?? null,
+    image_1_url:         b.image_1_url ?? b.image1Url ?? null,
+    image_2_url:         b.image_2_url ?? b.image2Url ?? null,
+    image_3_url:         b.image_3_url ?? b.image3Url ?? null,
+    image_4_url:         b.image_4_url ?? b.image4Url ?? null,
+    image_5_url:         b.image_5_url ?? b.image5Url ?? null,
   };
 }
 
@@ -1952,11 +1963,13 @@ app.post('/api/app-catalog', requireAdmin, async (req, res) => {
     const result = await pool.query(
       `INSERT INTO app_catalog (name, display_order, description, app_image_url, example_image_url,
                                 example_instruction, android_link, ios_link, web_link, device_type, is_active, dns,
-                                install_video_url, youtube_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+                                install_video_url, youtube_url,
+                                image_1_url, image_2_url, image_3_url, image_4_url, image_5_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
       [a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
        a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
-       a.install_video_url, a.youtube_url]
+       a.install_video_url, a.youtube_url,
+       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url]
     );
     res.json(result.rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1981,11 +1994,17 @@ app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
          dns = COALESCE($13, dns),
          install_video_url = $14,
          youtube_url = $15,
+         image_1_url = $16,
+         image_2_url = $17,
+         image_3_url = $18,
+         image_4_url = $19,
+         image_5_url = $20,
          updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [req.params.id, a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
        a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
-       a.install_video_url, a.youtube_url]
+       a.install_video_url, a.youtube_url,
+       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
     res.json(result.rows[0]);
@@ -3583,6 +3602,23 @@ async function handleSendAppInfo(remoteJid: string, appId: number, customMessage
         }
       } catch (ve) {
         console.warn(`[Tool send_app_info] falha ao enviar vídeo de ${app.name}:`, ve);
+      }
+    }
+
+    // Envia imagens tutoriais (1 a 5, se cadastradas) na ordem
+    const tutorialImages = [
+      app.image_1_url, app.image_2_url, app.image_3_url, app.image_4_url, app.image_5_url,
+    ].filter((u: string | null) => !!u);
+    for (let i = 0; i < tutorialImages.length; i++) {
+      try {
+        const tImg = await urlToBase64(tutorialImages[i]);
+        if (tImg) {
+          const cap = `📸 Passo ${i + 1} — ${app.name}`;
+          await evo.sendMedia(remoteJid, tImg.base64, cap, `passo_${i + 1}_${app.name}.${tImg.mimeType.split('/')[1] || 'jpg'}`);
+          console.log(`[Tool] send_app_info: enviou imagem ${i + 1} do ${app.name}`);
+        }
+      } catch (ie) {
+        console.warn(`[Tool send_app_info] falha ao enviar imagem ${i + 1} de ${app.name}:`, ie);
       }
     }
 
