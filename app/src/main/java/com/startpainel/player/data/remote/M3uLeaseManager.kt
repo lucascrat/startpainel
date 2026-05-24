@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Singleton que gerencia o heartbeat de uma lease M3U ativa.
@@ -37,25 +38,42 @@ object M3uLeaseManager {
         repoRef        = repository
 
         heartbeatJob?.cancel()
-        heartbeatJob = scope.launch {
-            while (isActive) {
-                delay(120_000L) // 2 minutos (servidor libera após 5 min sem heartbeat)
-                try {
-                    repository.m3uHeartbeat(code, leaseId)
-                } catch (_: Exception) { /* falha silenciosa — servidor libera após 5 min */ }
-            }
-        }
+        heartbeatJob = null
+        resumeHeartbeat()
     }
 
-    /** Para o heartbeat sem enviar release (servidor auto-libera após 5 min sem heartbeat). */
+    /**
+     * Para o heartbeat sem enviar release (quando app vai para background).
+     * O servidor auto-libera após 5 min sem heartbeat.
+     */
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
     }
 
     /**
-     * Envia release explícito ao servidor e para o heartbeat.
-     * Deve ser chamado no logout ou ao fechar o app definitivamente.
+     * Retoma o heartbeat quando o app volta do background.
+     * Só age se há uma lease ativa (currentCode/currentLeaseId definidos).
+     */
+    fun resumeHeartbeat() {
+        val code    = currentCode    ?: return
+        val leaseId = currentLeaseId ?: return
+        val repo    = repoRef        ?: return
+        if (heartbeatJob?.isActive == true) return // já está rodando
+
+        heartbeatJob = scope.launch {
+            // Envia um heartbeat imediato ao retornar do background para renovar a lease
+            try { repo.m3uHeartbeat(code, leaseId) } catch (_: Exception) { }
+            while (isActive) {
+                delay(120_000L)
+                try { repo.m3uHeartbeat(code, leaseId) } catch (_: Exception) { }
+            }
+        }
+    }
+
+    /**
+     * Envia release explícito ao servidor de forma assíncrona (fire-and-forget).
+     * Usar apenas quando o processo ainda vai continuar rodando depois (ex: logout).
      */
     fun release() {
         val code      = currentCode    ?: return
@@ -70,5 +88,27 @@ object M3uLeaseManager {
         scope.launch {
             try { repo.m3uRelease(code, leaseId) } catch (_: Exception) { /* best-effort */ }
         }
+    }
+
+    /**
+     * Envia release explícito de forma **síncrona** (suspend).
+     * Usar em onDestroy() via runBlocking para garantir que a request seja enviada
+     * antes do processo ser encerrado pelo Android.
+     */
+    suspend fun releaseSync() {
+        val code    = currentCode    ?: return
+        val leaseId = currentLeaseId ?: return
+        val repo    = repoRef        ?: return
+
+        heartbeatJob?.cancel()
+        heartbeatJob   = null
+        currentCode    = null
+        currentLeaseId = null
+
+        try {
+            withContext(Dispatchers.IO) {
+                repo.m3uRelease(code, leaseId)
+            }
+        } catch (_: Exception) { /* best-effort */ }
     }
 }

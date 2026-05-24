@@ -9,6 +9,8 @@ import com.startpainel.player.data.remote.M3uLeaseManager
 import com.startpainel.player.navigation.PainelNavGraph
 import com.startpainel.player.ui.player.PipController
 import com.startpainel.player.ui.theme.PainelTheme
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
 
@@ -34,11 +36,36 @@ class MainActivity : ComponentActivity() {
         PipController.onPipModeChanged(isInPipMode)
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Quando o app vai para background (Home, troca de app, recentes):
+        // Para o heartbeat para não manter lease "ocupada" com ninguém assistindo.
+        // A lease expira automaticamente no servidor após 5 min sem heartbeat.
+        // (não interrompe em rotação de tela — isChangingConfigurations cobre isso)
+        if (!isChangingConfigurations && !isFinishing) {
+            M3uLeaseManager.stop()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Quando o app volta do background, retoma o heartbeat para manter a lease viva.
+        if (M3uLeaseManager.hasActiveLease) {
+            M3uLeaseManager.resumeHeartbeat()
+        }
+    }
+
     override fun onDestroy() {
-        // Libera a lease M3U quando o app é fechado definitivamente
-        // (não em rotação de tela — isChangingConfigurations cobre isso)
+        // Libera a lease M3U quando o app é fechado definitivamente.
+        // Usa runBlocking para bloquear a thread principal até a request HTTP ser enviada —
+        // sem isso, o Android mata o processo antes da coroutine fire-and-forget completar.
+        // Timeout de 3s evita ANR (limite do sistema é 5s para activities).
         if (!isChangingConfigurations) {
-            M3uLeaseManager.release()
+            runBlocking {
+                withTimeoutOrNull(3_000L) {
+                    M3uLeaseManager.releaseSync()
+                }
+            }
         }
         super.onDestroy()
     }
