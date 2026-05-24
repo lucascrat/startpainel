@@ -53,6 +53,7 @@ export default function AdminPanel() {
   const [m3uSaving, setM3uSaving] = useState(false);
   const [m3uTab, setM3uTab] = useState<'lists' | 'codes' | 'leases'>('lists');
   const [m3uLastUpdated, setM3uLastUpdated] = useState<Date | null>(null);
+  const [m3uFetchError, setM3uFetchError] = useState<string | null>(null);
 
   // === Gerenciamento do Catálogo de Apps ===
   const [editingCatalogId, setEditingCatalogId] = useState<number | 'new' | null>(null);
@@ -194,8 +195,8 @@ export default function AdminPanel() {
   // Auto-refresh persistente do Pool M3U — roda SEMPRE, independente da aba ativa.
   // Inicia junto com o componente e só para quando o painel é desmontado.
   useEffect(() => {
-    // Carga inicial imediata
-    loadM3uAll(true);
+    // Primeira carga com spinner (silent=false) para erros ficarem visíveis imediatamente
+    loadM3uAll(false);
     const interval = setInterval(() => loadM3uAll(true), 5000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -306,6 +307,13 @@ export default function AdminPanel() {
         authFetch('/api/m3u/leases'),
         authFetch('/api/m3u/stats'),
       ]);
+
+      // Verifica status HTTP antes de tentar parsear JSON
+      if (!rLists.ok || !rCodes.ok || !rLeases.ok || !rStats.ok) {
+        const failedStatus = [rLists, rCodes, rLeases, rStats].find(r => !r.ok)?.status;
+        throw new Error(`HTTP ${failedStatus}`);
+      }
+
       const [lists, codes, leases, stats] = await Promise.all([
         rLists.json(), rCodes.json(), rLeases.json(), rStats.json(),
       ]);
@@ -314,7 +322,13 @@ export default function AdminPanel() {
       setM3uLeases(Array.isArray(leases) ? leases : []);
       setM3uStats(stats);
       setM3uLastUpdated(new Date());
-    } catch { /* falha silenciosa — não quebra o painel */ }
+      setM3uFetchError(null); // limpa erro anterior ao ter sucesso
+    } catch (e: any) {
+      // Registra o erro para exibição — não quebra o painel
+      const msg = e?.message || 'Falha ao carregar';
+      setM3uFetchError(msg);
+      console.warn('[M3U Pool] Erro ao carregar dados:', msg);
+    }
     finally { if (!silent) setM3uLoading(false); }
   };
 
@@ -1995,18 +2009,24 @@ export default function AdminPanel() {
                   {/* Header com indicador de auto-refresh */}
                   <div className="flex items-center justify-between">
                     <h2 className="text-xs font-black text-slate-700 uppercase tracking-widest">Pool M3U</h2>
-                    <span className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                    {m3uFetchError ? (
+                      <span className="flex items-center gap-1.5 text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-1 rounded-full">
+                        ⚠ Erro ao carregar · {m3uFetchError}
                       </span>
-                      Ao vivo · atualiza a cada 5s
-                      {m3uLastUpdated && (
-                        <span className="text-emerald-400 ml-1">
-                          {m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
                         </span>
-                      )}
-                    </span>
+                        Ao vivo · atualiza a cada 5s
+                        {m3uLastUpdated && (
+                          <span className="text-emerald-400 ml-1">
+                            {m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </div>
 
                   {/* Stats bar */}
@@ -2227,21 +2247,29 @@ export default function AdminPanel() {
                           {m3uLeases.length} usuário(s) conectado(s) agora
                         </p>
                         <div className="flex items-center gap-2">
-                          {/* Indicador live — atualiza a cada 5s */}
-                          <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-500 uppercase tracking-wide">
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                          {/* Badge de erro quando o fetch falha */}
+                          {m3uFetchError && (
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-rose-500 uppercase tracking-wide bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                              ⚠ Erro: {m3uFetchError}
                             </span>
-                            Ao vivo · {m3uLastUpdated ? m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
-                          </span>
-                          <button onClick={loadM3uAll} className="flex items-center gap-1 text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase transition-all">
+                          )}
+                          {/* Indicador live — atualiza a cada 5s */}
+                          {!m3uFetchError && (
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-500 uppercase tracking-wide">
+                              <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                              </span>
+                              Ao vivo · {m3uLastUpdated ? m3uLastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                            </span>
+                          )}
+                          <button onClick={() => loadM3uAll(false)} className="flex items-center gap-1 text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase transition-all">
                             <RefreshCw size={11} />
                           </button>
                         </div>
                       </div>
                       {m3uLoading && <p className="text-center text-xs text-slate-400 py-8">Carregando...</p>}
-                      {!m3uLoading && m3uLeases.length === 0 && (
+                      {!m3uLoading && m3uLeases.length === 0 && !m3uFetchError && (
                         <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nenhum usuário conectado</p>
                         </div>
