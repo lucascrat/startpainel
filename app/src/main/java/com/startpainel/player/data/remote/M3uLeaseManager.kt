@@ -65,7 +65,7 @@ object M3uLeaseManager {
             // Envia um heartbeat imediato ao retornar do background para renovar a lease
             try { repo.m3uHeartbeat(code, leaseId) } catch (_: Exception) { }
             while (isActive) {
-                delay(120_000L)
+                delay(40_000L) // 40s — servidor libera após 100s sem heartbeat
                 try { repo.m3uHeartbeat(code, leaseId) } catch (_: Exception) { }
             }
         }
