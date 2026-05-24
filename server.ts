@@ -266,19 +266,22 @@ async function initDB(retries = 5) {
 
 initDB();
 
-// Auto-release de leases M3U inativas — roda a cada 60s.
-// Se o app não mandou heartbeat nos últimos 5 min, a lista volta ao pool.
+// Auto-release de leases M3U inativas — roda a cada 20s.
+// Se o app não mandou heartbeat nos últimos 100s, a lista volta ao pool.
+// (o app envia heartbeat a cada 40s, então tolera ~2 heartbeats perdidos antes de liberar.)
+// Esse é o mecanismo CONFIÁVEL de liberação — o onDestroy do Android não é garantido
+// pelo sistema, então o painel reflete a realidade em no máximo ~2 min mesmo sem release.
 setInterval(async () => {
   try {
     const r = await pool.query(
       `UPDATE m3u_leases SET is_active = false, released_at = NOW()
        WHERE is_active = true
-         AND last_heartbeat < NOW() - INTERVAL '5 minutes'`
+         AND last_heartbeat < NOW() - INTERVAL '100 seconds'`
     );
     if (r.rowCount && r.rowCount > 0)
       console.log(`[M3U] Auto-liberou ${r.rowCount} lease(s) por inatividade.`);
   } catch { /* ignora — db pode ainda estar inicializando */ }
-}, 60_000);
+}, 20_000);
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
