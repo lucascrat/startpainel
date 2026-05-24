@@ -210,6 +210,38 @@ async function initDB(retries = 5) {
         )`,
         `CREATE INDEX IF NOT EXISTS leads_status_idx ON leads(status, last_contact DESC)`,
         `CREATE INDEX IF NOT EXISTS leads_alt_jid_idx ON leads(alt_jid) WHERE alt_jid IS NOT NULL`,
+        // === POOL DE LISTAS M3U ===
+        // Sistema de compartilhamento de listas: 50 listas servem 100+ usuarios
+        // pois nem todos ficam online ao mesmo tempo. Cada acesso "reserva" uma lista
+        // que volta ao pool quando o usuario sai ou perde o heartbeat.
+        `CREATE TABLE IF NOT EXISTS m3u_pool_lists (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          m3u_url TEXT NOT NULL,
+          notes TEXT,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS m3u_access_codes (
+          id SERIAL PRIMARY KEY,
+          code VARCHAR(32) UNIQUE NOT NULL,
+          label TEXT,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS m3u_leases (
+          id SERIAL PRIMARY KEY,
+          code VARCHAR(32) NOT NULL,
+          list_id INTEGER REFERENCES m3u_pool_lists(id),
+          device_id TEXT,
+          leased_at TIMESTAMP DEFAULT NOW(),
+          last_heartbeat TIMESTAMP DEFAULT NOW(),
+          released_at TIMESTAMP,
+          is_active BOOLEAN DEFAULT true
+        )`,
+        `CREATE INDEX IF NOT EXISTS m3u_leases_active_idx ON m3u_leases(is_active, last_heartbeat)`,
+        `CREATE INDEX IF NOT EXISTS m3u_leases_code_active_idx ON m3u_leases(code, is_active)`,
+        `CREATE INDEX IF NOT EXISTS m3u_lists_active_idx ON m3u_pool_lists(is_active)`,
       ];
       for (const sql of alters) {
         try { await client.query(sql); } catch (e: any) { console.warn('PG: alter falhou:', e.message); }
@@ -231,6 +263,20 @@ async function initDB(retries = 5) {
 }
 
 initDB();
+
+// Auto-release de leases M3U inativas — roda a cada 60s.
+// Se o app não mandou heartbeat nos últimos 5 min, a lista volta ao pool.
+setInterval(async () => {
+  try {
+    const r = await pool.query(
+      `UPDATE m3u_leases SET is_active = false, released_at = NOW()
+       WHERE is_active = true
+         AND last_heartbeat < NOW() - INTERVAL '5 minutes'`
+    );
+    if (r.rowCount && r.rowCount > 0)
+      console.log(`[M3U] Auto-liberou ${r.rowCount} lease(s) por inatividade.`);
+  } catch { /* ignora — db pode ainda estar inicializando */ }
+}, 60_000);
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -2325,6 +2371,297 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
   // Invalida caches que dependem de settings para que a nova valor seja lido imediatamente.
   if (key === 'gemini_api_key') _geminiKeyCache = { value: null, ts: 0 };
   res.json({ success: true });
+});
+
+// ============================================================
+// POOL M3U — Sistema de compartilhamento de listas
+// ============================================================
+
+// --- Helpers internos ---
+
+/** Gera código alfanumérico único de 8 caracteres */
+function generateM3uCode(): string {
+  return crypto.randomBytes(4).toString('hex').toUpperCase(); // ex: A3F92B1C
+}
+
+/** Retorna a lease ativa de um código (se existir) */
+async function getActiveLease(code: string) {
+  const r = await pool.query(
+    `SELECT l.*, p.m3u_url, p.name AS list_name
+     FROM m3u_leases l
+     JOIN m3u_pool_lists p ON p.id = l.list_id
+     WHERE l.code = $1 AND l.is_active = true
+     LIMIT 1`,
+    [code]
+  );
+  return r.rows[0] || null;
+}
+
+/** Atribui uma lista livre ao código e devolve a lease criada */
+async function acquireLease(code: string, deviceId?: string) {
+  // Escolhe uma lista ativa que NÃO está em uso por nenhuma lease ativa
+  const listRes = await pool.query(
+    `SELECT id, name, m3u_url FROM m3u_pool_lists
+     WHERE is_active = true
+       AND id NOT IN (
+         SELECT list_id FROM m3u_leases WHERE is_active = true
+       )
+     ORDER BY id
+     LIMIT 1`
+  );
+  if (!listRes.rows[0]) return null; // pool esgotado
+
+  const list = listRes.rows[0];
+  const ins = await pool.query(
+    `INSERT INTO m3u_leases (code, list_id, device_id)
+     VALUES ($1, $2, $3)
+     RETURNING id, leased_at`,
+    [code, list.id, deviceId || null]
+  );
+  return { ...ins.rows[0], m3u_url: list.m3u_url, list_name: list.name };
+}
+
+// --- Admin: Pool de listas ---
+
+app.get('/api/m3u/lists', requireAdmin, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT l.*,
+         (SELECT COUNT(*) FROM m3u_leases ls
+          WHERE ls.list_id = l.id AND ls.is_active = true) AS active_leases
+       FROM m3u_pool_lists l
+       ORDER BY l.created_at DESC`
+    );
+    res.json(r.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/m3u/lists', requireAdmin, async (req, res) => {
+  try {
+    const { name, m3u_url, notes } = req.body;
+    if (!name || !m3u_url) return res.status(400).json({ error: 'name e m3u_url são obrigatórios' });
+    const r = await pool.query(
+      `INSERT INTO m3u_pool_lists (name, m3u_url, notes) VALUES ($1, $2, $3) RETURNING *`,
+      [name.trim(), m3u_url.trim(), notes?.trim() || null]
+    );
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/m3u/lists/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Libera leases ativas antes de remover
+    await pool.query(
+      `UPDATE m3u_leases SET is_active = false, released_at = NOW()
+       WHERE list_id = $1 AND is_active = true`, [id]
+    );
+    await pool.query('DELETE FROM m3u_pool_lists WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/m3u/lists/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, m3u_url, notes, is_active } = req.body;
+    await pool.query(
+      `UPDATE m3u_pool_lists SET
+        name = COALESCE($1, name),
+        m3u_url = COALESCE($2, m3u_url),
+        notes = COALESCE($3, notes),
+        is_active = COALESCE($4, is_active)
+       WHERE id = $5`,
+      [name, m3u_url, notes, is_active, id]
+    );
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Admin: Códigos de acesso ---
+
+app.get('/api/m3u/codes', requireAdmin, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT c.*,
+         (SELECT COUNT(*) FROM m3u_leases l
+          WHERE l.code = c.code AND l.is_active = true) AS active_leases
+       FROM m3u_access_codes c
+       ORDER BY c.created_at DESC`
+    );
+    res.json(r.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/m3u/codes', requireAdmin, async (req, res) => {
+  try {
+    const { label, code: customCode } = req.body;
+    const code = (customCode?.trim().toUpperCase()) || generateM3uCode();
+    const r = await pool.query(
+      `INSERT INTO m3u_access_codes (code, label) VALUES ($1, $2)
+       ON CONFLICT (code) DO NOTHING RETURNING *`,
+      [code, label?.trim() || null]
+    );
+    if (!r.rows[0]) return res.status(409).json({ error: 'Código já existe' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/m3u/codes/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Pega o code antes de deletar para revogar leases
+    const codeRes = await pool.query('SELECT code FROM m3u_access_codes WHERE id = $1', [id]);
+    if (codeRes.rows[0]) {
+      await pool.query(
+        `UPDATE m3u_leases SET is_active = false, released_at = NOW()
+         WHERE code = $1 AND is_active = true`, [codeRes.rows[0].code]
+      );
+    }
+    await pool.query('DELETE FROM m3u_access_codes WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Admin: Leases ativas ---
+
+app.get('/api/m3u/leases', requireAdmin, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT l.*, p.name AS list_name, p.m3u_url,
+         ROUND(EXTRACT(EPOCH FROM (NOW() - l.leased_at)) / 60) AS minutes_connected,
+         ROUND(EXTRACT(EPOCH FROM (NOW() - l.last_heartbeat)) / 60) AS minutes_since_heartbeat
+       FROM m3u_leases l
+       JOIN m3u_pool_lists p ON p.id = l.list_id
+       WHERE l.is_active = true
+       ORDER BY l.leased_at DESC`
+    );
+    res.json(r.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/m3u/leases/:id/revoke', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE m3u_leases SET is_active = false, released_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: estatísticas rápidas
+app.get('/api/m3u/stats', requireAdmin, async (_req, res) => {
+  try {
+    const [lists, codes, leases] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE is_active) AS active FROM m3u_pool_lists`),
+      pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE is_active) AS active FROM m3u_access_codes`),
+      pool.query(`SELECT COUNT(*) AS active FROM m3u_leases WHERE is_active = true`),
+    ]);
+    const totalActive = parseInt(lists.rows[0].active);
+    const inUse = parseInt(leases.rows[0].active);
+    res.json({
+      lists_total: parseInt(lists.rows[0].total),
+      lists_active: totalActive,
+      lists_in_use: inUse,
+      lists_available: totalActive - inUse,
+      codes_total: parseInt(codes.rows[0].total),
+      codes_active: parseInt(codes.rows[0].active),
+      leases_active: inUse,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Endpoints públicos (chamados pelo app) ---
+
+/**
+ * POST /api/m3u/access
+ * Body: { code: string, device_id?: string }
+ * Retorna a URL M3U atribuída ao código (ou reutiliza lease ativa).
+ */
+app.post('/api/m3u/access', async (req, res) => {
+  try {
+    const { code, device_id } = req.body;
+    if (!code) return res.status(400).json({ error: 'code obrigatório' });
+
+    const codeUpper = String(code).trim().toUpperCase();
+
+    // Valida código
+    const codeRes = await pool.query(
+      `SELECT * FROM m3u_access_codes WHERE code = $1 AND is_active = true`, [codeUpper]
+    );
+    if (!codeRes.rows[0]) return res.status(403).json({ error: 'Código inválido ou desativado' });
+
+    // Se já tem lease ativa, renova heartbeat e devolve
+    const existing = await getActiveLease(codeUpper);
+    if (existing) {
+      await pool.query(
+        `UPDATE m3u_leases SET last_heartbeat = NOW() WHERE id = $1`, [existing.id]
+      );
+      return res.json({
+        success: true,
+        lease_id: existing.id,
+        m3u_url: existing.m3u_url,
+        list_name: existing.list_name,
+        reused: true,
+      });
+    }
+
+    // Adquire nova lease
+    const lease = await acquireLease(codeUpper, device_id);
+    if (!lease) {
+      return res.status(503).json({
+        error: 'Todas as listas estão em uso no momento. Tente novamente em alguns minutos.',
+        pool_exhausted: true,
+      });
+    }
+
+    console.log(`[M3U] Lease criada: code=${codeUpper} → lista="${lease.list_name}" (id=${lease.id})`);
+    res.json({
+      success: true,
+      lease_id: lease.id,
+      m3u_url: lease.m3u_url,
+      list_name: lease.list_name,
+      reused: false,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/m3u/heartbeat
+ * Body: { code: string, lease_id: number }
+ * Mantém a lease viva. O app deve chamar a cada 2-3 minutos.
+ */
+app.post('/api/m3u/heartbeat', async (req, res) => {
+  try {
+    const { code, lease_id } = req.body;
+    const r = await pool.query(
+      `UPDATE m3u_leases SET last_heartbeat = NOW()
+       WHERE id = $1 AND code = $2 AND is_active = true
+       RETURNING id`,
+      [lease_id, String(code).trim().toUpperCase()]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Lease não encontrada ou expirada' });
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/m3u/release
+ * Body: { code: string, lease_id: number }
+ * Libera a lista de volta ao pool quando o usuário sai do app.
+ */
+app.post('/api/m3u/release', async (req, res) => {
+  try {
+    const { code, lease_id } = req.body;
+    await pool.query(
+      `UPDATE m3u_leases SET is_active = false, released_at = NOW()
+       WHERE id = $1 AND code = $2 AND is_active = true`,
+      [lease_id, String(code).trim().toUpperCase()]
+    );
+    console.log(`[M3U] Lease liberada: code=${code} lease_id=${lease_id}`);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // Messages & Contacts

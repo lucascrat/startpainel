@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings' | 'm3u'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
@@ -36,6 +36,22 @@ export default function AdminPanel() {
   const [appDnsList, setAppDnsList] = useState<string[]>(['', '', '', '', '']);
   const [appDnsLoading, setAppDnsLoading] = useState(false);
   const [appDnsSaving, setAppDnsSaving] = useState(false);
+
+  // === Pool M3U ===
+  const [m3uLists, setM3uLists] = useState<any[]>([]);
+  const [m3uCodes, setM3uCodes] = useState<any[]>([]);
+  const [m3uLeases, setM3uLeases] = useState<any[]>([]);
+  const [m3uStats, setM3uStats] = useState<any>(null);
+  const [m3uLoading, setM3uLoading] = useState(false);
+  // form: nova lista
+  const [m3uNewName, setM3uNewName] = useState('');
+  const [m3uNewUrl, setM3uNewUrl] = useState('');
+  const [m3uNewNotes, setM3uNewNotes] = useState('');
+  // form: novo código
+  const [m3uNewCodeLabel, setM3uNewCodeLabel] = useState('');
+  const [m3uNewCodeCustom, setM3uNewCodeCustom] = useState('');
+  const [m3uSaving, setM3uSaving] = useState(false);
+  const [m3uTab, setM3uTab] = useState<'lists' | 'codes' | 'leases'>('lists');
 
   // Catálogo de apps para seleção ao cadastrar cliente
   const [catalogApps, setCatalogApps] = useState<{id: number; name: string; app_image_url: string | null; device_type: string; is_active: boolean; android_link: string | null; ios_link: string | null; web_link: string | null}[]>([]);
@@ -160,6 +176,9 @@ export default function AdminPanel() {
     if (activeSubTab === 'android') {
       loadAppDns();
     }
+    if (activeSubTab === 'm3u') {
+      loadM3uAll();
+    }
   }, [activeSubTab]);
 
   const loadStartflixUsers = async () => {
@@ -253,6 +272,99 @@ export default function AdminPanel() {
       const d = await r.json();
       if (d.success) { toast.success(`Nova senha de ${username}: ${d.password}`); loadWarezClients(); }
       else toast.error(d.error || 'Erro ao resetar senha');
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  // === M3U Pool ===
+  const loadM3uAll = async () => {
+    setM3uLoading(true);
+    try {
+      const [rLists, rCodes, rLeases, rStats] = await Promise.all([
+        authFetch('/api/m3u/lists'),
+        authFetch('/api/m3u/codes'),
+        authFetch('/api/m3u/leases'),
+        authFetch('/api/m3u/stats'),
+      ]);
+      const [lists, codes, leases, stats] = await Promise.all([
+        rLists.json(), rCodes.json(), rLeases.json(), rStats.json(),
+      ]);
+      setM3uLists(Array.isArray(lists) ? lists : []);
+      setM3uCodes(Array.isArray(codes) ? codes : []);
+      setM3uLeases(Array.isArray(leases) ? leases : []);
+      setM3uStats(stats);
+    } catch (e: any) { toast.error('Erro ao carregar Pool M3U'); }
+    finally { setM3uLoading(false); }
+  };
+
+  const handleM3uAddList = async () => {
+    if (!m3uNewName.trim() || !m3uNewUrl.trim()) { toast.error('Nome e URL são obrigatórios'); return; }
+    setM3uSaving(true);
+    try {
+      const r = await authFetch('/api/m3u/lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: m3uNewName, m3u_url: m3uNewUrl, notes: m3uNewNotes }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      toast.success('Lista adicionada ao pool!');
+      setM3uNewName(''); setM3uNewUrl(''); setM3uNewNotes('');
+      loadM3uAll();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setM3uSaving(false); }
+  };
+
+  const handleM3uDeleteList = async (id: number) => {
+    if (!confirm('Remover esta lista do pool? Leases ativas serão liberadas.')) return;
+    try {
+      await authFetch(`/api/m3u/lists/${id}`, { method: 'DELETE' });
+      toast.success('Lista removida');
+      loadM3uAll();
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleM3uToggleList = async (id: number, is_active: boolean) => {
+    try {
+      await authFetch(`/api/m3u/lists/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !is_active }),
+      });
+      loadM3uAll();
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleM3uAddCode = async () => {
+    setM3uSaving(true);
+    try {
+      const r = await authFetch('/api/m3u/codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: m3uNewCodeLabel, code: m3uNewCodeCustom }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      toast.success(`Código criado: ${d.code}`);
+      setM3uNewCodeLabel(''); setM3uNewCodeCustom('');
+      loadM3uAll();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setM3uSaving(false); }
+  };
+
+  const handleM3uDeleteCode = async (id: number) => {
+    if (!confirm('Remover este código? O usuário perderá acesso imediatamente.')) return;
+    try {
+      await authFetch(`/api/m3u/codes/${id}`, { method: 'DELETE' });
+      toast.success('Código removido');
+      loadM3uAll();
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleM3uRevokeLeases = async (id: number) => {
+    try {
+      await authFetch(`/api/m3u/leases/${id}/revoke`, { method: 'POST' });
+      toast.success('Lease revogada — lista voltou ao pool');
+      loadM3uAll();
     } catch (e: any) { toast.error(e.message); }
   };
 
@@ -1077,6 +1189,7 @@ export default function AdminPanel() {
                     { id: 'wareztv',     label: 'Wareztv',       icon: <Tv size={12} /> },
                     { id: 'android',     label: 'App Android',   icon: <Smartphone size={12} /> },
                     { id: 'settings',    label: 'Config',        icon: <Save size={12} /> },
+                    { id: 'm3u',         label: 'Pool M3U',      icon: <Globe size={12} /> },
                   ] as { id: typeof activeSubTab; label: string; icon: React.ReactNode }[]
                 ).map(({ id, label, icon }) => (
                   <button
@@ -1564,6 +1677,263 @@ export default function AdminPanel() {
                       </button>
                     </div>
                   </div>
+                </div>
+              );
+            case 'm3u':
+              return (
+                <div className="space-y-4">
+                  {/* Stats bar */}
+                  {m3uStats && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Listas no Pool', value: m3uStats.lists_active, color: 'bg-slate-900 text-white', sub: `${m3uStats.lists_total} total` },
+                        { label: 'Em Uso Agora',   value: m3uStats.lists_in_use,  color: 'bg-amber-500 text-white',  sub: 'leases ativas' },
+                        { label: 'Disponíveis',    value: m3uStats.lists_available, color: 'bg-emerald-500 text-white', sub: 'prontas p/ usar' },
+                        { label: 'Códigos Ativos', value: m3uStats.codes_active,  color: 'bg-indigo-500 text-white',  sub: `${m3uStats.codes_total} total` },
+                      ].map(s => (
+                        <div key={s.label} className={`${s.color} p-4 rounded-2xl shadow-sm`}>
+                          <p className="text-[9px] font-black uppercase tracking-widest opacity-70">{s.label}</p>
+                          <p className="text-3xl font-black mt-1">{s.value ?? '—'}</p>
+                          <p className="text-[9px] opacity-60 mt-0.5">{s.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Sub-tabs */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl overflow-x-auto no-scrollbar">
+                    {(['lists', 'codes', 'leases'] as const).map(t => (
+                      <button
+                        key={t}
+                        onClick={() => setM3uTab(t)}
+                        className={`flex-1 py-2 px-4 rounded-lg text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${
+                          m3uTab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {t === 'lists' ? '📋 Listas' : t === 'codes' ? '🔑 Códigos' : '📡 Conectados'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* ---- Listas ---- */}
+                  {m3uTab === 'lists' && (
+                    <div className="space-y-4">
+                      {/* Formulário adicionar */}
+                      <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                          <Plus size={14} className="text-emerald-500" /> Adicionar Lista ao Pool
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Nome Identificador</label>
+                            <input
+                              value={m3uNewName} onChange={e => setM3uNewName(e.target.value)}
+                              placeholder="ex: Lista Premium 01"
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">URL M3U</label>
+                            <input
+                              value={m3uNewUrl} onChange={e => setM3uNewUrl(e.target.value)}
+                              placeholder="http://servidor.com:8080/get.php?username=...&type=m3u"
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div className="space-y-1 sm:col-span-2">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Observações (opcional)</label>
+                            <input
+                              value={m3uNewNotes} onChange={e => setM3uNewNotes(e.target.value)}
+                              placeholder="ex: 4K, validade 2026..."
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleM3uAddList} disabled={m3uSaving}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-slate-900 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50"
+                        >
+                          <Plus size={14} /> {m3uSaving ? 'Salvando...' : 'Adicionar ao Pool'}
+                        </button>
+                      </div>
+
+                      {/* Lista de URLs */}
+                      <div className="space-y-2">
+                        {m3uLoading && <p className="text-center text-xs text-slate-400 py-8">Carregando...</p>}
+                        {!m3uLoading && m3uLists.length === 0 && (
+                          <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nenhuma lista no pool ainda</p>
+                          </div>
+                        )}
+                        {m3uLists.map(list => (
+                          <div key={list.id} className={`bg-white rounded-2xl border p-4 flex flex-col sm:flex-row sm:items-center gap-3 transition-all ${
+                            list.is_active ? 'border-slate-200' : 'border-slate-100 opacity-50'
+                          }`}>
+                            <div className="flex-1 min-w-0 space-y-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-black text-slate-800">{list.name}</span>
+                                {Number(list.active_leases) > 0 && (
+                                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full uppercase">
+                                    Em uso
+                                  </span>
+                                )}
+                                {!list.is_active && (
+                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black rounded-full uppercase">
+                                    Pausada
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-mono truncate">{list.m3u_url}</p>
+                              {list.notes && <p className="text-[9px] text-slate-500 italic">{list.notes}</p>}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                onClick={() => handleM3uToggleList(list.id, list.is_active)}
+                                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
+                                  list.is_active
+                                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                }`}
+                              >
+                                {list.is_active ? 'Pausar' : 'Ativar'}
+                              </button>
+                              <button
+                                onClick={() => handleM3uDeleteList(list.id)}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ---- Códigos ---- */}
+                  {m3uTab === 'codes' && (
+                    <div className="space-y-4">
+                      {/* Formulário novo código */}
+                      <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                          <Key size={14} className="text-indigo-500" /> Gerar Código de Acesso
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Identificação (opcional)</label>
+                            <input
+                              value={m3uNewCodeLabel} onChange={e => setM3uNewCodeLabel(e.target.value)}
+                              placeholder="ex: Cliente João, Plano Basic..."
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Código personalizado (opcional)</label>
+                            <input
+                              value={m3uNewCodeCustom} onChange={e => setM3uNewCodeCustom(e.target.value.toUpperCase())}
+                              placeholder="AUTO se vazio — ex: JOAO2026"
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono uppercase outline-none focus:ring-2 focus:ring-indigo-500"
+                              maxLength={32}
+                            />
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-slate-400 -mt-1">
+                          Deixe o código em branco para gerar automaticamente (8 caracteres aleatórios).
+                        </p>
+                        <button
+                          onClick={handleM3uAddCode} disabled={m3uSaving}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all disabled:opacity-50"
+                        >
+                          <Key size={14} /> {m3uSaving ? 'Gerando...' : 'Gerar Código'}
+                        </button>
+                      </div>
+
+                      {/* Lista de códigos */}
+                      <div className="space-y-2">
+                        {m3uLoading && <p className="text-center text-xs text-slate-400 py-8">Carregando...</p>}
+                        {!m3uLoading && m3uCodes.length === 0 && (
+                          <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nenhum código criado ainda</p>
+                          </div>
+                        )}
+                        {m3uCodes.map(c => (
+                          <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                            <div className="flex-1 min-w-0 space-y-0.5">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <code className="text-sm font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-lg tracking-widest">
+                                  {c.code}
+                                </code>
+                                {c.label && <span className="text-xs text-slate-600 font-bold">{c.label}</span>}
+                                {Number(c.active_leases) > 0 && (
+                                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full uppercase">
+                                    Conectado
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[9px] text-slate-400">Criado {new Date(c.created_at).toLocaleDateString('pt-BR')}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                onClick={() => { navigator.clipboard.writeText(c.code); toast.success(`Código ${c.code} copiado!`); }}
+                                className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all"
+                              >
+                                Copiar
+                              </button>
+                              <button
+                                onClick={() => handleM3uDeleteCode(c.id)}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ---- Conectados / Leases ---- */}
+                  {m3uTab === 'leases' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                          {m3uLeases.length} usuário(s) conectado(s) agora
+                        </p>
+                        <button onClick={loadM3uAll} className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase transition-all">
+                          <RefreshCw size={12} /> Atualizar
+                        </button>
+                      </div>
+                      {m3uLoading && <p className="text-center text-xs text-slate-400 py-8">Carregando...</p>}
+                      {!m3uLoading && m3uLeases.length === 0 && (
+                        <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nenhum usuário conectado</p>
+                        </div>
+                      )}
+                      {m3uLeases.map(lease => (
+                        <div key={lease.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <code className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded tracking-widest">{lease.code}</code>
+                              <span className="text-xs font-bold text-slate-700">→ {lease.list_name}</span>
+                              <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                            </div>
+                            <div className="flex items-center gap-4 flex-wrap text-[9px] text-slate-400 font-bold uppercase">
+                              <span>⏱ {lease.minutes_connected} min conectado</span>
+                              <span>💓 heartbeat {lease.minutes_since_heartbeat} min atrás</span>
+                              {lease.device_id && <span>📱 {lease.device_id}</span>}
+                            </div>
+                            <p className="text-[9px] text-slate-300 font-mono truncate">{lease.m3u_url}</p>
+                          </div>
+                          <button
+                            onClick={() => handleM3uRevokeLeases(lease.id)}
+                            className="shrink-0 px-3 py-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg text-[9px] font-black uppercase transition-all"
+                          >
+                            Revogar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             case 'financial':
