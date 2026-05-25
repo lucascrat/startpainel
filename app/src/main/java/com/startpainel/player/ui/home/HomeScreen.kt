@@ -81,6 +81,7 @@ import android.content.res.Configuration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -1242,78 +1243,105 @@ private fun AdultPinDialog(
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Dialog(onDismissRequest = onDismiss) {
-        Box(
-            Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color(0xFF1A1A1A))
-                .padding(24.dp)
+    fun press(key: String) {
+        error = false
+        if (key == "⌫") {
+            if (pin.isNotEmpty()) pin = pin.dropLast(1)
+        } else if (pin.length < 4) {
+            pin += key
+            if (pin.length == 4) {
+                val ok = onConfirm(pin)
+                if (!ok) { error = true; pin = "" }
+            }
+        }
+    }
+
+    // Tamanho das teclas adaptado à orientação (menor em paisagem pra caber na altura).
+    val keySize = if (isLandscape) 46.dp else 56.dp
+    val keyGap  = if (isLandscape) 6.dp else 8.dp
+
+    // Bloco de informações (ícone, título, dots, erro)
+    val info: @Composable () -> Unit = {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 12.dp)
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Ícone
-                Box(
-                    Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(BrandBlue.copy(0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("🔞", fontSize = 28.sp)
+            Box(
+                Modifier.size(if (isLandscape) 48.dp else 56.dp)
+                    .clip(RoundedCornerShape(16.dp)).background(BrandBlue.copy(0.15f)),
+                contentAlignment = Alignment.Center
+            ) { Text("🔞", fontSize = if (isLandscape) 24.sp else 28.sp) }
+            Text("Conteúdo Adulto", color = Color.White, fontSize = if (isLandscape) 15.sp else 17.sp, fontWeight = FontWeight.Bold)
+            Text("Digite o PIN", color = Color.White.copy(0.5f), fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(4) { i ->
+                    Box(
+                        Modifier.size(14.dp).clip(RoundedCornerShape(7.dp))
+                            .background(if (i < pin.length) BrandBlue else Color.White.copy(0.2f))
+                    )
                 }
+            }
+            if (error) Text("PIN incorreto", color = ErrorRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
 
-                Text("Conteúdo Adulto", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Digite o PIN para continuar", color = Color.White.copy(0.5f), fontSize = 13.sp)
-
-                // Dots indicadores
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    repeat(4) { i ->
-                        Box(
-                            Modifier.size(14.dp).clip(RoundedCornerShape(7.dp))
-                                .background(if (i < pin.length) BrandBlue else Color.White.copy(0.2f))
-                        )
-                    }
-                }
-
-                if (error) {
-                    Text("PIN incorreto", color = ErrorRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
-
-                // Numpad
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("1 2 3", "4 5 6", "7 8 9", "  0 ⌫").forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.trim().split(" ").forEach { key ->
-                                if (key.isBlank()) {
-                                    Spacer(Modifier.size(56.dp))
-                                } else {
-                                    Box(
-                                        Modifier.size(56.dp).clip(RoundedCornerShape(12.dp))
-                                            .background(Color.White.copy(0.1f))
-                                            .clickable {
-                                                error = false
-                                                if (key == "⌫") {
-                                                    if (pin.isNotEmpty()) pin = pin.dropLast(1)
-                                                } else if (pin.length < 4) {
-                                                    pin += key
-                                                    if (pin.length == 4) {
-                                                        val ok = onConfirm(pin)
-                                                        if (!ok) { error = true; pin = "" }
-                                                    }
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(key, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
+    // Teclado numérico
+    val numpad: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(keyGap)) {
+            listOf("1 2 3", "4 5 6", "7 8 9", "  0 ⌫").forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
+                    row.trim().split(" ").forEach { key ->
+                        if (key.isBlank()) {
+                            Spacer(Modifier.size(keySize))
+                        } else {
+                            Box(
+                                Modifier.size(keySize).clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(0.1f))
+                                    .clickable { press(key) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(key, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
                 }
+            }
+        }
+    }
 
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text("Cancelar", color = Color.White.copy(0.4f))
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFF1A1A1A))
+                .padding(20.dp)
+        ) {
+            if (isLandscape) {
+                // Paisagem: info à esquerda, teclado à direita (cabe na altura reduzida da TV/celular deitado)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        info()
+                        numpad()
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White.copy(0.4f)) }
+                }
+            } else {
+                // Retrato: layout vertical clássico
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    info()
+                    numpad()
+                    TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                        Text("Cancelar", color = Color.White.copy(0.4f))
+                    }
                 }
             }
         }
