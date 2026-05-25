@@ -157,6 +157,9 @@ export default function AdminPanel() {
   // URL do servidor XC IPTV / IPTV Smarters
   const [xciptvUrl, setXciptvUrl] = useState('http://smartlite.site:8880');
   const [isSavingXcUrl, setIsSavingXcUrl] = useState(false);
+  // Autenticação SmartOne
+  const [isAuthSmartOne, setIsAuthSmartOne] = useState(false);
+  const [smartOneAuthMsg, setSmartOneAuthMsg] = useState('');
 
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
@@ -1068,6 +1071,27 @@ export default function AdminPanel() {
       toast.success('Tabela de preços atualizada! A IA já usa os novos valores.');
     } catch { toast.error('Erro ao salvar preços.'); }
     finally { setIsSavingPrices(false); }
+  };
+
+  const handleAuthSmartOne = async () => {
+    setIsAuthSmartOne(true);
+    setSmartOneAuthMsg('Abrindo browser no worker... Aguarde o browser abrir e faça login no SmartOne (até 3 min).');
+    try {
+      const res = await authFetch('/api/automations/smartone/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json();
+      if (data.success) {
+        setSmartOneAuthMsg('✅ ' + (data.message || 'Sessão SmartOne autenticada com sucesso!'));
+        toast.success('SmartOne autenticado! Automações prontas.');
+      } else {
+        setSmartOneAuthMsg('❌ ' + (data.message || 'Falha na autenticação.'));
+        toast.error('Falha ao autenticar SmartOne.');
+      }
+    } catch (e: any) {
+      setSmartOneAuthMsg('❌ Erro: ' + e.message);
+      toast.error('Erro ao autenticar SmartOne.');
+    } finally {
+      setIsAuthSmartOne(false);
+    }
   };
 
   const handleSaveXcUrl = async () => {
@@ -2076,6 +2100,35 @@ export default function AdminPanel() {
                       >
                         <Save size={13} />
                         {isSavingXcUrl ? 'Salvando...' : 'Salvar URL'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ───── Autenticação SmartOne ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <span className="text-base">📺</span>
+                      <div>
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Autenticação SmartOne</h3>
+                        <p className="text-[9px] text-slate-400 mt-0.5">O site SmartOne usa Cloudflare. Clique para abrir o browser no worker e faça login uma vez — a sessão fica salva para todas as automações.</p>
+                      </div>
+                    </div>
+
+                    {smartOneAuthMsg && (
+                      <p className="text-[10px] text-slate-600 bg-slate-50 rounded-2xl px-4 py-3 border border-slate-200 font-mono whitespace-pre-wrap">{smartOneAuthMsg}</p>
+                    )}
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleAuthSmartOne}
+                        disabled={isAuthSmartOne}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-purple-900/20"
+                      >
+                        {isAuthSmartOne ? (
+                          <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Aguardando login...</>
+                        ) : (
+                          <>🔐 Autenticar SmartOne</>
+                        )}
                       </button>
                     </div>
                   </div>

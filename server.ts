@@ -3238,6 +3238,16 @@ app.post('/api/automations/smartone/setup', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Abre browser visível no worker para login manual do SmartOne (resolve Cloudflare Turnstile)
+app.post('/api/automations/smartone/init', async (req, res) => {
+  try {
+    const jobId = await enqueueJob('smartone_init', {});
+    // Aguarda até 4 minutos (o usuário precisa logar manualmente no browser)
+    const result = await waitForJob(jobId, 240_000);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/automations/startpainel/create-client', async (req, res) => {
   try {
     const { username } = req.body;

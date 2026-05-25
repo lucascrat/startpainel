@@ -27,7 +27,7 @@ import {
 } from './src/services/startpainel-puppeteer.js';
 import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
-import { runSmartOneSetup } from './src/services/smartone-service.js';
+import { runSmartOneSetup, initSmartOneSession } from './src/services/smartone-service.js';
 
 const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
 const WORKER_TOKEN = process.env.WORKER_TOKEN;
@@ -81,6 +81,7 @@ const handlers: Record<string, JobHandler> = {
   ibo_repair:        ({ mac, key, playlistUrl }, p) => runIBORepairAutomation(mac, key, playlistUrl, p),
   ibo_pro_setup:     ({ mac, key, playlistUrl }, p) => runIBOProAutomation(mac, key, playlistUrl, p),
   smartone_setup:    ({ mac, listName, playlistUrl }, p) => runSmartOneSetup(mac, listName, playlistUrl, p),
+  smartone_init:     (_payload: any, _p: number) => initSmartOneSession(),
 };
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
