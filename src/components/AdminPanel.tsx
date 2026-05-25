@@ -143,6 +143,18 @@ export default function AdminPanel() {
   const [migrateLoading, setMigrateLoading] = useState(false);
   const [migrateResult, setMigrateResult] = useState<{warez_username: string; warez_password: string; exp_date: string; plan: string} | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Tabela de preços de venda — planos
+  const [planPrice1, setPlanPrice1] = useState('25');
+  const [planPrice2, setPlanPrice2] = useState('40');
+  const [planPrice3, setPlanPrice3] = useState('60');
+  // Tabela de preços de venda — taxa de ativação apps pagos
+  const [feeIbo, setFeeIbo] = useState('10');
+  const [feeIboPro, setFeeIboPro] = useState('10');
+  const [feeVuPlayer, setFeeVuPlayer] = useState('10');
+  const [feeBobPlayer, setFeeBobPlayer] = useState('10');
+  const [isSavingPrices, setIsSavingPrices] = useState(false);
+
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
   const [geminiKeyConfigured, setGeminiKeyConfigured] = useState(false);
@@ -189,6 +201,9 @@ export default function AdminPanel() {
     }
     if (activeSubTab === 'android') {
       loadAppDns();
+    }
+    if (activeSubTab === 'settings') {
+      loadSettings();
     }
     // Pool M3U não precisa aqui — o intervalo persistente já mantém os dados frescos
   }, [activeSubTab]);
@@ -610,6 +625,28 @@ export default function AdminPanel() {
       const resWa = await authFetch('/api/settings/whatsapp_support');
       const dataWa = await resWa.json();
       if (dataWa.value) setWhatsappSupport(dataWa.value);
+
+      // Preços de venda dos planos + taxas de apps pagos
+      const [resP1, resP2, resP3, resFIbo, resFIboPro, resFVu, resFBob] = await Promise.all([
+        authFetch('/api/settings/plan_price_1'),
+        authFetch('/api/settings/plan_price_2'),
+        authFetch('/api/settings/plan_price_3'),
+        authFetch('/api/settings/app_fee_ibo'),
+        authFetch('/api/settings/app_fee_ibo_pro'),
+        authFetch('/api/settings/app_fee_vu_player'),
+        authFetch('/api/settings/app_fee_bob_player'),
+      ]);
+      const [dp1, dp2, dp3, dfIbo, dfIboPro, dfVu, dfBob] = await Promise.all([
+        resP1.json(), resP2.json(), resP3.json(),
+        resFIbo.json(), resFIboPro.json(), resFVu.json(), resFBob.json(),
+      ]);
+      if (dp1.value) setPlanPrice1(dp1.value);
+      if (dp2.value) setPlanPrice2(dp2.value);
+      if (dp3.value) setPlanPrice3(dp3.value);
+      if (dfIbo.value) setFeeIbo(dfIbo.value);
+      if (dfIboPro.value) setFeeIboPro(dfIboPro.value);
+      if (dfVu.value) setFeeVuPlayer(dfVu.value);
+      if (dfBob.value) setFeeBobPlayer(dfBob.value);
     } catch (error) {}
   };
 
@@ -986,6 +1023,43 @@ export default function AdminPanel() {
       toast.success('Configurações salvas!');
       loadSettings();
     } catch (error) {} finally { setIsSavingKey(false); }
+  };
+
+  const handleSavePrices = async () => {
+    const p1 = parseFloat(planPrice1);
+    const p2 = parseFloat(planPrice2);
+    const p3 = parseFloat(planPrice3);
+    const fi  = parseFloat(feeIbo);
+    const fip = parseFloat(feeIboPro);
+    const fv  = parseFloat(feeVuPlayer);
+    const fb  = parseFloat(feeBobPlayer);
+    if ([p1,p2,p3,fi,fip,fv,fb].some(v => isNaN(v) || v < 0)) {
+      toast.error('Informe valores válidos em todos os campos.');
+      return;
+    }
+    if (p1 >= p2 || p2 >= p3) {
+      toast.error('Os preços dos planos devem ser crescentes: 1 tela < 2 telas < 3 telas.');
+      return;
+    }
+    setIsSavingPrices(true);
+    try {
+      const save = (key: string, value: number) => authFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value: String(value) }),
+      });
+      await Promise.all([
+        save('plan_price_1', p1),
+        save('plan_price_2', p2),
+        save('plan_price_3', p3),
+        save('app_fee_ibo', fi),
+        save('app_fee_ibo_pro', fip),
+        save('app_fee_vu_player', fv),
+        save('app_fee_bob_player', fb),
+      ]);
+      toast.success('Tabela de preços atualizada! A IA já usa os novos valores.');
+    } catch { toast.error('Erro ao salvar preços.'); }
+    finally { setIsSavingPrices(false); }
   };
 
   const handleBroadcast = async () => {
@@ -1792,6 +1866,156 @@ export default function AdminPanel() {
                       <button onClick={handleSaveSettings} disabled={isSavingKey} className="w-full sm:w-auto bg-emerald-500 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2">
                         <Save size={14} />
                         {isSavingKey ? 'Salvando...' : 'Salvar Configurações'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ───── Tabela de Preços de Venda ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-5">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <DollarSign size={18} className="text-emerald-500" />
+                      <div>
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Tabela de Preços de Venda</h3>
+                        <p className="text-[9px] text-slate-400 mt-0.5">Valores que a IA informa aos clientes. Alterações entram em vigor imediatamente.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* 1 Tela */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">1 Tela</span>
+                          <span className="text-[9px] bg-blue-100 text-blue-600 font-bold px-2 py-0.5 rounded-full">Básico</span>
+                        </div>
+                        <p className="text-[9px] text-slate-400">1 dispositivo simultâneo</p>
+                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                          <span className="text-[11px] font-black text-slate-500">R$</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="0.01"
+                            value={planPrice1}
+                            onChange={e => setPlanPrice1(e.target.value)}
+                            className="bg-transparent border-none text-slate-800 text-lg font-black w-full focus:ring-0 outline-none"
+                          />
+                          <span className="text-[9px] text-slate-400 whitespace-nowrap">/mês</span>
+                        </div>
+                      </div>
+
+                      {/* 2 Telas */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">2 Telas</span>
+                          <span className="text-[9px] bg-emerald-100 text-emerald-600 font-bold px-2 py-0.5 rounded-full">Popular</span>
+                        </div>
+                        <p className="text-[9px] text-slate-400">2 dispositivos simultâneos</p>
+                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                          <span className="text-[11px] font-black text-slate-500">R$</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="0.01"
+                            value={planPrice2}
+                            onChange={e => setPlanPrice2(e.target.value)}
+                            className="bg-transparent border-none text-slate-800 text-lg font-black w-full focus:ring-0 outline-none"
+                          />
+                          <span className="text-[9px] text-slate-400 whitespace-nowrap">/mês</span>
+                        </div>
+                      </div>
+
+                      {/* 3 Telas */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">3 Telas</span>
+                          <span className="text-[9px] bg-purple-100 text-purple-600 font-bold px-2 py-0.5 rounded-full">Premium</span>
+                        </div>
+                        <p className="text-[9px] text-slate-400">3 dispositivos simultâneos</p>
+                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                          <span className="text-[11px] font-black text-slate-500">R$</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="0.01"
+                            value={planPrice3}
+                            onChange={e => setPlanPrice3(e.target.value)}
+                            className="bg-transparent border-none text-slate-800 text-lg font-black w-full focus:ring-0 outline-none"
+                          />
+                          <span className="text-[9px] text-slate-400 whitespace-nowrap">/mês</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Taxa de ativação — Apps Pagos */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-px flex-1 bg-slate-100" />
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Taxa de Ativação — Apps Pagos (por aparelho / ano)</span>
+                        <div className="h-px flex-1 bg-slate-100" />
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {([
+                          { label: 'IBO Player',  value: feeIbo,       set: setFeeIbo,       color: 'border-orange-200 bg-orange-50' },
+                          { label: 'IBO Pro',     value: feeIboPro,    set: setFeeIboPro,    color: 'border-orange-200 bg-orange-50' },
+                          { label: 'VU Player',   value: feeVuPlayer,  set: setFeeVuPlayer,  color: 'border-violet-200 bg-violet-50' },
+                          { label: 'BOB Player',  value: feeBobPlayer, set: setFeeBobPlayer, color: 'border-rose-200 bg-rose-50' },
+                        ] as { label: string; value: string; set: (v: string) => void; color: string }[]).map(({ label, value, set, color }) => (
+                          <div key={label} className={`border ${color} rounded-2xl p-3 space-y-2`}>
+                            <span className="text-[10px] font-black text-slate-600 block">{label}</span>
+                            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2 py-1.5">
+                              <span className="text-[10px] font-black text-slate-400">R$</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={value}
+                                onChange={e => set(e.target.value)}
+                                className="bg-transparent border-none text-slate-800 text-sm font-black w-full focus:ring-0 outline-none"
+                              />
+                              <span className="text-[8px] text-slate-400 whitespace-nowrap">/ativ.</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Preview do que a IA vai falar */}
+                    <div className="bg-slate-900 rounded-2xl p-4 space-y-2">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preview — O que a IA informará ao cliente</p>
+                      <div className="flex flex-wrap gap-3 mt-2">
+                        {[
+                          { label: '1 tela', value: planPrice1, color: 'text-blue-400' },
+                          { label: '2 telas', value: planPrice2, color: 'text-emerald-400' },
+                          { label: '3 telas', value: planPrice3, color: 'text-purple-400' },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-xl">
+                            <span className="text-[10px] text-slate-400">{label}:</span>
+                            <span className={`text-[13px] font-black ${color}`}>R$ {value || '—'}</span>
+                            <span className="text-[9px] text-slate-500">/mês</span>
+                          </div>
+                        ))}
+                        {([
+                          { label: 'IBO', fee: feeIbo },
+                          { label: 'IBO Pro', fee: feeIboPro },
+                          { label: 'VU Player', fee: feeVuPlayer },
+                          { label: 'BOB Player', fee: feeBobPlayer },
+                        ] as { label: string; fee: string }[]).map(({ label, fee }) => (
+                          <div key={label} className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-xl">
+                            <span className="text-[10px] text-slate-400">{label}:</span>
+                            <span className="text-[13px] font-black text-orange-400">+R$ {fee || '—'}</span>
+                            <span className="text-[9px] text-slate-500">/ativ.</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSavePrices}
+                        disabled={isSavingPrices}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-emerald-900/20"
+                      >
+                        <Save size={13} />
+                        {isSavingPrices ? 'Salvando...' : 'Salvar Preços'}
                       </button>
                     </div>
                   </div>
