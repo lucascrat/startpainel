@@ -113,3 +113,65 @@ export async function getReseller() {
 export async function getProducts() {
   return wz<any>('GET', '/products');
 }
+
+// ── Ativação de app na TV (App + Nome da Lista + MAC/Código) ────────────────
+// O `nameApp` que a API espera é o "value" (sem espaços), NÃO o label visível.
+// Apps "xstream" usam Código no lugar do MAC e vão para outra rota.
+export interface WarezTvApp {
+  value: string;     // o que a API espera em nameApp
+  label: string;     // nome amigável
+  xstream: boolean;  // true = usa Código (rota /xstream); false = usa MAC
+}
+
+export const WAREZ_TV_APPS: WarezTvApp[] = [
+  { value: 'WTV Player/Wapp', label: 'WTV Player/Wapp', xstream: true },
+  { value: 'XCloud',          label: 'XCloud',          xstream: true },
+  { value: 'Kplay',           label: 'Kplay',           xstream: true },
+  { value: 'BrasilIPTV',      label: 'Brasil IPTV',     xstream: false },
+  { value: 'EasyPlayer',      label: 'Easy Player',     xstream: false },
+  { value: 'IPTV+',           label: 'IPTV+',           xstream: false },
+  { value: 'IPTVNextPlayer',  label: 'IPTV Next Player',xstream: false },
+  { value: 'IPTVPlayerio',    label: 'IPTV Player io',  xstream: false },
+  { value: 'IPTVProPlayer',   label: 'IPTV Pro Player', xstream: false },
+  { value: 'IPTVStarPlayer',  label: 'IPTV Star Player',xstream: false },
+  { value: 'IPlayer',         label: 'I Player',        xstream: false },
+  { value: 'OttPlayer',       label: 'Ott Player',      xstream: false },
+  { value: 'TVVision',        label: 'TV Vision',       xstream: false },
+  { value: 'TiviPlayerIPTV',  label: 'TiviPlayer IPTV', xstream: false },
+  { value: 'IPTV4K',          label: 'IPTV 4K',         xstream: false },
+];
+
+const norm = (s: string) => (s || '').toLowerCase().replace(/[\s\/_+-]/g, '');
+
+/** Resolve um nome livre (label, value ou variação) para o app da Warez. */
+export function resolveWarezApp(name: string): WarezTvApp | null {
+  if (!name) return null;
+  const k = norm(name);
+  return (
+    WAREZ_TV_APPS.find(a => norm(a.label) === k || norm(a.value) === k) ||
+    WAREZ_TV_APPS.find(a => norm(a.label).includes(k) || norm(a.value).includes(k)) ||
+    null
+  );
+}
+
+/**
+ * Ativa um app na TV do cliente.
+ * @param app         App resolvido (value + xstream).
+ * @param namePlaylist Nome da lista que aparece no app.
+ * @param macOrCode   MAC (apps comuns) ou Código (apps xstream).
+ * @param lineId      id_user = id da linha Warez do cliente.
+ */
+export async function activateApp(
+  app: WarezTvApp,
+  namePlaylist: string,
+  macOrCode: string,
+  lineId: number,
+): Promise<{ success: boolean }> {
+  const path = app.xstream ? '/lines/active/app/xstream' : '/lines/active/app';
+  return wz<{ success: boolean }>('POST', path, {
+    nameApp: app.value,
+    namePlaylist,
+    mac: macOrCode,
+    id_user: lineId,
+  });
+}

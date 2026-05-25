@@ -1830,6 +1830,12 @@ DIFERENÇAS DO WAREZTV:
 TOOLS WAREZTV:
 - wareztv_generate_test(notes): gera teste 6h — retorna usuário e senha. Use quando cliente pede teste no Wareztv.
 - wareztv_create_client(name, whatsapp, days): cria cliente pago. Use após cliente fechar negócio.
+- warez_activate_app(username, app_name, mac, list_name): ativa um app de TV na conta do cliente Wareztv pelo MAC (ou Código). Use quando o cliente Wareztv tem SmartTV/TVBox com um app compatível e te passa o MAC.
+
+ATIVAÇÃO DE APP POR MAC (Wareztv):
+- Apps que ativam por *MAC*: Brasil IPTV, Easy Player, IPTV+, IPTV Next Player, IPTV Player io, IPTV Pro Player, IPTV Star Player, I Player, Ott Player, TV Vision, TiviPlayer IPTV, IPTV 4K.
+- Apps que ativam por *Código* (não MAC): XCloud, WTV Player/Wapp, Kplay.
+- Peça o MAC (ou código) do aparelho, confirme qual app o cliente tem e chame *warez_activate_app*. O sistema cadastra sozinho — não precisa o cliente fazer nada manual.
 
 COMO RECONHECER CLIENTE WAREZTV:
 - Menciona "Wareztv", "Wplay", "Krator", "Nexus" ou pergunta sobre esses apps.
@@ -1912,13 +1918,14 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
           // Teste GRATIS de 6h — cria cliente no CMS + ativa player com MAC em uma acao
           {
             name: "create_test_account",
-            description: "Cria uma conta de TESTE gratuita de 6 horas pro cliente novo em um player EXTERNO (Fun Play, Ultra Player, Lazer Play, X-Cloud ou See Play). Faz 2 coisas: (1) cadastra novo cliente, (2) ativa o player com o MAC do aparelho. Use APENAS quando o cliente JA TEM instalado um desses players E passou o MAC. NAO use para StartFlix — se o cliente pediu StartFlix, use generate_startflix_access. NAO use se o cliente nao mencionou nenhum desses apps especificamente. NUNCA use quando o cliente esta apenas agradecendo ('obrigado', 'valeu', 'top'), saudando ('oi', 'bom dia') ou confirmando que funcionou — nesses casos so responda em texto.",
+            description: "Cria uma conta de TESTE gratuita de 6 horas pro cliente novo em um player EXTERNO (Fun Play, Ultra Player, Lazer Play, X-Cloud, See Play, SmartOne ou VU Player Pro). Faz 2 coisas: (1) cadastra novo cliente, (2) ativa o player com o MAC do aparelho ou no site oficial (SmartOne/VU Player Pro). Use APENAS quando o cliente JA TEM instalado um desses players E passou o MAC. NAO use para StartFlix — se o cliente pediu StartFlix, use generate_startflix_access. NAO use se o cliente nao mencionou nenhum desses apps especificamente. NUNCA use quando o cliente esta apenas agradecendo ('obrigado', 'valeu', 'top'), saudando ('oi', 'bom dia') ou confirmando que funcionou — nesses casos so responda em texto.",
             parameters: {
               type: "OBJECT",
               properties: {
-                player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'X-Cloud', 'See Play'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
+                player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'X-Cloud', 'See Play', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
                 mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
                 username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: se voce sabe o primeiro nome do cliente (ex: 'João') → use '{nome}appbr' em minúsculas sem acento (ex: 'joaoappbr'). Se nao souber o nome → use 'Testeappbr1', 'Testeappbr2', etc (número sequencial curto). NUNCA use 'Teste123' genérico — sempre siga esse padrão." },
+                device_key: { type: "STRING", description: "Senha / Device Key do app (obrigatório para VU Player Pro, opcional para outros, ex: '687840')." },
               },
               required: ["player_name", "mac"],
             },
@@ -1978,6 +1985,18 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
               required: ["username"],
             },
           },
+          // Reparo da lista do VU Player Pro
+          {
+            name: "repair_vupro_playlist",
+            description: "Verifica validade e reativa/atualiza automaticamente a playlist do cliente no app VU Player Pro (vuproplayer.com/login). USE QUANDO: cliente reporta 'sem sinal', 'canais nao abrem', 'app sem conteudo', 'lista sumiu' E usa VU Player Pro.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+              },
+              required: ["username"],
+            },
+          },
           // Ativação/configuração do SmartOne
           {
             name: "activate_smartone",
@@ -2028,6 +2047,20 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
                 days: { type: "NUMBER", description: "Dias do plano. Padrao: 30." },
               },
               required: ["name"],
+            },
+          },
+          {
+            name: "warez_activate_app",
+            description: "Ativa um aplicativo de TV na conta de um cliente WAREZTV automaticamente (cadastra App + Nome da Lista + MAC no painel Wareztv). USE QUANDO: cliente Wareztv tem uma SmartTV/TVBox com um desses apps e quer configurar pelo MAC. Apps suportados: Brasil IPTV, Easy Player, IPTV+, IPTV Next Player, IPTV Player io, IPTV Pro Player, IPTV Star Player, I Player, Ott Player, TV Vision, TiviPlayer IPTV, IPTV 4K (esses usam MAC); e XCloud, WTV Player/Wapp, Kplay (esses usam CODIGO no lugar do MAC). Requer o cliente ja existir no Wareztv (username) e o MAC/codigo do aparelho.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username:  { type: "STRING", description: "Username do cliente Wareztv (do CONTEXTO DO CLIENTE)." },
+                app_name:  { type: "STRING", description: "Nome do app que o cliente esta usando. Ex: 'IPTV Pro Player', 'Easy Player', 'XCloud'." },
+                mac:       { type: "STRING", description: "MAC do aparelho (apps comuns) ou Codigo (apps XCloud/WTV Player/Kplay)." },
+                list_name: { type: "STRING", description: "Nome da lista que aparece no app. Opcional — se vazio, usa o nome do cliente." },
+              },
+              required: ["username", "app_name", "mac"],
             },
           },
         ]
@@ -3248,6 +3281,18 @@ app.post('/api/automations/smartone/init', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/automations/vupro/setup', async (req, res) => {
+  try {
+    const { mac, deviceKey, playlistUrl, listName } = req.body;
+    if (!mac || !playlistUrl) return res.status(400).json({ error: 'mac e playlistUrl obrigatorios' });
+    const key = deviceKey || '687840';
+    const name = listName || 'Lista Cliente';
+    const jobId = await enqueueJob('vupro_setup', { mac, deviceKey: key, playlistUrl, listName: name });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/automations/startpainel/create-client', async (req, res) => {
   try {
     const { username } = req.body;
@@ -3747,6 +3792,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'repair_ibo_playlist') {
           const ok = await handleRepairIboPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'repair_vupro_playlist') {
+          const ok = await handleRepairVUProPlaylist(remoteJid, call.args.username);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'activate_player') {
           const ok = await handleActivatePlayerAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
@@ -3755,6 +3803,9 @@ app.post('/api/webhooks/evolution/:event?',
           if (ok) toolsThatSent++;
         } else if (call.name === 'wareztv_create_client') {
           const ok = await handleWareztvCreateClient(remoteJid, call.args);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'warez_activate_app') {
+          const ok = await handleWareztvActivateApp(remoteJid, call.args);
           if (ok) toolsThatSent++;
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
@@ -4161,13 +4212,13 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     }
 
     // Valida que e um dos players suportados (caso a IA invente um nome)
-    const validPlayers = ['ultra player', 'fun play', 'lazer play', 'x-cloud', 'xcloud', 'see play'];
+    const validPlayers = ['ultra player', 'fun play', 'lazer play', 'x-cloud', 'xcloud', 'see play', 'smartone', 'smart-one', 'smart one', 'vu player pro', 'vupro', 'vu player'];
     const playerLower = playerName.toLowerCase();
     if (!validPlayers.some(p => playerLower.includes(p.replace('-', '')) || playerLower.includes(p))) {
       console.warn(`[Tool create_test_account] player invalido: "${playerName}"`);
       try {
         const evo = await getEvolutionService();
-        await evo.sendMessage(remoteJid, `😕 Nao reconheco o player "${playerName}". Os disponiveis sao: Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play. Qual deles voce instalou?`);
+        await evo.sendMessage(remoteJid, `😕 Nao reconheco o player "${playerName}". Os disponiveis sao: Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play, SmartOne, VU Player Pro. Qual deles voce instalou?`);
         return true;
       } catch { return false; }
     }
@@ -4184,7 +4235,8 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     (async () => {
       try {
         const finalUsername = sanitizeTestUsername(username);
-        const jobId = await enqueueJob('create_test', { username: finalUsername, mac, playerName });
+        const deviceKey: string = (args.device_key || args.deviceKey || '').trim();
+        const jobId = await enqueueJob('create_test', { username: finalUsername, mac, playerName, deviceKey });
         // waitForJob bloqueia ate 5min — esta dentro de IIFE async, nao trava o handler principal
         const result: any = await waitForJob(jobId);
         const evo2 = await getEvolutionService();
@@ -4529,6 +4581,84 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
   }
 }
 
+/**
+ * Tool handler: Verifica e repara lista no VU Player Pro (vuproplayer.com).
+ */
+async function handleRepairVUProPlaylist(remoteJid: string, username: string): Promise<boolean> {
+  try {
+    if (!username) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Preciso saber seu usuario pra verificar sua lista VU Player Pro. Pode me confirmar?');
+        return true;
+      } catch { return false; }
+    }
+
+    const custRes = await pool.query('SELECT id, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, `😕 Nao achei seu cadastro com o usuario "${username}". Pode confirmar?`);
+        return true;
+      } catch { return false; }
+    }
+
+    const appsRes = await pool.query(
+      `SELECT app_name, app_model, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const vuApp = appsRes.rows.find((a: any) => {
+      const m = (a.app_model || '').toUpperCase();
+      const n = (a.app_name || '').toUpperCase();
+      return m.includes('VU') || n.includes('VU');
+    });
+
+    if (!vuApp || !vuApp.mac_address || !vuApp.device_key) {
+      try {
+        const evo = await getEvolutionService();
+        await evo.sendMessage(remoteJid, '😕 Pra atualizar o VU Player Pro preciso do seu MAC e Senha/Device Key. Pode me passar?');
+        return true;
+      } catch { return false; }
+    }
+
+    const evo = await getEvolutionService();
+    await evo.sendMessage(
+      remoteJid,
+      `🔧 Vou verificar e atualizar seu sinal no VU Player Pro agora.\n\nMAC: ${vuApp.mac_address}\n\nIsso leva uns 1-2min. Ja te aviso o que encontrei! 🎬`
+    );
+
+    (async () => {
+      try {
+        const jobId = await enqueueJob('vupro_setup', {
+          mac: vuApp.mac_address,
+          deviceKey: vuApp.device_key,
+          playlistUrl: customer.playlist_url || '',
+          listName: username || 'Teste',
+        });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(remoteJid, result.message || '✅ Verificacao e atualizacao no VU Player Pro concluida.');
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Nao consegui atualizar sua lista no VU Player Pro agora. O suporte ja foi avisado e vai te ajudar.`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool repair_vupro_playlist] background falhou:', e?.message);
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool repair_vupro_playlist] erro:', e?.message);
+    return false;
+  }
+}
+
 
 /**
  * Tool handler: Adiciona playlist do cliente no SmartOne automaticamente.
@@ -4672,6 +4802,77 @@ async function handleWareztvCreateClient(remoteJid: string, args: any): Promise<
       const evo = await getEvolutionService();
       await evo.sendMessage(remoteJid, '😕 Tive um problema ao criar o acesso. Contate o suporte.');
     } catch {}
+    return false;
+  }
+}
+
+/**
+ * Tool handler: ativa um app de TV (App + Nome da Lista + MAC) na conta Wareztv do cliente.
+ */
+async function handleWareztvActivateApp(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    const { username, app_name, mac, list_name } = args || {};
+
+    if (!mac) {
+      await evo.sendMessage(remoteJid, '📺 Pra ativar o app preciso do MAC do seu aparelho (ou o Código, dependendo do app). Consegue me passar?');
+      return true;
+    }
+
+    // Resolve o app pelo nome informado
+    const app = warezApi.resolveWarezApp(app_name);
+    if (!app) {
+      const lista = warezApi.WAREZ_TV_APPS.map(a => a.label).join(', ');
+      await evo.sendMessage(remoteJid, `😕 Não reconheci o app "${app_name}". Os apps que consigo ativar são: ${lista}. Qual deles você está usando?`);
+      return true;
+    }
+
+    // Busca a linha Warez do cliente
+    const custRes = await pool.query(
+      "SELECT name, warez_line_id FROM customers WHERE LOWER(username) = LOWER($1) AND provider = 'wareztv'",
+      [username]
+    );
+    const customer = custRes.rows[0];
+    if (!customer || !customer.warez_line_id) {
+      await evo.sendMessage(remoteJid, '😕 Não encontrei sua conta no Wareztv. Confirma seu usuário pra eu verificar?');
+      return true;
+    }
+
+    const namePlaylist = (list_name && String(list_name).trim())
+      || customer.name
+      || 'Minha Lista';
+    const campo = app.xstream ? 'Código' : 'MAC';
+
+    await evo.sendMessage(remoteJid,
+      `📺 Vou ativar o *${app.label}* na sua conta agora!\n\n${campo}: ${mac}\nLista: ${namePlaylist}\n\nSó um instante... 🎬`
+    );
+
+    try {
+      const result = await warezApi.activateApp(app, namePlaylist, mac, customer.warez_line_id);
+      if (result?.success) {
+        await evo.sendMessage(remoteJid,
+          `✅ Pronto! O *${app.label}* foi ativado com sucesso.\n\nAbra o app no aparelho e a lista *${namePlaylist}* já vai aparecer. Aproveite! 🎬\n\nQualquer dúvida é só chamar.`
+        );
+      } else {
+        await evo.sendMessage(remoteJid, '😕 Não consegui confirmar a ativação. Já avisei o suporte pra te ajudar.');
+      }
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (msg.includes('already exists') || msg.toLowerCase().includes('já')) {
+        await evo.sendMessage(remoteJid, `ℹ️ Esse ${campo} já estava ativado no *${app.label}*. É só abrir o app que a lista *${namePlaylist}* aparece. 🎬`);
+        return true;
+      }
+      if (msg.includes('não disponivel') || msg.includes('disponivel')) {
+        await evo.sendMessage(remoteJid, `😕 O app *${app.label}* não está disponível pra ativação no momento. Quer tentar outro app?`);
+        return true;
+      }
+      console.error('[Tool warez_activate_app] erro API:', msg);
+      await evo.sendMessage(remoteJid, '😕 Tive um problema técnico ao ativar o app. O operador já foi avisado e te ajuda logo.');
+    }
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool warez_activate_app] erro:', e?.message);
     return false;
   }
 }
