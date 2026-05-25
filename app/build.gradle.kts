@@ -13,7 +13,7 @@ android {
         applicationId = "com.chegoja.usuario"
         minSdk = 21
         targetSdk = 35
-        versionCode = 22
+        versionCode = 23
         versionName = "8.8"
     }
 
