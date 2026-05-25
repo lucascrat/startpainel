@@ -1154,6 +1154,14 @@ Quando ele mandar o MAC:
 - A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando! Para o X-Cloud, use o Código de Ativação no campo 'mac'.
 - Se ele NAO quiser teste e ja quiser comprar: va pro PASSO 6.
 
+PASSO 5B — CORTESIA NO NOSSO APP STARTFLIX (sem MAC, sem prazo):
+Se o cliente so quer DAR UMA OLHADA no conteudo, sem complicacao — nao tem MAC, nao escolheu aparelho, ou disse algo como "queria so ver como e" / "tem como conhecer antes?":
+- Ofereca acesso de CORTESIA no nosso app proprio *StartFlix* — gratuito e SEM PRAZO de expiracao.
+- Chame a tool *generate_startflix_access*. Ela ja manda o app StartFlix pra ele baixar + um codigo de acesso.
+- Diga algo como: "Conheca nosso conteudo! Acesse nosso app gratuito StartFlix — te mandei ele aqui junto com seu codigo."
+- O cliente baixa o StartFlix, toca em "Tenho um codigo de acesso", digita o codigo e ja assiste. Sem MAC, sem cadastro.
+- Use isso pra encantar cliente novo curioso. Depois que ele gostar, ofereca o plano completo (PASSO 6).
+
 PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
 - Quando ele confirmar que gostou do teste OU quiser virar cliente fixo:
   * Peca o nome completo dele.
@@ -1166,7 +1174,8 @@ PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
 - Avise: "Assim que confirmar o pagamento, ja transformo seu teste em conta definitiva. 🎬"
 
 REGRAS:
-- TESTE GRATIS = ferramenta create_test_account (cria + ativa em 30s, cliente assiste na hora)
+- TESTE GRATIS = ferramenta create_test_account (cria + ativa em 30s, cliente assiste na hora) — precisa de MAC + player.
+- CORTESIA STARTFLIX = ferramenta generate_startflix_access (nosso app proprio, codigo SEM prazo, SEM MAC). Use pra cliente que so quer conhecer o conteudo sem complicacao.
 - PLANO PAGO = register_new_customer + generate_pix (sequencia)
 - NUNCA gere Pix antes de ter MAC + nome.
 - SEMPRE use send_app_info com IDs reais do catalogo.
@@ -1629,6 +1638,18 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
                 username: { type: "STRING", description: "Username sugerido pra conta (opcional — se nao passar, gera 'Teste<numero>')" },
               },
               required: ["player_name", "mac"],
+            },
+          },
+          // Cortesia: gera código de acesso ao app proprio StartFlix (SEM expiração)
+          {
+            name: "generate_startflix_access",
+            description: "Gera um CÓDIGO DE ACESSO de cortesia (SEM expiração) pro cliente conhecer nosso conteudo no nosso app proprio *StartFlix*. Use quando um cliente NOVO quer dar uma olhada/testar o conteudo SEM precisar de MAC nem aparelho especifico — basta baixar o StartFlix e digitar o codigo. Diferente do create_test_account (que precisa de MAC e e teste de 6h em players externos): aqui e acesso gratuito de cortesia no NOSSO app, sem prazo nenhum. Apos chamar, o cliente recebe o app StartFlix pra baixar + o codigo de acesso. Otimo pra encantar quem so quer conhecer o conteudo.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                note: { type: "STRING", description: "Nome ou observacao do cliente pra identificar o codigo (opcional, ex: 'joao')." },
+              },
+              required: [],
             },
           },
           // Cadastro de NOVO CLIENTE — chama no fim do fluxo de prospeccao
@@ -3394,6 +3415,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'create_test_account') {
           const ok = await handleCreateTestAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'generate_startflix_access') {
+          const ok = await handleGenerateStartflixAccess(remoteJid, call.args);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'repair_ibo_pro_playlist') {
           const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
@@ -3871,6 +3895,59 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     return true; // mensagem inicial ja foi enviada
   } catch (e: any) {
     console.error('[Tool create_test_account] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Tool handler: gera um código de acesso de cortesia (SEM expiração) pro app StartFlix.
+ * Envia o app StartFlix (do catálogo) pra baixar + o código. O cliente entra no app
+ * por "Tenho um código de acesso" e o pool M3U atribui uma lista automaticamente.
+ */
+async function handleGenerateStartflixAccess(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+
+    // 1. Gera código de cortesia. Códigos NÃO expiram (tabela não tem expiração) —
+    //    ficam ativos até serem desativados no painel. É a cortesia pedida.
+    let code = generateM3uCode();
+    const phone = remoteJid.split('@')[0];
+    const note  = (args?.note || '').toString().trim();
+    const label = note ? `Cortesia ${note}` : `Cortesia WhatsApp ${phone}`;
+    for (let i = 0; i < 4; i++) {
+      const ins = await pool.query(
+        `INSERT INTO m3u_access_codes (code, label) VALUES ($1, $2)
+         ON CONFLICT (code) DO NOTHING RETURNING id`,
+        [code, label]
+      );
+      if (ins.rows[0]) break;
+      code = generateM3uCode(); // colisão rara — tenta outro
+    }
+    console.log(`[Tool generate_startflix_access] código ${code} (cortesia) gerado para ${remoteJid}`);
+
+    // 2. Busca o app StartFlix cadastrado no catálogo (aba APPS)
+    const appRes = await pool.query(
+      `SELECT id FROM app_catalog
+       WHERE is_active = true AND LOWER(name) LIKE '%startflix%'
+       ORDER BY display_order ASC LIMIT 1`
+    );
+    const app = appRes.rows[0];
+
+    // 3. Envia o app StartFlix pra baixar (imagem + links + tutorial), com mensagem de cortesia
+    if (app) {
+      await handleSendAppInfo(remoteJid, app.id, '🎁 *Conheça nosso conteúdo!* Baixe nosso app gratuito *StartFlix*:');
+    } else {
+      console.warn('[Tool generate_startflix_access] app StartFlix não encontrado no catálogo');
+    }
+
+    // 4. Envia o código de acesso de cortesia
+    const codeMsg =
+`🔑 *Seu código de acesso de cortesia:*\n\n*${code}*\n\nÉ só abrir o *StartFlix*, tocar em *"Tenho um código de acesso"* e digitar esse código. Sem cadastro e sem prazo — acesse quando quiser pra conhecer nosso conteúdo! 🎬\n\nGostou? Me chama aqui que monto seu plano completo. 😉`;
+    await evo.sendMessage(remoteJid, codeMsg);
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool generate_startflix_access] erro:', e?.message);
     return false;
   }
 }
