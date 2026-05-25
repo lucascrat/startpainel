@@ -154,6 +154,9 @@ export default function AdminPanel() {
   const [feeVuPlayer, setFeeVuPlayer] = useState('10');
   const [feeBobPlayer, setFeeBobPlayer] = useState('10');
   const [isSavingPrices, setIsSavingPrices] = useState(false);
+  // URL do servidor XC IPTV / IPTV Smarters
+  const [xciptvUrl, setXciptvUrl] = useState('http://smartlite.site:8880');
+  const [isSavingXcUrl, setIsSavingXcUrl] = useState(false);
 
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
@@ -647,6 +650,11 @@ export default function AdminPanel() {
       if (dfIboPro.value) setFeeIboPro(dfIboPro.value);
       if (dfVu.value) setFeeVuPlayer(dfVu.value);
       if (dfBob.value) setFeeBobPlayer(dfBob.value);
+
+      // URL XC IPTV / IPTV Smarters
+      const resXc = await authFetch('/api/settings/xciptv_server_url');
+      const dataXc = await resXc.json();
+      if (dataXc.value) setXciptvUrl(dataXc.value);
     } catch (error) {}
   };
 
@@ -1060,6 +1068,24 @@ export default function AdminPanel() {
       toast.success('Tabela de preços atualizada! A IA já usa os novos valores.');
     } catch { toast.error('Erro ao salvar preços.'); }
     finally { setIsSavingPrices(false); }
+  };
+
+  const handleSaveXcUrl = async () => {
+    const url = xciptvUrl.trim();
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+      toast.error('URL inválida. Use o formato: http://dominio:porta');
+      return;
+    }
+    setIsSavingXcUrl(true);
+    try {
+      await authFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'xciptv_server_url', value: url }),
+      });
+      toast.success('URL do servidor XC IPTV / Smarters atualizada! A IA já usa o novo endereço.');
+    } catch { toast.error('Erro ao salvar URL.'); }
+    finally { setIsSavingXcUrl(false); }
   };
 
   const handleBroadcast = async () => {
@@ -2016,6 +2042,40 @@ export default function AdminPanel() {
                       >
                         <Save size={13} />
                         {isSavingPrices ? 'Salvando...' : 'Salvar Preços'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ───── URL Servidor XC IPTV / IPTV Smarters ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <span className="text-base">🖥️</span>
+                      <div>
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Servidor XC IPTV / IPTV Smarters</h3>
+                        <p className="text-[9px] text-slate-400 mt-0.5">URL que a IA informa ao cliente ao configurar XC IPTV ou IPTV Smarters. Formato: http://dominio:porta</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">URL do Servidor</label>
+                      <input
+                        type="text"
+                        value={xciptvUrl}
+                        onChange={e => setXciptvUrl(e.target.value)}
+                        placeholder="http://smartlite.site:8880"
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                      <p className="text-[9px] text-slate-400">O cliente usa essa URL + usuário + senha para entrar no XC IPTV ou IPTV Smarters.</p>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSaveXcUrl}
+                        disabled={isSavingXcUrl}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-blue-900/20"
+                      >
+                        <Save size={13} />
+                        {isSavingXcUrl ? 'Salvando...' : 'Salvar URL'}
                       </button>
                     </div>
                   </div>

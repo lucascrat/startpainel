@@ -1373,6 +1373,18 @@ async function getAppCatalogCached(): Promise<any[]> {
   }
 }
 
+// Cache da URL do servidor XC IPTV / IPTV Smarters (refresh a cada 60s)
+let _xciptvUrlCache: { value: string; ts: number } = { value: 'http://smartlite.site:8880', ts: 0 };
+async function getXciptvUrl(): Promise<string> {
+  if (Date.now() - _xciptvUrlCache.ts < 60_000) return _xciptvUrlCache.value;
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'xciptv_server_url'");
+    if (r.rows[0]?.value) _xciptvUrlCache = { value: r.rows[0].value.trim(), ts: Date.now() };
+    else _xciptvUrlCache = { ..._xciptvUrlCache, ts: Date.now() };
+  } catch { /* usa cache antigo */ }
+  return _xciptvUrlCache.value;
+}
+
 // Cache de preços de venda (refresh a cada 60s)
 let _salePricesCache: {
   p1: number; p2: number; p3: number;
@@ -1757,7 +1769,22 @@ DNS PARA Apps de Portal (Smart STB, Smart UP, IPTV Portal, IVI, IVI Portal, SSIP
 - 158.69.183.160  → V3 Yellow
 - 51.77.82.199    → V3 Black
 - 209.14.84.34    → V1 Clássico
-⚠️ Os DNS numéricos só funcionam nesses apps de portal — não use em Ultra Player, Quick Player etc.
+⚠️ Os DNS numéricos só funcionam nesses apps de portal — NÃO use em XC IPTV, IPTV Smarters, Ultra Player, Quick Player etc.
+
+APPS XC IPTV / IPTV SMARTERS — CONFIGURAÇÃO:
+⚠️ Esses apps NÃO usam DNS numérico. Usam URL de servidor no formato http://dominio:porta.
+
+URL do servidor: {{XCIPTV_URL}}
+
+Como configurar XC IPTV ou IPTV Smarters:
+1. Abra o app e escolha "Adicionar playlist" ou "Xtream Codes"
+2. Preencha os campos:
+   - URL / Servidor: {{XCIPTV_URL}}
+   - Usuário: (usuário do cliente no sistema)
+   - Senha: (senha do cliente no sistema)
+3. Confirme e aguarde carregar.
+
+⚠️ NUNCA passe DNS numérico (158.x.x.x) para cliente de XC IPTV ou IPTV Smarters — eles não funcionam nesses apps.
 
 EPG (guia de programação): http://u.startpainel.cc/epg
 
@@ -1821,9 +1848,16 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
       const pricingCtx = await buildPricingContext();
       systemPrompt = systemPrompt.replace('{{PRICING_CONTEXT}}', pricingCtx);
     } catch (e: any) {
-      // fallback: remove o placeholder pra não vazar texto cru pro Gemini
       systemPrompt = systemPrompt.replace('{{PRICING_CONTEXT}}', '');
       console.warn('[AI] falha ao montar preços:', e?.message);
+    }
+    // Injeta URL do servidor XC IPTV / IPTV Smarters (lida do banco)
+    try {
+      const xcUrl = await getXciptvUrl();
+      systemPrompt = systemPrompt.replaceAll('{{XCIPTV_URL}}', xcUrl);
+    } catch (e: any) {
+      systemPrompt = systemPrompt.replaceAll('{{XCIPTV_URL}}', 'http://smartlite.site:8880');
+      console.warn('[AI] falha ao montar URL XC IPTV:', e?.message);
     }
 
     try {
@@ -2671,6 +2705,7 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
   // Invalida caches que dependem de settings para que o novo valor seja lido imediatamente.
   if (key === 'gemini_api_key') _geminiKeyCache = { value: null, ts: 0 };
   if (['plan_price_1','plan_price_2','plan_price_3','app_fee_ibo','app_fee_ibo_pro','app_fee_vu_player','app_fee_bob_player'].includes(key)) _salePricesCache = { ..._salePricesCache, ts: 0 };
+  if (key === 'xciptv_server_url') _xciptvUrlCache = { ..._xciptvUrlCache, ts: 0 };
   res.json({ success: true });
 });
 
