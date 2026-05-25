@@ -1711,7 +1711,7 @@ ATIVAÇÃO VIA PAINEL (alternativa):
 Também é possível ativar diretamente pelo painel clicando em "Ativar Player" e seguindo o procedimento indicado na tela.
 
 CONFIGURAÇÃO DO SMART STB (primeira vez ou reconfiguração):
-⚠️ REGRA OBRIGATÓRIA: quando o cliente for configurar o Smart STB, SEMPRE envie PRIMEIRO o vídeo tutorial usando `send_app_info` com o app_id do Smart STB (consulte o CATÁLOGO DE APPS acima). O vídeo de configuração já está cadastrado e é enviado automaticamente pela tool. Só depois passe as outras informações.
+⚠️ REGRA OBRIGATÓRIA: quando o cliente for configurar o Smart STB, SEMPRE envie PRIMEIRO o vídeo tutorial usando a tool *send_app_info* com o app_id do Smart STB (consulte o CATÁLOGO DE APPS acima). O vídeo de configuração já está cadastrado e é enviado automaticamente pela tool. Só depois passe as outras informações.
 Fluxo correto:
 1. Cliente menciona Smart STB ou quer configurar → chame send_app_info (envia imagem + video tutorial automático)
 2. Depois passe o DNS conforme tabela abaixo
