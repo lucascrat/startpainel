@@ -1591,7 +1591,7 @@ RECONHEÇA O TIPO DE DISPOSITIVO para recomendar o app certo:
 - Smart TV LG → Ultra Player, SEE Play, META Player, Quick Player, XCloud TV, Lótus
 - Smart TV TCL / Philips / AOC / outras → Ultra Player, SEE Play, META Player, Quick Player
 - TV Box Android (qualquer marca) → Fun Play, Lazer Play, Ultra Player
-- Roku → ⚠️ Roku NÃO suporta nossos apps nativamente. Oriente o cliente a usar um celular ou TV Box junto com a TV, ou trocar o dispositivo.
+- Roku → Fun Player, Ultra Player, Lazer Player (disponíveis no canal do provedor Start para Roku).
 - Fire TV Stick (Amazon) → Fun Play ou Ultra Player (disponíveis na Amazon Appstore via sideload). Oriente que pode ser necessário instalar via arquivo APK.
 - iPhone/iOS → X-Cloud Mobile (Código de Ativação, não MAC)
 - Celular Android → 1º Startflix (código de acesso, use generate_startflix_access); se não achar na loja → 2º Master Player Pro (usuário/senha, não MAC)
@@ -1611,7 +1611,7 @@ Siga esse fluxo naturalmente, sem parecer questionário:
    - "Samsung" / "LG" / "TCL" / "Smart TV" = Smart TV → apps de SmartTV
    - "TV Box" / "caixinha" / "Android box" = TV Box → Fun Play, Lazer Play, Ultra Player
    - "Fire Stick" / "Fire TV" = Fire TV Stick → Fun Play ou Ultra Player (APK)
-   - "Roku" = Roku → explique a limitação e sugira alternativa
+   - "Roku" = Roku → Fun Player, Ultra Player ou Lazer Player (canal do provedor Start)
    - "celular" / "Android" = celular Android → Startflix primeiro
    - "iPhone" / "iOS" / "Apple" = iOS → X-Cloud Mobile
    - Não identificou? Pergunte: "É Smart TV, TV Box ou celular?"
