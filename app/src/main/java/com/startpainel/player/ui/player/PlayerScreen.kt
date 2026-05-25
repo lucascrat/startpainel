@@ -7,8 +7,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -294,6 +299,12 @@ private fun PlayerControls(
         }
 
         // Center controls
+        val playFocus = remember { FocusRequester() }
+        val playInteraction = remember { MutableInteractionSource() }
+        val playFocused by playInteraction.collectIsFocusedAsState()
+        // Quando os controles aparecem, foca o botão play/pause pra o controle remoto operar de imediato.
+        LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
+
         Row(
             Modifier.align(Alignment.Center),
             horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -308,8 +319,15 @@ private fun PlayerControls(
                 Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(0.15f))
-                    .clickable(onClick = onPlayPause),
+                    .background(Color.White.copy(if (playFocused) 0.30f else 0.15f))
+                    .border(
+                        width = if (playFocused) 3.dp else 0.dp,
+                        color = if (playFocused) BrandBlue else Color.Transparent,
+                        shape = CircleShape
+                    )
+                    .focusRequester(playFocus)
+                    .focusable(interactionSource = playInteraction)
+                    .clickable(interactionSource = playInteraction, indication = null, onClick = onPlayPause),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
