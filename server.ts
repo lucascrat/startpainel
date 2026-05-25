@@ -3646,6 +3646,27 @@ app.post('/api/public-chat',
   }
 });
 
+// Detecta se a mensagem é essencialmente uma saudação (oi, bom dia, etc.).
+// Usado para reiniciar o atendimento quando o cliente volta após um tempo.
+function isGreetingMessage(raw: string): boolean {
+  if (!raw) return false;
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+    .replace(/[^a-z\s]/g, ' ')                        // tira pontuação/emojis/números
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s || s.length > 28) return false; // saudações são curtas
+  // String inteira composta só de saudações (uma ou duas partes)
+  const greet = '(oi+|ola|oie|opa+|eai|eae|e ai|salve|fala|fala ai|alo|hello|hi|hey|boa|bom dia|boa tarde|boa noite|boa madrugada|tudo bem|tudo bom|td bem|blz|beleza|como vai|vc ai|ta ai|esta ai)';
+  const re = new RegExp(`^${greet}( ${greet})?$`);
+  return re.test(s);
+}
+
+// Tempo mínimo de inatividade para tratar uma nova saudação como novo atendimento.
+const GREETING_RESET_GAP_MS = 60_000; // 1 minuto
+
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
@@ -3678,11 +3699,26 @@ app.post('/api/webhooks/evolution/:event?',
     // Visible placeholder for media-only messages so the AI knows what to expect.
     const storedText = text || (isImage ? '[Imagem enviada]' : isAudio ? '[Áudio enviado]' : '[Mídia]');
 
+    // Tempo desde a última mensagem (ANTES de inserir a atual) — usado para reiniciar
+    // o atendimento quando o cliente volta com uma saudação após inatividade.
+    let gapSinceLastMs = Infinity;
+    try {
+      const lastMsg = await pool.query('SELECT created_at FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 1', [remoteJid]);
+      if (lastMsg.rows[0]?.created_at) gapSinceLastMs = Date.now() - new Date(lastMsg.rows[0].created_at).getTime();
+    } catch { /* primeira mensagem ou erro — trata como sem histórico */ }
+
     await pool.query('INSERT INTO contacts (remote_jid, name, last_message, last_message_time, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (remote_jid) DO UPDATE SET name=EXCLUDED.name, last_message=EXCLUDED.last_message, last_message_time=NOW(), updated_at=NOW()', [remoteJid, pushName, storedText]);
     await pool.query('INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)', [storedText, 'customer', isImage ? 'image' : isAudio ? 'audio' : 'text', remoteJid, pushName]);
 
     const historyRes = await pool.query('SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10', [remoteJid]);
-    const chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
+    let chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
+
+    // Novo atendimento: se o cliente mandou uma saudação após >1min parado, ignora o
+    // contexto anterior e começa do zero (Lucas saúda e pergunta no que pode ajudar).
+    if (isGreetingMessage(text) && gapSinceLastMs > GREETING_RESET_GAP_MS) {
+      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento (contexto anterior ignorado).`);
+      chatHistory = [{ role: 'user', parts: [{ text }] }];
+    }
 
     let mediaData = undefined;
     if (isImage || isAudio) {
