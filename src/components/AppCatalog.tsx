@@ -36,7 +36,19 @@ interface AppCatalogItem {
   device_type: string;
   is_active: boolean;
   dns: string | null;
+  install_video_url: string | null;
+  youtube_url: string | null;
+  image_1_url: string | null;
+  image_2_url: string | null;
+  image_3_url: string | null;
+  image_4_url: string | null;
+  image_5_url: string | null;
 }
+
+// Campos de mídia (string) que podem receber upload — usado pra tipar uploadFile.
+type UploadField =
+  | 'app_image_url' | 'example_image_url' | 'install_video_url'
+  | 'image_1_url' | 'image_2_url' | 'image_3_url' | 'image_4_url' | 'image_5_url';
 
 const EMPTY_FORM: Omit<AppCatalogItem, 'id'> = {
   name: '',
@@ -51,6 +63,13 @@ const EMPTY_FORM: Omit<AppCatalogItem, 'id'> = {
   device_type: 'todos',
   is_active: true,
   dns: '',
+  install_video_url: '',
+  youtube_url: '',
+  image_1_url: '',
+  image_2_url: '',
+  image_3_url: '',
+  image_4_url: '',
+  image_5_url: '',
 };
 
 export default function AppCatalog() {
@@ -59,7 +78,7 @@ export default function AppCatalog() {
   const [editing, setEditing] = useState<AppCatalogItem | null>(null); // null = lista; obj = editando
   const [isCreating, setIsCreating] = useState(false);
   const [form, setForm] = useState<Omit<AppCatalogItem, 'id'>>(EMPTY_FORM);
-  const [uploading, setUploading] = useState<null | 'app' | 'example'>(null);
+  const [uploading, setUploading] = useState<string | null>(null); // guarda a chave do form em upload
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -97,6 +116,13 @@ export default function AppCatalog() {
       device_type: a.device_type,
       is_active: a.is_active,
       dns: a.dns || '',
+      install_video_url: a.install_video_url || '',
+      youtube_url: a.youtube_url || '',
+      image_1_url: a.image_1_url || '',
+      image_2_url: a.image_2_url || '',
+      image_3_url: a.image_3_url || '',
+      image_4_url: a.image_4_url || '',
+      image_5_url: a.image_5_url || '',
     });
     setEditing(a);
     setIsCreating(false);
@@ -112,16 +138,25 @@ export default function AppCatalog() {
    * Faz upload via /api/upload (R2) — mesmo padrao do CustomerMenu.
    * Recebe File, converte pra base64, POST com Authorization, retorna URL pra setar no form.
    */
-  const uploadFile = async (file: File, slot: 'app' | 'example') => {
-    if (!file.type.startsWith('image/')) {
+  /**
+   * Upload genérico via /api/upload (R2). [fieldKey] é a chave (de mídia) do form a setar.
+   * [isVideo] muda validação (50MB / video/*) e prefixo no R2.
+   */
+  const uploadFile = async (file: File, fieldKey: UploadField, isVideo = false) => {
+    if (isVideo && !file.type.startsWith('video/')) {
+      toast.error('Selecione um arquivo de vídeo (MP4, etc.).');
+      return;
+    }
+    if (!isVideo && !file.type.startsWith('image/')) {
       toast.error('Selecione um arquivo de imagem.');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error(`Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximo 5MB.`);
+    const maxMb = isVideo ? 50 : 5;
+    if (file.size > maxMb * 1024 * 1024) {
+      toast.error(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo ${maxMb}MB.`);
       return;
     }
-    setUploading(slot);
+    setUploading(fieldKey);
     try {
       const dataUrl: string = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -133,15 +168,14 @@ export default function AppCatalog() {
       const res = await authFetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: base64, mimeType: file.type, prefix: 'app-catalog' }),
+        body: JSON.stringify({ data: base64, mimeType: file.type, prefix: isVideo ? 'tutorials' : 'app-catalog' }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.url) {
         throw new Error(json.error || `HTTP ${res.status}`);
       }
-      const key = slot === 'app' ? 'app_image_url' : 'example_image_url';
-      setForm(prev => ({ ...prev, [key]: json.url }));
-      toast.success('Imagem enviada.');
+      setForm(prev => ({ ...prev, [fieldKey]: json.url }));
+      toast.success(isVideo ? 'Vídeo enviado.' : 'Imagem enviada.');
     } catch (e: any) {
       toast.error(`Erro no upload: ${e?.message || e}`);
     } finally {
@@ -312,16 +346,16 @@ export default function AppCatalog() {
             label="Imagem do app"
             hint="Aparece quando a IA sugere o download"
             url={form.app_image_url}
-            uploading={uploading === 'app'}
-            onUpload={f => uploadFile(f, 'app')}
+            uploading={uploading === 'app_image_url'}
+            onUpload={f => uploadFile(f, 'app_image_url')}
             onClear={() => setForm({ ...form, app_image_url: '' })}
           />
           <ImageUploadBox
             label="Imagem de exemplo (área pra cliente printar)"
             hint="Mostra qual tela o cliente deve printar quando você pedir"
             url={form.example_image_url}
-            uploading={uploading === 'example'}
-            onUpload={f => uploadFile(f, 'example')}
+            uploading={uploading === 'example_image_url'}
+            onUpload={f => uploadFile(f, 'example_image_url')}
             onClear={() => setForm({ ...form, example_image_url: '' })}
           />
         </div>
@@ -335,6 +369,89 @@ export default function AppCatalog() {
             placeholder="Ex: Me manda print da tela com MAC e Key, igual essa imagem"
             className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
           />
+        </div>
+
+        {/* ───── Tutorial: YouTube + Vídeo + 5 imagens (enviados ao cliente) ───── */}
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-4">
+          <p className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">📚 Material de instalação (enviado ao cliente)</p>
+
+          {/* YouTube URL */}
+          <div className="space-y-1">
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">URL do YouTube (enviada como link)</label>
+            <div className="flex items-center gap-2">
+              <span className="text-lg">▶️</span>
+              <input
+                value={form.youtube_url || ''}
+                onChange={e => setForm({ ...form, youtube_url: e.target.value })}
+                placeholder="https://youtube.com/watch?v=..."
+                className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-red-400"
+              />
+              {form.youtube_url && (
+                <a href={form.youtube_url} target="_blank" rel="noreferrer" className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Abrir">
+                  <ExternalLink size={14} />
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Vídeo de instalação */}
+          <div className="space-y-1">
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Vídeo de exemplo (enviado pelo WhatsApp, máx 50MB)</label>
+            {form.install_video_url ? (
+              <div className="flex items-center gap-2 bg-white border border-emerald-200 rounded-xl px-3 py-2.5">
+                <span className="text-base">📹</span>
+                <span className="text-[11px] font-bold text-emerald-700 flex-1 truncate">Vídeo enviado</span>
+                <a href={form.install_video_url} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-600 hover:underline font-black">Ver</a>
+                <button onClick={() => setForm({ ...form, install_video_url: '' })} className="text-rose-400 hover:text-rose-600 ml-1"><X size={14} /></button>
+              </div>
+            ) : (
+              <label className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed cursor-pointer transition ${
+                uploading === 'install_video_url' ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 hover:border-indigo-400 text-slate-500'
+              }`}>
+                <input type="file" accept="video/*" className="hidden" disabled={!!uploading}
+                  onChange={e => e.target.files?.[0] && uploadFile(e.target.files[0], 'install_video_url', true)} />
+                <span className="text-base">📹</span>
+                <span className="text-[10px] font-black uppercase tracking-wider">
+                  {uploading === 'install_video_url' ? 'Enviando...' : 'Selecionar vídeo'}
+                </span>
+              </label>
+            )}
+          </div>
+
+          {/* 5 imagens tutoriais */}
+          <div className="space-y-2">
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Imagens do tutorial (1 a 5) — enviadas em ordem como passos</label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {([1, 2, 3, 4, 5] as const).map(n => {
+                const key = `image_${n}_url` as UploadField;
+                const url = (form[key] as string) || '';
+                return (
+                  <div key={n} className="relative">
+                    <label className={`group flex flex-col items-center justify-center gap-1 aspect-square rounded-xl border-2 border-dashed cursor-pointer overflow-hidden transition ${
+                      uploading === key ? 'border-indigo-300 bg-indigo-50' : url ? 'border-emerald-300 bg-white' : 'border-slate-300 hover:border-indigo-400 hover:bg-white'
+                    }`}>
+                      <input type="file" accept="image/*" className="hidden" disabled={!!uploading}
+                        onChange={e => e.target.files?.[0] && uploadFile(e.target.files[0], key)} />
+                      {url ? (
+                        <img src={url} alt={`Passo ${n}`} className="w-full h-full object-cover" />
+                      ) : (
+                        <>
+                          <span className="text-[11px] font-black text-slate-400">{uploading === key ? '...' : `+ ${n}`}</span>
+                          <span className="text-[7px] font-bold text-slate-400 uppercase">Passo {n}</span>
+                        </>
+                      )}
+                    </label>
+                    {url && (
+                      <button onClick={() => setForm(prev => ({ ...prev, [key]: '' }))}
+                        className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 shadow-md hover:bg-rose-600" title="Remover">
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {/* Links de download */}
