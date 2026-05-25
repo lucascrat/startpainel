@@ -1,6 +1,6 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Page, Browser } from 'puppeteer';
+import { Page, Browser } from 'puppeteer-core';
 import { launchBrowser, clickButtonByText } from './startpainel-puppeteer';
 import path from 'path';
 

@@ -32,6 +32,10 @@ export interface RenewalResult {
   clientId?: string;
   screenshotBase64?: string;
   playlistUrl?: string;
+  username?: string;
+  password?: string;
+  mac?: string;
+  playerName?: string;
 }
 
 export async function launchBrowser(headless = true, profileNum = 0): Promise<Browser> {
@@ -850,6 +854,61 @@ export async function createTestClientAndActivatePlayer(
       await new Promise(r => setTimeout(r, 2000));
     }
 
+    const isSmartOne = playerName.toLowerCase().includes('smartone') || playerName.toLowerCase().includes('smart-one') || playerName.toLowerCase().includes('smart one');
+    const isVUPro = playerName.toLowerCase().includes('vu') || playerName.toLowerCase().includes('vupro') || playerName.toLowerCase().includes('vu player');
+    if (isSmartOne || isVUPro) {
+      console.log(`[Puppeteer] ${isSmartOne ? 'SmartOne' : 'VU Player Pro'} detectado. Extraindo URL da playlist M3U e pulando ativação do CMS...`);
+      
+      // Clica no botão/link "Visualizar" para exibir os dados da lista no modal
+      await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('a, button, span, div, td')) as HTMLElement[];
+        const viewBtn = elements.find(el => el.textContent?.trim() === 'Visualizar');
+        if (viewBtn) viewBtn.click();
+      });
+      await new Promise(r => setTimeout(r, 2000));
+
+      const playlistUrl = await page.evaluate(() => {
+        // Tenta pegar direto do textarea/input com id="url" ou id="lastUrl"
+        const urlEl = document.querySelector('#url, #lastUrl, [name="url"]') as HTMLInputElement | HTMLTextAreaElement;
+        if (urlEl && urlEl.value && urlEl.value.includes('get.php')) {
+          return urlEl.value.trim();
+        }
+
+        // Look at all inputs and textareas
+        const elements = Array.from(document.querySelectorAll('input, textarea')) as HTMLInputElement[];
+        for (const el of elements) {
+          if (el.value && el.value.includes('get.php') && (el.value.includes('m3u') || el.value.includes('type=m3u_plus'))) {
+            return el.value;
+          }
+        }
+        
+        // Look at all text nodes and links
+        const links = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
+        for (const link of links) {
+          if (link.href && link.href.includes('get.php') && link.href.includes('m3u')) {
+            return link.href;
+          }
+        }
+
+        // Brute force text search in body
+        const bodyText = document.body.innerText;
+        const match = bodyText.match(/https?:\/\/[^\s"']+(?:get\.php)[^\s"']+/);
+        return match ? match[0] : null;
+      });
+      
+      const creds = await extractCredentialsFromPage(page);
+      
+      return {
+        success: true,
+        message: `Cliente teste "${finalUsername}" criado com sucesso no CMS.`,
+        username: creds.user || finalUsername,
+        password: creds.pass,
+        playlistUrl: playlistUrl || undefined,
+        playerName,
+        mac,
+      };
+    }
+
     // === STEP 4: clicar em "Ativar Player" ===
     console.log(`[Puppeteer] URL atual: ${page.url()}`);
     console.log('[Puppeteer] Clicando em "Ativar Player"...');
@@ -1120,7 +1179,7 @@ export async function getClientPlaylistUrl(username: string): Promise<string | n
 
     // Na pagina do cliente, procura o botao "Visualizar" da URL da lista
     // Geralmente abre um modal ou campo de texto
-    const playlistUrl = await page.evaluate(() => {
+    let playlistUrl = await page.evaluate(() => {
       // Procura por um texto que pareça uma URL M3U ou o campo de "URL da lista"
       const elements = Array.from(document.querySelectorAll('td, span, div, input'));
       for (const el of elements) {
@@ -1131,6 +1190,45 @@ export async function getClientPlaylistUrl(username: string): Promise<string | n
       }
       return null;
     });
+
+    if (!playlistUrl) {
+      console.log('[Puppeteer] URL não visível diretamente. Tentando clicar em "Visualizar" para abrir o modal...');
+      await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('a, button, span, div, td')) as HTMLElement[];
+        const viewBtn = elements.find(el => el.textContent?.trim() === 'Visualizar');
+        if (viewBtn) viewBtn.click();
+      });
+      await new Promise(r => setTimeout(r, 2000));
+
+      playlistUrl = await page.evaluate(() => {
+        // Tenta pegar direto do textarea/input com id="url" ou id="lastUrl"
+        const urlEl = document.querySelector('#url, #lastUrl, [name="url"]') as HTMLInputElement | HTMLTextAreaElement;
+        if (urlEl && urlEl.value && urlEl.value.includes('get.php')) {
+          return urlEl.value.trim();
+        }
+
+        // Look at all inputs and textareas
+        const elements = Array.from(document.querySelectorAll('input, textarea')) as HTMLInputElement[];
+        for (const el of elements) {
+          if (el.value && el.value.includes('get.php') && (el.value.includes('m3u') || el.value.includes('type=m3u_plus'))) {
+            return el.value;
+          }
+        }
+        
+        // Look at all text nodes and links
+        const links = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
+        for (const link of links) {
+          if (link.href && link.href.includes('get.php') && link.href.includes('m3u')) {
+            return link.href;
+          }
+        }
+
+        // Brute force text search in body
+        const bodyText = document.body.innerText;
+        const match = bodyText.match(/https?:\/\/[^\s"']+(?:get\.php)[^\s"']+/);
+        return match ? match[0] : null;
+      });
+    }
 
     return playlistUrl;
 

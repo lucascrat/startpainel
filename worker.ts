@@ -28,6 +28,7 @@ import {
 import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 import { runSmartOneSetup, initSmartOneSession } from './src/services/smartone-service.js';
+import { runVUProSetup } from './src/services/vupro-service.js';
 
 const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
 const WORKER_TOKEN = process.env.WORKER_TOKEN;
@@ -76,12 +77,55 @@ const handlers: Record<string, JobHandler> = {
   activate_lazerplay:({ username, mac }, p) => activateLazerPlay(username, mac, p),
   activate_xcloud:   ({ username, mac }, p) => activateXCloud(username, mac, p),
   activate_seeplay:  ({ username, mac }, p) => activateSeePlay(username, mac, p),
-  create_test:       ({ username, mac, playerName }, p) => createTestClientAndActivatePlayer(username || '', mac, playerName, p),
+  create_test:       async (payload, p) => {
+    const { username, mac, playerName, deviceKey, password } = payload;
+    const result = await createTestClientAndActivatePlayer(username || '', mac, playerName, p);
+    
+    const isSmartOne = playerName && (playerName.toLowerCase().includes('smartone') || playerName.toLowerCase().includes('smart-one') || playerName.toLowerCase().includes('smart one'));
+    if (isSmartOne && result.success && result.playlistUrl) {
+      console.log('[Worker] Configurando SmartOne para o novo teste...');
+      const listName = result.username ? `${result.username} - SmartOne` : 'Cliente - SmartOne';
+      const smartoneRes = await runSmartOneSetup(mac, listName, result.playlistUrl, p);
+      if (!smartoneRes.success) {
+        return {
+          ...result,
+          success: false,
+          message: `Teste criado no painel (${result.username}), mas falhou ao configurar no SmartOne: ${smartoneRes.message}`
+        };
+      }
+      return {
+        ...result,
+        message: `Cliente teste "${result.username}" criado e SmartOne configurado com sucesso!`
+      };
+    }
+
+    const isVUPro = playerName && (playerName.toLowerCase().includes('vu') || playerName.toLowerCase().includes('vupro') || playerName.toLowerCase().includes('vu player'));
+    if (isVUPro && result.success && result.playlistUrl) {
+      console.log('[Worker] Configurando VU Player Pro para o novo teste...');
+      const listName = result.username || 'Teste';
+      const key = deviceKey || password || '687840';
+      const vuproRes = await runVUProSetup(mac, key, result.playlistUrl, listName, p);
+      if (!vuproRes.success) {
+        return {
+          ...result,
+          success: false,
+          message: `Teste criado no painel (${result.username}), mas falhou ao configurar no VU Player Pro: ${vuproRes.message}`
+        };
+      }
+      return {
+        ...result,
+        message: `Cliente teste "${result.username}" criado e VU Player Pro configurado com sucesso!`
+      };
+    }
+
+    return result;
+  },
   ibo_setup:         ({ mac, key, playlistUrl }, p) => runIBOSupportAutomation(mac, key, playlistUrl, p),
   ibo_repair:        ({ mac, key, playlistUrl }, p) => runIBORepairAutomation(mac, key, playlistUrl, p),
   ibo_pro_setup:     ({ mac, key, playlistUrl }, p) => runIBOProAutomation(mac, key, playlistUrl, p),
   smartone_setup:    ({ mac, listName, playlistUrl }, p) => runSmartOneSetup(mac, listName, playlistUrl, p),
   smartone_init:     (_payload: any, _p: number) => initSmartOneSession(),
+  vupro_setup:       ({ mac, deviceKey, playlistUrl, listName }, p) => runVUProSetup(mac, deviceKey || '687840', playlistUrl, listName || 'Teste', p),
 };
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
