@@ -105,21 +105,13 @@ export async function runSmartOneSetup(
 
     const pageAfterNav = page.url();
 
-    // Se redirecionou para login → sessão expirada
-    if (pageAfterNav.includes('/login')) {
-      console.warn('[SmartOne] Sessão expirada — redirecionado para login.');
-      return {
-        success: false,
-        message: 'Sessão SmartOne expirada. Acesse o painel admin e clique em "Autenticar SmartOne" para renovar.',
-      };
-    }
-
-    // Se não chegou na página certa
+    // Se não chegou na página de add_playlist (redirecionou pra login ou home)
+    // → sessão não autenticada ou expirada
     if (!pageAfterNav.includes('add_playlist')) {
-      console.warn('[SmartOne] URL inesperada após navegação:', pageAfterNav);
+      console.warn('[SmartOne] Sessão não autenticada — redirecionou para:', pageAfterNav);
       return {
         success: false,
-        message: `Página de playlist não carregou corretamente (URL: ${pageAfterNav}). Tente autenticar novamente.`,
+        message: 'Sessão SmartOne não autenticada. Acesse o painel admin e clique em "Autenticar SmartOne" para fazer o login manual (uma vez só).',
       };
     }
 
