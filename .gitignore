@@ -58,3 +58,6 @@ deploy*.json
 evo_msgs.json
 uuid.txt
 t.txt
+
+# Chave Gemini local (NUNCA versionar)
+.gemini_key_internal
