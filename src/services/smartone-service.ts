@@ -1,4 +1,3 @@
-import { Browser } from 'puppeteer-core';
 import { launchBrowser } from './startpainel-puppeteer.js';
 
 const SMARTONE_LOGIN_URL    = 'https://smartone-iptv.com/client/login';
@@ -20,7 +19,7 @@ export async function runSmartOneSetup(
   playlistUrl: string,
   profileNum = 0
 ): Promise<{ success: boolean; message: string }> {
-  let browser: Browser | null = null;
+  let browser: any = null;
 
   try {
     browser = await launchBrowser(false, profileNum) as any;
