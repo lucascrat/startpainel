@@ -1608,6 +1608,7 @@ RECONHEÇA O TIPO DE DISPOSITIVO para recomendar o app certo:
 - iPhone/iOS → X-Cloud Mobile (Código de Ativação, não MAC)
 - Celular Android → 1º Startflix (código de acesso, use generate_startflix_access); se não achar na loja → 2º Master Player Pro (usuário/senha, não MAC)
 - Smart STB / qualquer app de portal → SEMPRE use send_app_info (o vídeo tutorial é enviado automaticamente). Sem exceção.
+- SmartOne → use a tool *activate_smartone* passando username e MAC. O sistema configura automaticamente.
 - Se não souber o dispositivo → pergunte antes de recomendar
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1705,6 +1706,7 @@ TOOLS DISPONÍVEIS
 - register_pix_receipt(payer_name, amount, paid_at): registra comprovante de Pix recebido em foto.
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
 - request_screenshot(app_id, custom_instruction): pede print de tela específica do app (MAC/Key/erro).
+- activate_smartone(username, mac): configura o SmartOne automaticamente — acessa o site, faz login e adiciona a playlist do cliente. Use quando o cliente tem ou quer o SmartOne.
 
 REGRAS DE USO DAS TOOLS:
 - Tools são ações reais — só chame quando o cliente está pedindo a ação AGORA, pela primeira vez nessa conversa.
@@ -1974,6 +1976,19 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
                 username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
               },
               required: ["username"],
+            },
+          },
+          // Ativação/configuração do SmartOne
+          {
+            name: "activate_smartone",
+            description: "Adiciona a playlist do cliente no app SmartOne automaticamente (acessa smartone-iptv.com e cadastra o MAC + URL da lista). USE QUANDO: cliente tem SmartOne ou pede pra configurar o SmartOne. Requer MAC do cliente. O sistema busca a playlist_url automaticamente pelo username.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+                mac:      { type: "STRING", description: "MAC address do aparelho SmartOne do cliente." },
+              },
+              required: ["username", "mac"],
             },
           },
           // Ativação de player para cliente EXISTENTE
@@ -3212,6 +3227,17 @@ app.post('/api/automations/ibopro/run', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/automations/smartone/setup', async (req, res) => {
+  try {
+    const { mac, listName, playlistUrl } = req.body;
+    if (!mac || !playlistUrl) return res.status(400).json({ error: 'mac e playlistUrl obrigatorios' });
+    const name = listName || 'Lista Cliente';
+    const jobId = await enqueueJob('smartone_setup', { mac, listName: name, playlistUrl });
+    const result = await waitForJob(jobId);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/automations/startpainel/create-client', async (req, res) => {
   try {
     const { username } = req.body;
@@ -3701,6 +3727,9 @@ app.post('/api/webhooks/evolution/:event?',
           if (ok) toolsThatSent++;
         } else if (call.name === 'generate_startflix_access') {
           const ok = await handleGenerateStartflixAccess(remoteJid, call.args);
+          if (ok) toolsThatSent++;
+        } else if (call.name === 'activate_smartone') {
+          const ok = await handleActivateSmartOne(remoteJid, call.args.username, call.args.mac);
           if (ok) toolsThatSent++;
         } else if (call.name === 'repair_ibo_pro_playlist') {
           const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
@@ -4490,6 +4519,71 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
   }
 }
 
+
+/**
+ * Tool handler: Adiciona playlist do cliente no SmartOne automaticamente.
+ */
+async function handleActivateSmartOne(remoteJid: string, username: string, mac: string): Promise<boolean> {
+  try {
+    if (!mac) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '📺 Pra configurar o SmartOne preciso do MAC do seu aparelho. Consegue me passar?');
+      return true;
+    }
+
+    const custRes = await pool.query('SELECT id, name, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer || !customer.playlist_url) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Nao encontrei sua playlist no sistema. Confirma seu usuario pra eu verificar?');
+      return true;
+    }
+
+    const listName = customer.name ? `${customer.name} - SmartOne` : `Cliente - SmartOne`;
+
+    const evo = await getEvolutionService();
+    await evo.sendMessage(
+      remoteJid,
+      `📺 Vou configurar o SmartOne pra voce agora!\n\nMAC: ${mac}\n\nIsso leva uns instantes... ja te aviso quando estiver pronto! 🎬`
+    );
+
+    // Executa em background para não bloquear
+    (async () => {
+      try {
+        const jobId = await enqueueJob('smartone_setup', {
+          mac,
+          listName,
+          playlistUrl: customer.playlist_url,
+        });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(
+            remoteJid,
+            `✅ Pronto! Sua playlist foi adicionada no SmartOne com sucesso.\n\nAbra o app, selecione a lista e aproveite! 🎬\n\nQualquer duvida e so chamar.`
+          );
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Tive um problema ao configurar o SmartOne. Ja avisei o suporte e eles vao te ajudar em breve.`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool activate_smartone] background falhou:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Tive um problema tecnico. O operador ja foi avisado e te chama logo.');
+        } catch {}
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool activate_smartone] erro:', e?.message);
+    return false;
+  }
+}
 
 async function handleWareztvGenerateTest(remoteJid: string, args: any): Promise<boolean> {
   try {
