@@ -1672,12 +1672,21 @@ PASSO 2 — O que aparece na tela? Exemplos do que classificar:
   → "App não abre / fecha sozinho" → problema no app em si (reinstalar)
   → "Alguns canais não abrem" → canal específico fora do ar (normal, não é bug)
 PASSO 3 — Ação baseada no sintoma:
-  → IBO Pro com lista parada → repair_ibo_pro_playlist
-  → IBO Player / IBO IPTV com sinal parado → repair_ibo_playlist
   → Smart STB sendo configurado pela primeira vez → send_app_info (vídeo tutorial) + DNS + credenciais
   → App de portal (Smart STB, IVI, SSIPTV) com erro de DNS (já configurado antes) → passe os DNS corretos
   → App SmartTV (Ultra, Quick, etc) com erro de login → confirme provider/usuário/senha
   → Problema não identificado → peça print com request_screenshot
+
+PROCEDIMENTO "SEM SINAL" / "CANAIS NÃO ABREM" / "LISTA SUMIU" / "APP VAZIO":
+1º) VERIFIQUE O VENCIMENTO no contexto do cliente (campo "Vencimento"/"situacao"):
+   - Se está VENCIDO → NÃO tente recolocar a lista. Avise com gentileza que a lista venceu e que precisa fazer a *recarga* (renovação). Ofereça o Pix (generate_pix). Só depois de renovar a lista volta a funcionar.
+   - Se está EM DIA (não vencido) → o problema é a lista que caiu do app. RECOLOQUE a lista no app do cliente:
+       • IBO Player / IBO IPTV → repair_ibo_playlist
+       • IBO Pro → repair_ibo_pro_playlist
+       • VU Player Pro → repair_vupro_playlist
+       • SmartOne → activate_smartone (com o MAC cadastrado)
+2º) USE O MAC/KEY QUE JÁ ESTÁ NO CONTEXTO. Se o cliente já tem o app cadastrado (ex: IBO), você JÁ tem o MAC — NÃO peça. Só peça o MAC se o app NÃO estiver na lista "APPS DESTE CLIENTE".
+3º) Se o cliente tem vários apps cadastrados, identifique qual deles ele está usando agora (pergunte se não souber) e aja sobre esse.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FLUXO — RENOVAÇÃO
