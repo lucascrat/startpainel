@@ -58,45 +58,75 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 
 export async function loginToPanel(page: Page): Promise<boolean> {
   const loginUrl = `${BASE_URL}/login`;
-  console.log(`[Puppeteer] Acessando painel...`);
-  
+
   await page.setExtraHTTPHeaders({
     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
   });
 
-  try {
-    // Tenta ir para a home primeiro para ver se já estamos logados
-    await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    // Verifica se já estamos logados (se não estivermos no /login)
-    let currentUrl = page.url();
-    if (!currentUrl.includes('/login')) {
-      console.log('[Puppeteer] Sessão ativa encontrada! Pulando login.');
-      return true;
+  // Estamos logados se a URL NAO contem /login
+  const isLoggedIn = () => !page.url().includes('/login');
+
+  // Ate 2 tentativas — login pode falhar transitoriamente (rede, render lento)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      console.log(`[Puppeteer] Login tentativa ${attempt}/2...`);
+
+      // 1. Vai pra home — se ja tem sessao ativa, nao cai no /login
+      await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+      if (isLoggedIn()) {
+        console.log('[Puppeteer] Sessao ativa encontrada! Pulando login.');
+        return true;
+      }
+
+      // 2. Garante que estamos na pagina de login
+      if (!page.url().includes('/login')) {
+        await page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      }
+
+      if (!ADMIN_USER || !ADMIN_PASS) {
+        console.error('[Puppeteer] STARTPAINEL_ADMIN_USER/PASS vazios no .env do worker! Configure e reinicie.');
+        return false;
+      }
+
+      // 3. Preenche credenciais (seletores tolerantes a mudanca de id/name)
+      const userSelector = 'input#username, input[name="username"], input[type="text"]:not([type="search"])';
+      const passSelector = 'input#password, input[name="password"], input[type="password"]';
+      await page.waitForSelector(passSelector, { timeout: 15000 });
+
+      await page.click(userSelector, { clickCount: 3 }).catch(() => {});
+      await page.type(userSelector, ADMIN_USER, { delay: 60 });
+      await page.click(passSelector, { clickCount: 3 }).catch(() => {});
+      await page.type(passSelector, ADMIN_PASS, { delay: 60 });
+
+      // 4. Submete: clica no botao; se nao achar, envia via Enter (form submit)
+      const loginBtnSelector = 'button#loginbtn, button[type="submit"], input[type="submit"]';
+      const navPromise = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+      const btn = await page.$(loginBtnSelector);
+      if (btn) {
+        await btn.click().catch(() => {});
+      } else {
+        console.log('[Puppeteer] Botao de login nao encontrado — enviando via Enter.');
+        await page.keyboard.press('Enter');
+      }
+      await navPromise;
+
+      // 5. Confirma saida do /login com polling (ate 12s) — cobre login SPA/lento
+      for (let i = 0; i < 12; i++) {
+        if (isLoggedIn()) {
+          console.log('[Puppeteer] Login OK.');
+          return true;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      console.warn(`[Puppeteer] Ainda na tela de login apos tentativa ${attempt}. URL=${page.url()}`);
+    } catch (e: any) {
+      console.error(`[Puppeteer] Erro no login (tentativa ${attempt}):`, e?.message || e);
     }
-
-    console.log('[Puppeteer] Sessão não encontrada, realizando login...');
-    await page.goto(loginUrl, { waitUntil: 'networkidle2' });
-
-    const userSelector = 'input#username';
-    const passSelector = 'input#password';
-    const loginBtnSelector = 'button#loginbtn, button[type="submit"]';
-
-    await page.waitForSelector(userSelector, { timeout: 10000 });
-    await page.type(userSelector, ADMIN_USER, { delay: 100 });
-    await page.type(passSelector, ADMIN_PASS, { delay: 100 });
-
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
-      page.click(loginBtnSelector)
-    ]);
-
-    currentUrl = page.url();
-    return !currentUrl.includes('/login');
-  } catch (e) {
-    console.error('[Puppeteer] Erro no processo de login:', e);
-    return false;
   }
+
+  console.error('[Puppeteer] Falha no login apos 2 tentativas (verifique credenciais / captcha na tela do worker).');
+  return false;
 }
 
 export async function renewClientPuppeteer(username: string, profileNum = 0): Promise<RenewalResult> {
