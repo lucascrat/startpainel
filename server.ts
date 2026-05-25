@@ -1361,7 +1361,8 @@ async function getAppCatalogCached(): Promise<any[]> {
   try {
     const r = await pool.query(
       `SELECT id, name, display_order, description, app_image_url, example_image_url,
-              example_instruction, android_link, ios_link, web_link, device_type
+              example_instruction, android_link, ios_link, web_link, device_type,
+              install_video_url, youtube_url
        FROM app_catalog WHERE is_active = true
        ORDER BY display_order ASC, name ASC`
     );
@@ -1497,12 +1498,16 @@ async function buildAppCatalogContext(): Promise<string> {
       ctx += `   links: ${links.join(', ')}\n`;
     }
     if (a.example_instruction) ctx += `   exemplo: ${a.example_instruction}\n`;
+    if (a.youtube_url) ctx += `   🎬 VIDEO TUTORIAL (YouTube): ${a.youtube_url} — mande este link para o cliente ao configurar!\n`;
+    if (a.install_video_url) ctx += `   📹 VIDEO DE INSTALACAO cadastrado — sera enviado automaticamente via send_app_info.\n`;
   }
   ctx += `\nQUANDO USAR:\n`;
   ctx += `- Cliente novo / sem cadastro perguntando como assistir: ofereca o primeiro app com send_app_info.\n`;
   ctx += `- Cliente pedindo ajuda pra configurar: use request_screenshot pra pedir print da tela certa.\n`;
   ctx += `- Cliente disse que ja tem o app X mas nao funciona: use request_screenshot do mesmo app.\n`;
   ctx += `- Se o cliente nao se da bem com um app, sugira o proximo da lista.\n`;
+  ctx += `- Apps com VIDEO TUTORIAL (🎬): ao enviar o app ou ajudar com configuracao, SEMPRE mande o link do video junto. Ex: "Aqui esta o video de como configurar: [link]".\n`;
+  ctx += `- Apps com VIDEO DE INSTALACAO (📹): o video e enviado automaticamente quando voce chama send_app_info — nao precisa enviar manualmente.\n`;
   return ctx;
 }
 
