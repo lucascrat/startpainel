@@ -15,6 +15,9 @@ import retrofit2.Retrofit
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+/** Indica que a conta já está logada em outro aparelho. */
+class DeviceLockedException(val deviceName: String?) : Exception("device_locked")
+
 class PanelRepository(panelUrl: String) {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -41,23 +44,49 @@ class PanelRepository(panelUrl: String) {
         }
     }
 
-    suspend fun login(username: String, password: String): Result<Account> {
+    /**
+     * Login com usuário e senha.
+     * [deviceId] identifica o aparelho; [deviceName] é o nome legível (ex: "Galaxy S23").
+     * Se [force] = true, substitui o lock de outro aparelho.
+     *
+     * Lança [DeviceLockedException] se a conta estiver bloqueada em outro aparelho e force=false.
+     */
+    suspend fun login(
+        username: String,
+        password: String,
+        deviceId: String? = null,
+        deviceName: String? = null,
+        force: Boolean = false,
+    ): Result<Account> {
         return try {
-            val resp = api.login(PanelLoginRequest(username, password))
+            val resp = api.login(PanelLoginRequest(
+                username   = username,
+                password   = password,
+                deviceId   = deviceId,
+                deviceName = deviceName,
+                force      = force,
+            ))
             if (resp.ok && resp.server != null) {
                 Result.success(Account(
-                    dns = resp.server,
+                    dns      = resp.server,
                     username = resp.username ?: username,
-                    password = resp.password ?: password
+                    password = resp.password ?: password,
                 ))
             } else {
                 Result.failure(Exception(resp.error ?: "Falha ao autenticar."))
             }
         } catch (e: HttpException) {
+            if (e.code() == 409) {
+                // Device lock — parse o body para saber o nome do aparelho bloqueado
+                val devName = try {
+                    val body = e.response()?.errorBody()?.string() ?: ""
+                    json.decodeFromString(PanelLoginResponse.serializer(), body).deviceName
+                } catch (_: Exception) { null }
+                return Result.failure(DeviceLockedException(devName))
+            }
             val msg = try {
                 val body = e.response()?.errorBody()?.string() ?: ""
-                val parsed = json.decodeFromString(PanelLoginResponse.serializer(), body)
-                parsed.error
+                json.decodeFromString(PanelLoginResponse.serializer(), body).error
             } catch (_: Exception) { null }
             Result.failure(Exception(msg ?: when (e.code()) {
                 401 -> "Usuário ou senha inválidos."
@@ -70,6 +99,16 @@ class PanelRepository(panelUrl: String) {
             Result.failure(Exception("Sem conexão. Verifique sua internet."))
         } catch (e: Exception) {
             Result.failure(Exception("Erro inesperado. Tente novamente."))
+        }
+    }
+
+    /** Libera o device lock ao fazer logout voluntário. */
+    suspend fun logout(username: String, deviceId: String): Result<Unit> {
+        return try {
+            api.logout(AppLogoutRequest(username = username, device_id = deviceId))
+            Result.success(Unit)
+        } catch (_: Exception) {
+            Result.success(Unit) // falha silenciosa — o lock expira em 30 dias de qualquer forma
         }
     }
 

@@ -88,6 +88,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.startpainel.player.ads.AdmobBanner
 import com.startpainel.player.ads.AdmobNativeCard
+import com.startpainel.player.util.rememberIsTv
 import com.startpainel.player.data.model.DownloadRecord
 import com.startpainel.player.data.model.RecordingRecord
 import com.startpainel.player.data.remote.dto.Category
@@ -173,6 +174,7 @@ fun HomeScreen(
     }
 
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+    val isTv = rememberIsTv() // AdMob não suporta Android TV — ocultamos os slots na TV
 
     // Conteúdo das abas — reutilizado nos dois layouts (retrato e paisagem)
     val tabContent: @Composable () -> Unit = {
@@ -229,7 +231,7 @@ fun HomeScreen(
                 onLogout = { vm.logout(); onLogout() }
             )
             Box(Modifier.weight(1f).fillMaxWidth()) { tabContent() }
-            AdmobBanner(Modifier.background(Color(0xFF0C0C0C)))
+            if (!isTv) AdmobBanner(Modifier.background(Color(0xFF0C0C0C)))
             BottomNavBar(current = state.tab, onSelect = vm::selectTab)
         }
     } else {
@@ -245,7 +247,7 @@ fun HomeScreen(
             Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha = 0.07f)))
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 Box(Modifier.weight(1f).fillMaxWidth()) { tabContent() }
-                AdmobBanner(Modifier.background(Color(0xFF0C0C0C)))
+                if (!isTv) AdmobBanner(Modifier.background(Color(0xFF0C0C0C)))
             }
         }
     }
@@ -581,6 +583,7 @@ private fun HomeTab(
     onPlayMovie: (Int, String, String) -> Unit,
     onOpenSeries: (Int, String) -> Unit
 ) {
+    val isTv = rememberIsTv()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 20.dp)) {
         item {
             if (state.heroLoading) ShimmerHero()
@@ -607,8 +610,8 @@ private fun HomeTab(
                 }
             }
         }
-        // Anúncio nativo no feed (entre seções) — alta visibilidade e receita
-        item {
+        // Anúncio nativo no feed — AdMob não suporta Android TV, só exibe em celular/tablet
+        if (!isTv) item {
             Spacer(Modifier.height(20.dp))
             AdmobNativeCard(
                 Modifier

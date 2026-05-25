@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -223,16 +225,19 @@ fun LoginScreen(
             Spacer(Modifier.height(16.dp))
 
             // ── Alternador de modo ────────────────────────────────────────
-            Text(
-                text = if (state.isCodeMode) "← Entrar com usuário e senha"
-                       else "Tenho um código de acesso →",
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                color = BrandAccent,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .clickable { vm.toggleMode() }
-                    .padding(vertical = 4.dp)
-            )
+            // Em TV o acesso por código promocional não aparece — só usuário/senha
+            if (!state.isTvDevice) {
+                Text(
+                    text = if (state.isCodeMode) "← Entrar com usuário e senha"
+                           else "Tenho um código de acesso →",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = BrandAccent,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clickable { vm.toggleMode() }
+                        .padding(vertical = 4.dp)
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             Text(
@@ -241,6 +246,51 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(80.dp))
+        }
+
+        // ── Diálogo de conflito de dispositivo ────────────────────────────
+        if (state.showDeviceConflict) {
+            AlertDialog(
+                onDismissRequest = { vm.dismissDeviceConflict() },
+                icon = {
+                    Icon(
+                        Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                },
+                title = {
+                    Text(
+                        "Conta em uso em outro aparelho",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                },
+                text = {
+                    val device = state.conflictDeviceName
+                    Text(
+                        if (!device.isNullOrBlank())
+                            "Esta conta já está ativa em \"$device\".\n\nDeseja deslogar esse aparelho e entrar neste?"
+                        else
+                            "Esta conta já está ativa em outro aparelho.\n\nDeseja deslogar o outro aparelho e entrar neste?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { vm.forceLogin() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Sim, entrar aqui")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { vm.dismissDeviceConflict() }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
         }
 
         // ── FAB WhatsApp ──────────────────────────────────────────────────

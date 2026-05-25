@@ -10,6 +10,9 @@ data class PanelLoginResponse(
     val username: String? = null,
     val password: String? = null,
     val name: String? = null,
-    @SerialName("expires_at") val expiresAt: String? = null,
-    val error: String? = null
+    @SerialName("expires_at")    val expiresAt:   String?  = null,
+    val error: String? = null,
+    // Device lock
+    @SerialName("device_locked") val deviceLocked: Boolean = false,
+    @SerialName("device_name")   val deviceName:   String? = null,
 )

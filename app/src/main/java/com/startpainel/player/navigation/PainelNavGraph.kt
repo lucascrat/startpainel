@@ -20,6 +20,7 @@ import com.startpainel.player.ui.home.HomeScreen
 import com.startpainel.player.ui.login.LoginScreen
 import com.startpainel.player.ui.player.PlayerScreen
 import com.startpainel.player.ui.series.SeriesDetailScreen
+import com.startpainel.player.util.DeviceType
 import kotlinx.coroutines.flow.first
 
 object Routes {
@@ -47,10 +48,23 @@ fun PainelNavGraph() {
 
     LaunchedEffect(Unit) {
         val initial = store.account.first()
+        val savedLease = leaseStore.lease.first()
+
+        // Em TV o acesso por código promocional não é permitido (somente celular).
+        // Se a sessão salva veio de código (existe lease), libera a lista, desloga e
+        // força login com usuário/senha (cliente pagante registrado no banco).
+        if (DeviceType.isTv(context) && savedLease != null) {
+            val repo = ServiceLocator.panelRepository()
+            try { repo.m3uRelease(savedLease.code, savedLease.leaseId) } catch (_: Exception) {}
+            M3uLeaseManager.stop()
+            leaseStore.clear()
+            store.clear()
+            startDestination = Routes.LOGIN
+            return@LaunchedEffect
+        }
 
         // Se há uma lease M3U salva, renova-a no servidor (pode ter expirado se o app ficou
         // fechado por mais de 5 min e o servidor fez auto-release por inatividade).
-        val savedLease = leaseStore.lease.first()
         if (savedLease != null && !M3uLeaseManager.hasActiveLease) {
             val repo = ServiceLocator.panelRepository()
             try {
