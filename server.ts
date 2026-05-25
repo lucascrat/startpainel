@@ -1445,6 +1445,7 @@ PRINCÍPIOS (regras inegociáveis — todo o resto é seu julgamento):
 - Se você não entendeu o que ele quer, pergunte com naturalidade — não invente intenção.
 - Você confia no que o cliente diz, mas valida antes de agir (ex: confirma o MAC antes de criar teste).
 - Tudo que precisar julgar ("ele tá bravo?", "isso é spam?", "ele quer renovar ou só conversar?"), use bom senso humano — não tem regra pra tudo.
+- NUNCA mande detalhes técnicos de erro pro cliente. Nada de mensagens de erro de API, códigos, stack trace, nome de robô/ferramenta, "timeout", "HTTP 500", "erro no banco", etc. Se algo falhar, diga de forma simples e humana: "não consegui renovar agora", "não consegui ativar agora, já avisei o suporte", "tive um probleminha, tenta de novo daqui a pouco". O cliente NUNCA pode ver o motivo técnico — isso é problema interno nosso.
 
 X-CLOUD E CÓDIGOS DE ATIVAÇÃO:
 - O app X-Cloud (iPhone/iOS) usa um Código de Ativação (ex: 1J616K) em vez de MAC.
@@ -1772,7 +1773,8 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
     if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
       return { text: '⏳ Estou um pouco sobrecarregado agora. Tenta de novo em uns segundos?', functionCalls: [], model: 'gemini-2.5-flash' };
     }
-    return { text: `⚠️ IA Erro: ${msg}`, functionCalls: [], model: 'gemini-2.5-flash' };
+    // NUNCA expor o erro tecnico ao cliente — so uma mensagem amigavel generica.
+    return { text: '😕 Tive um probleminha aqui pra processar isso agora. Pode mandar de novo daqui a pouquinho?', functionCalls: [], model: 'gemini-2.5-flash' };
   }
 }
 
@@ -3260,7 +3262,7 @@ app.post('/api/public-chat',
     }));
 
     const aiResult = await handleAIChat(remoteJid, chatHistory, { name: visitorName });
-    const replyText = aiResult.text || '⚠️ Sem resposta da IA';
+    const replyText = aiResult.text || '😕 Me perdi aqui um instante. Pode repetir, por favor?';
 
     await pool.query(
       'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
@@ -3880,7 +3882,7 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
         } else {
           await evo2.sendMessage(
             remoteJid,
-            `😕 Tive um problema pra ativar agora: ${result?.message || 'erro desconhecido'}\n\nVou chamar o operador pra resolver pra voce em alguns minutos. Pode aguardar?`
+            `😕 Nao consegui ativar seu teste agora. Vou chamar o operador pra resolver pra voce em alguns minutos. Pode aguardar?`
           );
         }
       } catch (e: any) {
@@ -3999,7 +4001,7 @@ async function handleActivatePlayerAccount(remoteJid: string, args: any): Promis
             [username, playerName, playerName, mac, username]
           );
         } else {
-          await evo2.sendMessage(remoteJid, `😕 Houve um problema na ativação: ${result?.message || 'Erro no robô'}.\n\nO suporte humano já foi avisado.`);
+          await evo2.sendMessage(remoteJid, `😕 Nao consegui ativar agora. O suporte humano já foi avisado e vai resolver pra você.`);
         }
       } catch (e: any) { console.error('[Tool activate_player] background falhou:', e?.message); }
     })();
@@ -4110,7 +4112,7 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
         } else {
           await evo2.sendMessage(
             remoteJid,
-            `😕 Nao consegui atualizar agora: ${result?.message || 'erro tecnico'}.\n\nVou avisar o operador pra resolver pessoalmente.`
+            `😕 Nao consegui atualizar sua lista agora. Vou avisar o operador pra resolver pessoalmente.`
           );
         }
       } catch (e: any) {
@@ -4191,7 +4193,7 @@ async function handleRepairIboPlaylist(remoteJid: string, username: string): Pro
         } else {
           await evo2.sendMessage(
             remoteJid,
-            `😕 Tive um problema ao verificar: ${result?.message || 'erro tecnico'}.\n\nO suporte ja foi avisado.`
+            `😕 Nao consegui verificar sua lista agora. O suporte ja foi avisado e vai te ajudar.`
           );
         }
       } catch (e: any) {
