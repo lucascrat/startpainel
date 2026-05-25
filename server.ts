@@ -1385,6 +1385,19 @@ async function getXciptvUrl(): Promise<string> {
   return _xciptvUrlCache.value;
 }
 
+// Cache do tempo (em segundos) de inatividade que reinicia o atendimento numa saudação.
+// 0 = desativado (nunca reinicia automaticamente). Padrão: 60s.
+let _greetingResetCache: { value: number; ts: number } = { value: 60, ts: 0 };
+async function getGreetingResetSeconds(): Promise<number> {
+  if (Date.now() - _greetingResetCache.ts < 60_000) return _greetingResetCache.value;
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'greeting_reset_seconds'");
+    const n = parseInt(r.rows[0]?.value, 10);
+    _greetingResetCache = { value: Number.isFinite(n) && n >= 0 ? n : 60, ts: Date.now() };
+  } catch { _greetingResetCache = { ..._greetingResetCache, ts: Date.now() }; }
+  return _greetingResetCache.value;
+}
+
 // Cache de preços de venda (refresh a cada 60s)
 let _salePricesCache: {
   p1: number; p2: number; p3: number;
@@ -1572,6 +1585,14 @@ O sistema injeta os dados do cliente no contexto abaixo. USE TUDO isso:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INTELIGÊNCIA DE CONVERSA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POSTURA NO ATENDIMENTO (regra mais importante):
+- O cliente é quem conduz. SEMPRE deixe ele dizer o que precisa — NÃO adivinhe, NÃO presuma o problema.
+- Quando o cliente chamar (ex: "oi", "bom dia", "tem alguém?"), responda com educação, cumprimente pelo nome e pergunte no que pode ajudar. Só isso. Espere ele explicar.
+- NUNCA dispare ferramenta, mande DNS, tutorial, teste, Pix, credenciais ou qualquer coisa que o cliente NÃO pediu. Mandar coisa não solicitada deixa a conversa automatizada, robótica e sem nexo — evite a todo custo.
+- Você é LIVRE pra entender o caso e resolver: pergunte, investigue, raciocine. Aja só depois de saber o que o cliente realmente quer.
+- Se o cliente sumiu e voltou com uma saudação, comece um NOVO atendimento: cumprimente de novo e pergunte no que pode ajudar — sem continuar o assunto antigo e sem repetir o que já foi feito.
+- Tom sempre educado, acolhedor e humano. Uma pergunta por vez, sem questionário.
 
 LEIA O HISTÓRICO antes de responder. Antes de qualquer ação, pergunte a si mesmo: "Isso já foi feito nessa conversa?" Se sim, NÃO repita.
 
@@ -2754,6 +2775,7 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
   if (key === 'gemini_api_key') _geminiKeyCache = { value: null, ts: 0 };
   if (['plan_price_1','plan_price_2','plan_price_3','app_fee_ibo','app_fee_ibo_pro','app_fee_vu_player','app_fee_bob_player'].includes(key)) _salePricesCache = { ..._salePricesCache, ts: 0 };
   if (key === 'xciptv_server_url') _xciptvUrlCache = { ..._xciptvUrlCache, ts: 0 };
+  if (key === 'greeting_reset_seconds') _greetingResetCache = { ..._greetingResetCache, ts: 0 };
   res.json({ success: true });
 });
 
@@ -3664,9 +3686,6 @@ function isGreetingMessage(raw: string): boolean {
   return re.test(s);
 }
 
-// Tempo mínimo de inatividade para tratar uma nova saudação como novo atendimento.
-const GREETING_RESET_GAP_MS = 60_000; // 1 minuto
-
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
@@ -3713,10 +3732,12 @@ app.post('/api/webhooks/evolution/:event?',
     const historyRes = await pool.query('SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10', [remoteJid]);
     let chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
 
-    // Novo atendimento: se o cliente mandou uma saudação após >1min parado, ignora o
+    // Novo atendimento: se o cliente mandou uma saudação após X seg parado, ignora o
     // contexto anterior e começa do zero (Lucas saúda e pergunta no que pode ajudar).
-    if (isGreetingMessage(text) && gapSinceLastMs > GREETING_RESET_GAP_MS) {
-      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento (contexto anterior ignorado).`);
+    // O tempo é configurável no painel (greeting_reset_seconds); 0 desativa.
+    const resetSeconds = await getGreetingResetSeconds();
+    if (resetSeconds > 0 && isGreetingMessage(text) && gapSinceLastMs > resetSeconds * 1000) {
+      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado (limite ${resetSeconds}s) → novo atendimento (contexto anterior ignorado).`);
       chatHistory = [{ role: 'user', parts: [{ text }] }];
     }
 

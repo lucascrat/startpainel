@@ -157,6 +157,8 @@ export default function AdminPanel() {
   // URL do servidor XC IPTV / IPTV Smarters
   const [xciptvUrl, setXciptvUrl] = useState('http://smartlite.site:8880');
   const [isSavingXcUrl, setIsSavingXcUrl] = useState(false);
+  const [greetingResetSeconds, setGreetingResetSeconds] = useState('60');
+  const [isSavingGreetingReset, setIsSavingGreetingReset] = useState(false);
   // Autenticação SmartOne
   const [isAuthSmartOne, setIsAuthSmartOne] = useState(false);
   const [smartOneAuthMsg, setSmartOneAuthMsg] = useState('');
@@ -658,6 +660,11 @@ export default function AdminPanel() {
       const resXc = await authFetch('/api/settings/xciptv_server_url');
       const dataXc = await resXc.json();
       if (dataXc.value) setXciptvUrl(dataXc.value);
+
+      // Tempo de reinício de atendimento por saudação (segundos)
+      const resGr = await authFetch('/api/settings/greeting_reset_seconds');
+      const dataGr = await resGr.json();
+      if (dataGr.value !== undefined && dataGr.value !== null) setGreetingResetSeconds(String(dataGr.value));
     } catch (error) {}
   };
 
@@ -1110,6 +1117,26 @@ export default function AdminPanel() {
       toast.success('URL do servidor XC IPTV / Smarters atualizada! A IA já usa o novo endereço.');
     } catch { toast.error('Erro ao salvar URL.'); }
     finally { setIsSavingXcUrl(false); }
+  };
+
+  const handleSaveGreetingReset = async () => {
+    const n = parseInt(greetingResetSeconds, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      toast.error('Valor inválido. Use segundos (0 = desativado).');
+      return;
+    }
+    setIsSavingGreetingReset(true);
+    try {
+      await authFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'greeting_reset_seconds', value: String(n) }),
+      });
+      toast.success(n === 0
+        ? 'Reinício por saudação DESATIVADO.'
+        : `Reinício de atendimento ajustado para ${n}s. A IA já usa o novo valor.`);
+    } catch { toast.error('Erro ao salvar.'); }
+    finally { setIsSavingGreetingReset(false); }
   };
 
   const handleBroadcast = async () => {
@@ -2100,6 +2127,41 @@ export default function AdminPanel() {
                       >
                         <Save size={13} />
                         {isSavingXcUrl ? 'Salvando...' : 'Salvar URL'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ───── Reinício de atendimento por saudação ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <span className="text-base">⏱️</span>
+                      <div>
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Reinício de Atendimento</h3>
+                        <p className="text-[9px] text-slate-400 mt-0.5">Se o cliente mandar uma saudação (oi, bom dia...) após esse tempo parado, o atendente começa um novo atendimento, sem continuar o assunto anterior.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Tempo de inatividade (segundos)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={greetingResetSeconds}
+                        onChange={e => setGreetingResetSeconds(e.target.value)}
+                        placeholder="60"
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                      <p className="text-[9px] text-slate-400">Ex.: 60 = 1 minuto, 300 = 5 minutos. Use <b>0</b> para desativar (nunca reiniciar automaticamente).</p>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSaveGreetingReset}
+                        disabled={isSavingGreetingReset}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-blue-900/20"
+                      >
+                        <Save size={13} />
+                        {isSavingGreetingReset ? 'Salvando...' : 'Salvar'}
                       </button>
                     </div>
                   </div>
