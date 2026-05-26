@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exclui os DataStores sensiveis (credenciais + URL M3U) do backup em nuvem e da
+  transferencia entre aparelhos, para evitar extracao/roubo da lista M3U.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="sharedpref" path="credentials.xml" />
+        <exclude domain="file" path="datastore/credentials.preferences_pb" />
+        <exclude domain="file" path="datastore/m3u_lease.preferences_pb" />
+        <exclude domain="file" path="datastore/downloads.preferences_pb" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="credentials.xml" />
+        <exclude domain="file" path="datastore/credentials.preferences_pb" />
+        <exclude domain="file" path="datastore/m3u_lease.preferences_pb" />
+        <exclude domain="file" path="datastore/downloads.preferences_pb" />
     </device-transfer>
 </data-extraction-rules>

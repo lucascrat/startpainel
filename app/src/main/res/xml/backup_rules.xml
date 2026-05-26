@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  O app usa Jetpack DataStore (nao SharedPreferences). Os dados sensiveis
+  (credenciais da lista, URL M3U, leases) ficam em files/datastore/*.preferences_pb.
+  Excluimos esses arquivos do backup para que a lista M3U nao possa ser extraida.
+  (allowBackup ja esta false no manifest; isto e defesa em profundidade.)
+-->
 <full-backup-content>
-    <exclude domain="sharedpref" path="credentials.xml" />
+    <exclude domain="file" path="datastore/credentials.preferences_pb" />
+    <exclude domain="file" path="datastore/m3u_lease.preferences_pb" />
+    <exclude domain="file" path="datastore/downloads.preferences_pb" />
 </full-backup-content>

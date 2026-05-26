@@ -16,19 +16,21 @@ class CredentialsStore(private val context: Context) {
     private val KEY_USER = stringPreferencesKey("user")
     private val KEY_PASS = stringPreferencesKey("pass")
 
+    // Valores são criptografados em repouso (SecretBox / Android Keystore).
+    // Dados legados (texto puro de versões antigas) não decriptam → account = null → novo login.
     val account: Flow<Account?> = context.dataStore.data.map { prefs ->
-        val dns = prefs[KEY_DNS].orEmpty()
-        val user = prefs[KEY_USER].orEmpty()
-        val pass = prefs[KEY_PASS].orEmpty()
+        val dns = SecretBox.decrypt(prefs[KEY_DNS]).orEmpty()
+        val user = SecretBox.decrypt(prefs[KEY_USER]).orEmpty()
+        val pass = SecretBox.decrypt(prefs[KEY_PASS]).orEmpty()
         if (dns.isBlank() || user.isBlank() || pass.isBlank()) null
         else Account(dns, user, pass)
     }
 
     suspend fun save(account: Account) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_DNS] = account.dns
-            prefs[KEY_USER] = account.username
-            prefs[KEY_PASS] = account.password
+            prefs[KEY_DNS] = SecretBox.encrypt(account.dns)
+            prefs[KEY_USER] = SecretBox.encrypt(account.username)
+            prefs[KEY_PASS] = SecretBox.encrypt(account.password)
         }
     }
 
