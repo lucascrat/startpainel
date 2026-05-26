@@ -222,6 +222,9 @@ async function initDB(retries = 5) {
         )`,
         `CREATE INDEX IF NOT EXISTS leads_status_idx ON leads(status, last_contact DESC)`,
         `CREATE INDEX IF NOT EXISTS leads_alt_jid_idx ON leads(alt_jid) WHERE alt_jid IS NOT NULL`,
+        // Telefone informado pelo visitante no chat web (entrada exige nome + WhatsApp).
+        `ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone TEXT`,
+        `CREATE INDEX IF NOT EXISTS leads_phone_idx ON leads(phone) WHERE phone IS NOT NULL`,
         // === POOL DE LISTAS M3U ===
         // Sistema de compartilhamento de listas: 50 listas servem 100+ usuarios
         // pois nem todos ficam online ao mesmo tempo. Cada acesso "reserva" uma lista
@@ -959,19 +962,22 @@ async function upsertLead(
   remoteJid: string,
   pushName: string,
   firstMsg: string,
-  altJid?: string | null
+  altJid?: string | null,
+  phone?: string | null
 ): Promise<void> {
   try {
+    // Tenta com phone (versão nova). Se a coluna ainda não foi adicionada, cai no fallback.
     await pool.query(
-      `INSERT INTO leads (remote_jid, alt_jid, push_name, first_message, message_count, last_contact)
-       VALUES ($1, $2, $3, $4, 1, NOW())
+      `INSERT INTO leads (remote_jid, alt_jid, push_name, first_message, phone, message_count, last_contact)
+       VALUES ($1, $2, $3, $4, $5, 1, NOW())
        ON CONFLICT (remote_jid) DO UPDATE SET
          push_name        = COALESCE(NULLIF($3,''), leads.push_name),
          alt_jid          = COALESCE($2, leads.alt_jid),
+         phone            = COALESCE(NULLIF($5,''), leads.phone),
          message_count    = leads.message_count + 1,
          last_contact     = NOW(),
          status           = CASE WHEN leads.status = 'converted' THEN leads.status ELSE 'active' END`,
-      [remoteJid, altJid || null, pushName || '', firstMsg.slice(0, 500)]
+      [remoteJid, altJid || null, pushName || '', firstMsg.slice(0, 500), phone || null]
     );
   } catch (e) {
     console.error('[Lead] upsertLead error:', e);
@@ -1965,14 +1971,38 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
     } catch (e) { /* silencioso, usa o default */ }
 
     // Injeta contexto do cliente (se encontrado pelo numero) — pra IA saber quem ta falando.
-    // Pula pra chat web (visitante anonimo) — userInfo.skipCustomerLookup === true.
-    if (!userInfo?.skipCustomerLookup && remoteJid && !remoteJid.startsWith('web:')) {
-      try {
-        const ctx = await buildCustomerContext(remoteJid, userInfo?.name || 'Cliente', userInfo?.altJid);
-        systemPrompt += ctx;
-      } catch (e: any) {
-        console.warn('[AI] falha ao montar contexto do cliente:', e?.message);
+    // - Chat WhatsApp: usa o próprio remoteJid (número real).
+    // - Chat web com telefone informado: usa o telefone como JID sintético — assim quem é
+    //   cliente do banco aparece com o contexto completo (vencimento, apps, MAC, etc.).
+    // - Chat web sem telefone OU skipCustomerLookup: pula.
+    if (!userInfo?.skipCustomerLookup && remoteJid) {
+      let lookupJid: string | null = remoteJid.startsWith('web:') ? null : remoteJid;
+      if (remoteJid.startsWith('web:') && userInfo?.phone) {
+        lookupJid = `${String(userInfo.phone).replace(/\D/g, '')}@s.whatsapp.net`;
       }
+      if (lookupJid) {
+        try {
+          const ctx = await buildCustomerContext(lookupJid, userInfo?.name || 'Cliente', userInfo?.altJid);
+          systemPrompt += ctx;
+        } catch (e: any) {
+          console.warn('[AI] falha ao montar contexto do cliente:', e?.message);
+        }
+      }
+    }
+
+    // Instrução específica do CHAT WEB: quando o cliente quer assinar/pagar/contratar,
+    // o Lucas adiciona o marcador [CONTINUAR_NO_WHATSAPP] na resposta para o frontend
+    // mostrar o botão de handoff para o WhatsApp oficial do suporte.
+    if (userInfo?.isWebChat) {
+      systemPrompt += `
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANAL: CHAT WEB (atendimento.appbr.pro)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Você está atendendo PELO SITE (não pelo WhatsApp). Atua igual, mas com uma regra extra:
+- QUANDO o cliente disser que quer *assinar*, *pagar*, *contratar*, *fechar plano*, *renovar* (ou seja, finalizar uma compra/pagamento) → termine sua resposta com o marcador *[CONTINUAR_NO_WHATSAPP]* numa linha sozinha. O sistema vai mostrar pra ele um botão pra ir pro WhatsApp oficial do suporte, onde fechamos a venda em segurança. Diga algo como: "Pra finalizar com segurança, vamos seguir no WhatsApp! Clica no botão abaixo 👇" e finalize com [CONTINUAR_NO_WHATSAPP].
+- Para tirar dúvidas, mandar teste grátis (código Startflix), explicar planos, configurar app, atualizar sinal — você atende AQUI mesmo, sem precisar mandar pro WhatsApp.
+- Cliente pode mandar foto/print pelo chat web (você processa imagens normalmente).`;
     }
 
     // Catalogo de apps disponiveis pra IA sugerir
@@ -3731,21 +3761,37 @@ app.post('/api/public-chat',
   rateLimit({ windowMs: 60_000, max: 12, key: req => (req.body?.sessionId || clientIp(req)) as string, message: 'Aguarde alguns segundos antes de mandar outra mensagem.' }),
   async (req, res) => {
   try {
-    const { sessionId, name, message } = req.body || {};
-    if (!sessionId || typeof sessionId !== 'string' || !message || typeof message !== 'string') {
-      return res.status(400).json({ error: 'sessionId e message são obrigatórios' });
+    const { sessionId, name, phone, message, image } = req.body || {};
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId obrigatório' });
     }
+    // Mensagem OU imagem (cliente pode mandar só uma foto)
+    const hasText = typeof message === 'string' && message.trim().length > 0;
+    const hasImage = image && typeof image.data === 'string' && typeof image.mimeType === 'string';
+    if (!hasText && !hasImage) {
+      return res.status(400).json({ error: 'message ou image obrigatório' });
+    }
+
     const remoteJid = `web:${sessionId}@public`;
     const visitorName = (typeof name === 'string' && name.trim()) ? name.trim() : 'Visitante';
+    const visitorPhone = (typeof phone === 'string') ? phone.replace(/\D/g, '') : '';
+    const storedText = hasText ? message.trim() : '[Imagem enviada]';
 
     await pool.query(
       'INSERT INTO contacts (remote_jid, name, last_message, last_message_time, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (remote_jid) DO UPDATE SET name=EXCLUDED.name, last_message=EXCLUDED.last_message, last_message_time=NOW(), updated_at=NOW()',
-      [remoteJid, visitorName, message]
+      [remoteJid, visitorName, storedText]
     );
     await pool.query(
       'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
-      [message, 'customer', 'text', remoteJid, visitorName]
+      [storedText, 'customer', hasImage ? 'image' : 'text', remoteJid, visitorName]
     );
+
+    // Grava lead com o telefone (se informado) — facilita o follow-up no WhatsApp depois
+    if (visitorPhone) {
+      void (async () => {
+        try { await upsertLead(remoteJid, visitorName, storedText, null, visitorPhone); } catch {}
+      })();
+    }
 
     const historyRes = await pool.query(
       'SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10',
@@ -3753,11 +3799,33 @@ app.post('/api/public-chat',
     );
     const chatHistory = historyRes.rows.reverse().map((m: any) => ({
       role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user',
-      parts: [{ text: m.text || '' }]
+      parts: [{ text: m.text || '[Mídia]' }]
     }));
 
-    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: visitorName });
-    const replyText = aiResult.text || '😕 Me perdi aqui um instante. Pode repetir, por favor?';
+    const mediaData = hasImage ? { data: image.data.replace(/^data:.*?;base64,/, ''), mimeType: image.mimeType } : undefined;
+
+    const aiResult = await handleAIChat(
+      remoteJid,
+      chatHistory,
+      { name: visitorName, phone: visitorPhone, isWebChat: true },
+      mediaData
+    );
+    let replyText = aiResult.text || '😕 Me perdi aqui um instante. Pode repetir, por favor?';
+
+    // Detecta o marcador de handoff que o Lucas pode adicionar quando o cliente quer
+    // assinar/pagar. Limpa o texto e retorna a info pro frontend mostrar o botão.
+    let handoff: { url: string; label: string } | null = null;
+    if (/\[CONTINUAR_NO_WHATSAPP\]/i.test(replyText)) {
+      replyText = replyText.replace(/\[CONTINUAR_NO_WHATSAPP\]/gi, '').trim();
+      try {
+        const r = await pool.query("SELECT value FROM settings WHERE key = 'whatsapp_support'");
+        const num = String(r.rows[0]?.value || '').replace(/\D/g, '');
+        if (num) {
+          const greet = encodeURIComponent(`Olá! Sou ${visitorName}, vim do atendimento web e quero seguir aqui.`);
+          handoff = { url: `https://wa.me/${num}?text=${greet}`, label: 'Continuar no WhatsApp' };
+        }
+      } catch {}
+    }
 
     await pool.query(
       'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
@@ -3771,7 +3839,7 @@ app.post('/api/public-chat',
       if (generated) audio = { data: generated.base64, mimeType: generated.mimeType };
     }
 
-    res.json({ text: replyText, audio });
+    res.json({ text: replyText, audio, handoff });
   } catch (e: any) {
     console.error('[PublicChat Error]', e?.message || e);
     res.status(500).json({ error: e?.message || 'Erro interno' });
