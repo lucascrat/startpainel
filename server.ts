@@ -1398,6 +1398,36 @@ async function getGreetingResetSeconds(): Promise<number> {
   return _greetingResetCache.value;
 }
 
+// Cache dos números de WhatsApp com poder de admin (config admin_whatsapp_numbers,
+// separados por vírgula). Só dígitos. Admins podem cadastrar apps/telefones via chat.
+let _adminNumbersCache: { value: string[]; ts: number } = { value: [], ts: 0 };
+async function getAdminNumbers(): Promise<string[]> {
+  if (Date.now() - _adminNumbersCache.ts < 60_000) return _adminNumbersCache.value;
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'admin_whatsapp_numbers'");
+    const nums = String(r.rows[0]?.value || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean);
+    _adminNumbersCache = { value: nums, ts: Date.now() };
+  } catch { _adminNumbersCache = { ..._adminNumbersCache, ts: Date.now() }; }
+  return _adminNumbersCache.value;
+}
+
+// Compara dois telefones (só dígitos) tolerando DDI 55 e o 9 brasileiro após o DDD.
+function phoneDigitsMatch(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const strip55 = (s: string) => (s.length > 11 && s.startsWith('55') ? s.slice(2) : s);
+  const drop9 = (s: string) => (s.length === 11 && s[2] === '9' ? s.slice(0, 2) + s.slice(3) : s);
+  const x = strip55(a), y = strip55(b);
+  return x === y || drop9(x) === drop9(y) || x === drop9(y) || drop9(x) === y;
+}
+
+// True se o JID (ou alt) que está falando pertence a um número admin.
+async function isAdminSender(jid: string, altJid?: string | null): Promise<boolean> {
+  const admins = await getAdminNumbers();
+  if (admins.length === 0) return false;
+  const cand = [jid, altJid].filter(Boolean).map(j => normalizePhone(j as string));
+  return admins.some(a => cand.some(c => phoneDigitsMatch(a, c)));
+}
+
 // Cache de preços de venda (refresh a cada 60s)
 let _salePricesCache: {
   p1: number; p2: number; p3: number;
@@ -1922,6 +1952,45 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
       console.warn('[AI] falha ao montar catalogo de apps:', e?.message);
     }
 
+    // Instrucoes de MODO ADMIN (so quando quem fala e um numero admin)
+    if (userInfo?.isAdmin) {
+      systemPrompt += `
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO ADMIN (quem está falando é um ADMINISTRADOR, não um cliente comum)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTRAR no painel.
+- Quando o admin mandar dados de cadastro (nome/username do cliente + app + MAC/senha/key + telefone), use a tool *admin_register_app*.
+- Exemplo: "morgana, telefone 88993758888, app ibo mac 45:45:46:46 senha 456687"
+  → admin_register_app(customer="morgana", app_name="IBO", mac="45:45:46:46", password="456687", phone="88993758888")
+- O cliente PRECISA já existir no painel. A tool localiza pelo username ou nome.
+- Se houver mais de um cliente com esse nome, a tool vai te listar pra você escolher o username certo — repasse a pergunta ao admin.
+- Confirme de forma objetiva o que foi cadastrado. Pode ser direto e técnico com o admin (ele é da equipe).
+- O admin também pode usar tudo o que um atendente normal faz.`;
+    }
+
+    // === MODO ADMIN ===
+    // Quando quem fala é um número admin (config admin_whatsapp_numbers), o Lucas ganha
+    // ferramentas de cadastro: registrar apps (MAC/senha) e telefone de um cliente existente.
+    const adminFunctionDeclarations: any[] = userInfo?.isAdmin ? [
+      {
+        name: "admin_register_app",
+        description: "[ADMIN] Cadastra um aplicativo (e opcionalmente o telefone) na conta de um cliente que JÁ EXISTE no painel. USE QUANDO o admin manda os dados de um cliente pra cadastrar. Ex: 'morgana, telefone 88993758888, app ibo mac 45:45:46:46 senha 456687'. Você localiza o cliente pelo username ou nome e cadastra o app.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            customer:   { type: "STRING", description: "Username OU nome do cliente pra localizar no painel (ex: 'morgana' ou 'morganatv')." },
+            app_name:   { type: "STRING", description: "Nome do app. Ex: 'IBO', 'IBO Pro', 'SmartOne', 'VU Player Pro', 'Ultra Player'." },
+            mac:        { type: "STRING", description: "MAC do aparelho (ex: 45:45:46:46). Opcional se o app usa usuário/senha." },
+            device_key: { type: "STRING", description: "Device Key do app, se houver (ex: IBO usa key)." },
+            password:   { type: "STRING", description: "Senha do app, se houver." },
+            phone:      { type: "STRING", description: "Telefone do cliente pra vincular ao cadastro (só dígitos ou com DDD). Opcional." },
+          },
+          required: ["customer", "app_name"],
+        },
+      },
+    ] : [];
+
     const contents: any[] = [
       { role: 'user', parts: [{ text: systemPrompt }] },
       { role: 'model', parts: [{ text: 'Entendido! Pronto para ajudar. 😊' }] },
@@ -2093,6 +2162,7 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
               required: ["username", "app_name", "mac"],
             },
           },
+          ...adminFunctionDeclarations,
         ]
       }] as any
     });
@@ -2785,6 +2855,7 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
   if (['plan_price_1','plan_price_2','plan_price_3','app_fee_ibo','app_fee_ibo_pro','app_fee_vu_player','app_fee_bob_player'].includes(key)) _salePricesCache = { ..._salePricesCache, ts: 0 };
   if (key === 'xciptv_server_url') _xciptvUrlCache = { ..._xciptvUrlCache, ts: 0 };
   if (key === 'greeting_reset_seconds') _greetingResetCache = { ..._greetingResetCache, ts: 0 };
+  if (key === 'admin_whatsapp_numbers') _adminNumbersCache = { ..._adminNumbersCache, ts: 0 };
   res.json({ success: true });
 });
 
@@ -3788,9 +3859,10 @@ app.post('/api/webhooks/evolution/:event?',
       } catch (e) { console.error('[Lead] upsertLead background error:', e); }
     })();
 
-    console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'})...`);
+    const isAdmin = await isAdminSender(remoteJid, altJid);
+    console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'}, admin: ${isAdmin})...`);
     const aiT0 = Date.now();
-    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName, altJid }, mediaData);
+    const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName, altJid, isAdmin }, mediaData);
     console.log(`[Webhook] IA respondeu em ${Date.now() - aiT0}ms: text=${aiResult.text?.length || 0}chars, tools=${aiResult.functionCalls?.length || 0}`);
     if (aiResult.text) {
        const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
@@ -3873,6 +3945,14 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'warez_activate_app') {
           const ok = await handleWareztvActivateApp(remoteJid, call.args);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'admin_register_app') {
+          // Defesa: só executa se quem fala for realmente admin
+          if (!isAdmin) {
+            console.warn('[Webhook] admin_register_app chamada por NÃO-admin — ignorada.');
+          } else {
+            const ok = await handleAdminRegisterApp(remoteJid, call.args);
+            if (ok) toolsThatSent++;
+          }
         } else {
           console.warn(`[Webhook] Tool desconhecida: ${call.name}`);
         }
@@ -4939,6 +5019,110 @@ async function handleWareztvActivateApp(remoteJid: string, args: any): Promise<b
     return true;
   } catch (e: any) {
     console.error('[Tool warez_activate_app] erro:', e?.message);
+    return false;
+  }
+}
+
+// Normaliza o nome do app pra um app_model que as tools de reparo reconhecem.
+function normalizeAppModel(name: string): { app_name: string; app_model: string } {
+  const s = (name || '').toLowerCase();
+  if (s.includes('ibo') && s.includes('pro')) return { app_name: 'IBO Pro', app_model: 'IBO PRO' };
+  if (s.includes('ibo') && s.includes('iptv')) return { app_name: 'IBO IPTV', app_model: 'IBO IPTV' };
+  if (s.includes('ibo')) return { app_name: 'IBO Player', app_model: 'IBO PLAYER' };
+  if (s.includes('smartone') || s.includes('smart one')) return { app_name: 'SmartOne', app_model: 'SMARTONE' };
+  if (s.includes('vu')) return { app_name: 'VU Player Pro', app_model: 'VU PLAYER PRO' };
+  if (s.includes('duplex')) return { app_name: 'Duplex Play', app_model: 'DUPLEX PLAY' };
+  const clean = (name || '').trim() || 'App';
+  return { app_name: clean, app_model: clean.toUpperCase() };
+}
+
+/**
+ * [ADMIN] Cadastra um app (e opcionalmente o telefone) num cliente existente.
+ * Localiza o cliente por username (exato) ou nome (parcial). Se ambíguo, pede pra especificar.
+ */
+async function handleAdminRegisterApp(remoteJid: string, args: any): Promise<boolean> {
+  const evo = await getEvolutionService();
+  try {
+    const customerQuery = String(args?.customer || '').trim();
+    const appName       = String(args?.app_name || '').trim();
+    const mac           = String(args?.mac || '').trim() || null;
+    const deviceKey     = String(args?.device_key || '').trim() || null;
+    const appPassword   = String(args?.password || '').trim() || null;
+    const phone         = String(args?.phone || '').replace(/\D/g, '') || null;
+
+    if (!customerQuery || !appName) {
+      await evo.sendMessage(remoteJid, '⚙️ Admin: preciso do *cliente* (username/nome) e do *app* pra cadastrar.');
+      return true;
+    }
+
+    // 1. Localiza o cliente: username exato primeiro, depois nome parcial.
+    let rows = (await pool.query(
+      'SELECT id, name, username, whatsapp FROM customers WHERE LOWER(username) = LOWER($1) LIMIT 5',
+      [customerQuery]
+    )).rows;
+    if (rows.length === 0) {
+      rows = (await pool.query(
+        'SELECT id, name, username, whatsapp FROM customers WHERE name ILIKE $1 ORDER BY name LIMIT 10',
+        [`%${customerQuery}%`]
+      )).rows;
+    }
+
+    if (rows.length === 0) {
+      await evo.sendMessage(remoteJid, `⚙️ Admin: não achei nenhum cliente com "${customerQuery}". Confere o username/nome.`);
+      return true;
+    }
+    if (rows.length > 1) {
+      const lista = rows.map((r: any) => `• ${r.name || '(sem nome)'} — user: *${r.username}*`).join('\n');
+      await evo.sendMessage(remoteJid, `⚙️ Admin: achei ${rows.length} clientes com "${customerQuery}":\n${lista}\n\nMe manda o *username* exato pra eu cadastrar no certo.`);
+      return true;
+    }
+
+    const customer = rows[0];
+    const { app_name, app_model } = normalizeAppModel(appName);
+    const accessType = mac || deviceKey ? 'mac_key' : 'user_pass';
+
+    // 2. Cadastra o app
+    await pool.query(
+      `INSERT INTO customer_apps (customer_id, app_name, app_model, access_type, mac_address, device_key, password, is_tv)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+      [customer.id, app_name, app_model, accessType, mac, deviceKey, appPassword]
+    );
+
+    // 3. Telefone (se informado): vincula ao cadastro
+    let phoneMsg = '';
+    if (phone) {
+      const curNorm = String(customer.whatsapp || '').replace(/\D/g, '');
+      if (!curNorm) {
+        await pool.query('UPDATE customers SET whatsapp = $1, updated_at = NOW() WHERE id = $2', [phone, customer.id]);
+        phoneMsg = `\n📱 Telefone ${phone} salvo como principal.`;
+      } else if (!phoneDigitsMatch(curNorm, phone)) {
+        try {
+          await pool.query(
+            'INSERT INTO customer_phones (customer_id, phone, label) VALUES ($1, $2, $3)',
+            [customer.id, phone, customer.name || 'Cliente']
+          );
+          phoneMsg = `\n📱 Telefone ${phone} vinculado como secundário.`;
+        } catch {
+          phoneMsg = `\n⚠️ Telefone ${phone} já está vinculado a outro cadastro — não alterei.`;
+        }
+      } else {
+        phoneMsg = `\n📱 Telefone já era esse, mantido.`;
+      }
+    }
+
+    const detalhes = [
+      mac && `MAC: ${mac}`,
+      deviceKey && `Key: ${deviceKey}`,
+      appPassword && `Senha: ${appPassword}`,
+    ].filter(Boolean).join(' | ');
+
+    await evo.sendMessage(remoteJid,
+      `✅ Admin: cadastrei *${app_name}* no cliente *${customer.name || customer.username}* (user: ${customer.username}).\n${detalhes || '(sem MAC/senha)'}${phoneMsg}`
+    );
+    return true;
+  } catch (e: any) {
+    console.error('[Tool admin_register_app] erro:', e?.message);
+    try { await evo.sendMessage(remoteJid, '⚙️ Admin: tive um erro ao cadastrar. Confere os dados e tenta de novo.'); } catch {}
     return false;
   }
 }

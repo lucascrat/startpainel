@@ -159,6 +159,8 @@ export default function AdminPanel() {
   const [isSavingXcUrl, setIsSavingXcUrl] = useState(false);
   const [greetingResetSeconds, setGreetingResetSeconds] = useState('60');
   const [isSavingGreetingReset, setIsSavingGreetingReset] = useState(false);
+  const [adminNumbers, setAdminNumbers] = useState('');
+  const [isSavingAdminNumbers, setIsSavingAdminNumbers] = useState(false);
   // Autenticação SmartOne
   const [isAuthSmartOne, setIsAuthSmartOne] = useState(false);
   const [smartOneAuthMsg, setSmartOneAuthMsg] = useState('');
@@ -665,6 +667,11 @@ export default function AdminPanel() {
       const resGr = await authFetch('/api/settings/greeting_reset_seconds');
       const dataGr = await resGr.json();
       if (dataGr.value !== undefined && dataGr.value !== null) setGreetingResetSeconds(String(dataGr.value));
+
+      // Números WhatsApp com poder de admin
+      const resAdm = await authFetch('/api/settings/admin_whatsapp_numbers');
+      const dataAdm = await resAdm.json();
+      if (dataAdm.value) setAdminNumbers(dataAdm.value);
     } catch (error) {}
   };
 
@@ -1137,6 +1144,19 @@ export default function AdminPanel() {
         : `Reinício de atendimento ajustado para ${n}s. A IA já usa o novo valor.`);
     } catch { toast.error('Erro ao salvar.'); }
     finally { setIsSavingGreetingReset(false); }
+  };
+
+  const handleSaveAdminNumbers = async () => {
+    setIsSavingAdminNumbers(true);
+    try {
+      await authFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'admin_whatsapp_numbers', value: adminNumbers.trim() }),
+      });
+      toast.success('Números admin atualizados! O atendente já reconhece os novos.');
+    } catch { toast.error('Erro ao salvar números admin.'); }
+    finally { setIsSavingAdminNumbers(false); }
   };
 
   const handleBroadcast = async () => {
@@ -2162,6 +2182,40 @@ export default function AdminPanel() {
                       >
                         <Save size={13} />
                         {isSavingGreetingReset ? 'Salvando...' : 'Salvar'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ───── Números Admin (cadastro via WhatsApp) ───── */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <span className="text-base">🛡️</span>
+                      <div>
+                        <h3 className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Números Admin</h3>
+                        <p className="text-[9px] text-slate-400 mt-0.5">Números de WhatsApp da equipe. Esses números podem pedir ao atendente pra cadastrar apps (MAC/senha) e telefone de clientes existentes, direto pelo chat.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Números (separados por vírgula)</label>
+                      <input
+                        type="text"
+                        value={adminNumbers}
+                        onChange={e => setAdminNumbers(e.target.value)}
+                        placeholder="5588993759083, 5511999998888"
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                      <p className="text-[9px] text-slate-400">Use o número com DDI (ex.: 55) e DDD. Deixe vazio para não ter nenhum admin.</p>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSaveAdminNumbers}
+                        disabled={isSavingAdminNumbers}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all shadow-lg shadow-blue-900/20"
+                      >
+                        <Save size={13} />
+                        {isSavingAdminNumbers ? 'Salvando...' : 'Salvar'}
                       </button>
                     </div>
                   </div>
