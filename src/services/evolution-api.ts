@@ -89,6 +89,39 @@ export class EvolutionService {
     }
   }
 
+  /**
+   * Envia uma WhatsApp List Message (menu clicável). Até 10 itens.
+   * Útil pra ofertar atalhos no início do atendimento.
+   *
+   * sections: cada section tem { title, rows: [{ rowId, title, description? }] }
+   */
+  async sendList(
+    number: string,
+    payload: {
+      title: string;
+      description: string;
+      buttonText: string;
+      footerText?: string;
+      sections: Array<{ title: string; rows: Array<{ rowId: string; title: string; description?: string }> }>;
+    }
+  ) {
+    try {
+      const url = `${this.config.apiUrl}/message/sendList/${this.config.instance}`;
+      const response = await axios.post(url, {
+        number: normalizeRecipient(number),
+        title: payload.title,
+        description: payload.description,
+        buttonText: payload.buttonText,
+        footerText: payload.footerText || '',
+        sections: payload.sections,
+      }, { headers: this.headers, timeout: TIMEOUT_SEND });
+      return response.data;
+    } catch (error: any) {
+      logEvolutionError('sendList falhou', error);
+      throw error;
+    }
+  }
+
   async sendAudio(number: string, base64: string) {
     try {
       const url = `${this.config.apiUrl}/message/sendWhatsAppAudio/${this.config.instance}`;

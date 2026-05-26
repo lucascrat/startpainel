@@ -1624,6 +1624,17 @@ POSTURA NO ATENDIMENTO (regra mais importante):
 - Se o cliente sumiu e voltou com uma saudação, comece um NOVO atendimento: cumprimente de novo e pergunte no que pode ajudar — sem continuar o assunto antigo e sem repetir o que já foi feito.
 - Tom sempre educado, acolhedor e humano. Uma pergunta por vez, sem questionário.
 
+MENU DE ATALHOS — quando o cliente clica num botão do menu inicial, a mensagem dele vem com o texto exato da opção. Trate cada uma assim:
+- "Código Startflix Grátis (Celular)" → use *generate_startflix_access* (gera código pra app Startflix no celular). Não pergunte mais nada.
+- "Testar App na TV" → pergunte a marca da Smart TV (Samsung, LG, TCL, Philips, AOC, outra) pra recomendar o app certo.
+- "Testar no Firestick" → recomende *Fun Play* ou *Ultra Player* (Amazon Appstore via sideload). Peça o MAC do Firestick e, com cliente cadastrado, ative.
+- "Testar TV Roku" → recomende *Fun Player*, *Ultra Player* ou *Lazer Player* (disponíveis no canal Start no Roku). Peça o Código de Ativação.
+- "Testar TV Box" → recomende *Fun Play*, *Lazer Play* ou *Ultra Player*. Peça o MAC.
+- "App para iPhone" → recomende *X-Cloud Mobile*. Peça o Código de Ativação (não MAC).
+- "Atualizar meu sinal" → procedimento "sem sinal": olhe o vencimento no contexto. Vencido → ofereça recarga. Em dia → identifique o app (IBO/IBO Pro/VU/SmartOne) e chame a tool de reparo certa usando o MAC já cadastrado.
+- "Fazer pagamento" → se for cliente cadastrado, use *generate_pix* com o valor da renovação dele. Se não for, pergunte o que ele quer contratar pra gerar o Pix certo.
+- "Outros" → pergunte de forma aberta no que pode ajudar.
+
 LEIA O HISTÓRICO antes de responder. Antes de qualquer ação, pergunte a si mesmo: "Isso já foi feito nessa conversa?" Se sim, NÃO repita.
 
 AÇÕES QUE NÃO SE REPETEM (a menos que o cliente peça explicitamente de novo):
@@ -3766,6 +3777,20 @@ function isGreetingMessage(raw: string): boolean {
   return re.test(s);
 }
 
+// Menu de atalhos exibido no início de cada novo atendimento (WhatsApp List Message).
+// rowId vai pro backend ao clicar; title é o que o cliente vê.
+const ATTENDANCE_MENU_ROWS = [
+  { rowId: 'opt_startflix_celular', title: 'Código Startflix Grátis (Celular)' },
+  { rowId: 'opt_testar_app_tv',     title: 'Testar App na TV' },
+  { rowId: 'opt_testar_firestick',  title: 'Testar no Firestick' },
+  { rowId: 'opt_testar_roku',       title: 'Testar TV Roku' },
+  { rowId: 'opt_testar_tvbox',      title: 'Testar TV Box' },
+  { rowId: 'opt_app_iphone',        title: 'App para iPhone' },
+  { rowId: 'opt_atualizar_sinal',   title: 'Atualizar meu sinal' },
+  { rowId: 'opt_pagamento',         title: 'Fazer pagamento' },
+  { rowId: 'opt_outros',            title: 'Outros' },
+];
+
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
 //   POST /api/webhooks/evolution                  (single URL, body has data.event)
 //   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
@@ -3790,7 +3815,16 @@ app.post('/api/webhooks/evolution/:event?',
     pushName = data.data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
     console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid}${altJid ? ' alt=' + altJid : ''})`);
 
-    let text = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || msg?.videoMessage?.caption || msg?.message?.conversation || '';
+    let text = msg?.conversation
+      || msg?.extendedTextMessage?.text
+      || msg?.imageMessage?.caption
+      || msg?.videoMessage?.caption
+      || msg?.message?.conversation
+      // Resposta de WhatsApp List Message: o usuário clicou numa opção do menu
+      || msg?.listResponseMessage?.title
+      || msg?.listResponseMessage?.singleSelectReply?.selectedRowId
+      || msg?.message?.listResponseMessage?.title
+      || '';
     const isImage = !!msg?.imageMessage;
     const isAudio = !!msg?.audioMessage;
     if (!text && !isImage && !isAudio) return;
@@ -3813,11 +3847,39 @@ app.post('/api/webhooks/evolution/:event?',
     let chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
 
     // Novo atendimento: se o cliente mandou uma saudação após X seg parado, ignora o
-    // contexto anterior e começa do zero (Lucas saúda e pergunta no que pode ajudar).
-    // O tempo é configurável no painel (greeting_reset_seconds); 0 desativa.
+    // contexto anterior e começa do zero. Ao invés do Lucas responder com texto, enviamos
+    // uma LISTA CLICÁVEL de atalhos (Código Startflix, Testar TV, Pagamento, etc.) para
+    // agilizar o atendimento. O tempo é configurável (greeting_reset_seconds); 0 desativa.
     const resetSeconds = await getGreetingResetSeconds();
-    if (resetSeconds > 0 && isGreetingMessage(text) && gapSinceLastMs > resetSeconds * 1000) {
-      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado (limite ${resetSeconds}s) → novo atendimento (contexto anterior ignorado).`);
+    const isNewAttendance = resetSeconds > 0
+      && isGreetingMessage(text)
+      && gapSinceLastMs > resetSeconds * 1000;
+
+    if (isNewAttendance) {
+      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento: enviando menu de atalhos.`);
+      let listSent = false;
+      try {
+        const cfg = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+        const config: any = {}; cfg.rows.forEach(r => config[r.key] = r.value);
+        const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
+        const firstName = (pushName || 'Cliente').split(' ')[0];
+        await evo.sendList(remoteJid, {
+          title:       `Olá, ${firstName}! 👋`,
+          description: 'Pra agilizar seu atendimento, escolha uma opção abaixo. Se preferir, é só digitar sua dúvida normalmente.',
+          buttonText:  'Ver opções',
+          footerText:  'StartPainel — atendimento',
+          sections: [{ title: 'Atalhos', rows: ATTENDANCE_MENU_ROWS }],
+        });
+        await pool.query(
+          'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
+          ['[Menu de atalhos enviado ao cliente]', 'ai', 'text', remoteJid, pushName]
+        );
+        listSent = true;
+      } catch (e: any) {
+        console.error('[Webhook] sendList falhou — caindo no fluxo normal da IA:', e?.message);
+      }
+      if (listSent) return; // aguarda o clique do cliente; IA não é chamada neste turno
+      // Falhou enviar a lista → IA responde com texto, sem o contexto antigo
       chatHistory = [{ role: 'user', parts: [{ text }] }];
     }
 
