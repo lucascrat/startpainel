@@ -1624,7 +1624,18 @@ POSTURA NO ATENDIMENTO (regra mais importante):
 - Se o cliente sumiu e voltou com uma saudação, comece um NOVO atendimento: cumprimente de novo e pergunte no que pode ajudar — sem continuar o assunto antigo e sem repetir o que já foi feito.
 - Tom sempre educado, acolhedor e humano. Uma pergunta por vez, sem questionário.
 
-MENU DE ATALHOS — quando o cliente clica num botão do menu inicial, a mensagem dele vem com o texto exato da opção. Trate cada uma assim:
+MENU DE ATALHOS — o cliente pode responder de duas formas: clicando na lista (chega o título exato) OU digitando o *número* da opção (1 a 9). Trate ambos do mesmo jeito:
+- "1" ou "Código Startflix Grátis (Celular)" → Código Startflix Grátis (Celular)
+- "2" ou "Testar App na TV" → Testar App na TV
+- "3" ou "Testar no Firestick" → Testar no Firestick
+- "4" ou "Testar TV Roku" → Testar TV Roku
+- "5" ou "Testar TV Box" → Testar TV Box
+- "6" ou "App para iPhone" → App para iPhone
+- "7" ou "Atualizar meu sinal" → Atualizar meu sinal
+- "8" ou "Fazer pagamento" → Fazer pagamento
+- "9" ou "Outros" → Outros
+
+Trate cada opção assim:
 - "Código Startflix Grátis (Celular)" → use *generate_startflix_access* (gera código pra app Startflix no celular). Não pergunte mais nada.
 - "Testar App na TV" → pergunte a marca da Smart TV (Samsung, LG, TCL, Philips, AOC, outra) pra recomendar o app certo.
 - "Testar no Firestick" → recomende *Fun Play* ou *Ultra Player* (Amazon Appstore via sideload). Peça o MAC do Firestick e, com cliente cadastrado, ative.
@@ -3864,13 +3875,16 @@ app.post('/api/webhooks/evolution/:event?',
       && gapSinceLastMs > resetSeconds * 1000;
 
     if (isNewAttendance) {
-      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento: enviando menu de atalhos.`);
-      let listSent = false;
+      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento: enviando menu.`);
+      const firstName = (pushName || 'Cliente').split(' ')[0];
+      const cfg = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
+      const config: any = {}; cfg.rows.forEach(r => config[r.key] = r.value);
+      const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
+
+      // 1) Tenta WhatsApp List Message (interativa). Algumas versões do Evolution/Baileys não
+      //    suportam — capturamos o erro e seguimos pro plano B.
+      let listOk = false;
       try {
-        const cfg = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
-        const config: any = {}; cfg.rows.forEach(r => config[r.key] = r.value);
-        const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
-        const firstName = (pushName || 'Cliente').split(' ')[0];
         await evo.sendList(remoteJid, {
           title:       `Olá, ${firstName}! 👋`,
           description: 'Pra agilizar seu atendimento, escolha uma opção abaixo. Se preferir, é só digitar sua dúvida normalmente.',
@@ -3878,17 +3892,34 @@ app.post('/api/webhooks/evolution/:event?',
           footerText:  'StartPainel — atendimento',
           sections: [{ title: 'Atalhos', rows: ATTENDANCE_MENU_ROWS }],
         });
-        await pool.query(
-          'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
-          ['[Menu de atalhos enviado ao cliente]', 'ai', 'text', remoteJid, pushName]
-        );
-        listSent = true;
+        listOk = true;
       } catch (e: any) {
-        console.error('[Webhook] sendList falhou — caindo no fluxo normal da IA:', e?.message);
+        console.warn('[Webhook] sendList falhou — usando menu em texto numerado:', e?.message);
       }
-      if (listSent) return; // aguarda o clique do cliente; IA não é chamada neste turno
-      // Falhou enviar a lista → IA responde com texto, sem o contexto antigo
-      chatHistory = [{ role: 'user', parts: [{ text }] }];
+
+      // 2) Plano B: menu em texto numerado (funciona em qualquer WhatsApp/versão).
+      //    Sempre enviamos um texto também — se a lista nativa renderizar, o cliente vê
+      //    as duas coisas (lista clicável + texto); se não, ao menos o texto chega.
+      const textMenu =
+        `👋 Olá, ${firstName}! Pra agilizar, é só responder com o *número* da opção:\n\n` +
+        ATTENDANCE_MENU_ROWS.map((r, i) => `*${i + 1}* — ${r.title}`).join('\n') +
+        `\n\nOu digite sua dúvida normalmente que eu te atendo. 😊`;
+      try {
+        if (!listOk) {
+          await evo.sendMessage(remoteJid, textMenu);
+        }
+      } catch (e: any) {
+        console.error('[Webhook] envio do menu de texto também falhou:', e?.message);
+      }
+
+      // Registra como mensagem da IA no histórico
+      await pool.query(
+        'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
+        [listOk ? '[Menu de atalhos enviado ao cliente]' : textMenu, 'ai', 'text', remoteJid, pushName]
+      );
+
+      // Menu enviado — não chamamos a IA neste turno; aguardamos a escolha do cliente.
+      return;
     }
 
     let mediaData = undefined;
