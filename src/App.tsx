@@ -22,7 +22,28 @@ export default function App() {
   useEffect(() => {
     const onExpired = () => setIsAuthenticated(false);
     window.addEventListener('admin-auth-expired', onExpired);
-    return () => window.removeEventListener('admin-auth-expired', onExpired);
+
+    // Abre login via URL ?admin=1
+    if (new URLSearchParams(window.location.search).get('admin') === '1') {
+      setShowLogin(true);
+    }
+
+    // Atalho de teclado: pressionar 'a' 3× em < 1.5s
+    let keyBuf = '';
+    let keyTimer: ReturnType<typeof setTimeout>;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'a') return;
+      keyBuf += 'a';
+      clearTimeout(keyTimer);
+      keyTimer = setTimeout(() => { keyBuf = ''; }, 1500);
+      if (keyBuf.length >= 3) { setShowLogin(true); keyBuf = ''; }
+    };
+    window.addEventListener('keydown', onKey);
+
+    return () => {
+      window.removeEventListener('admin-auth-expired', onExpired);
+      window.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {

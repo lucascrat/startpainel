@@ -499,7 +499,7 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
           <span style={{ fontSize: 12, fontWeight: 900 }}><span style={{ color: C.red }}>START</span><span style={{ color: '#fff' }}>FLIX</span></span>
         </div>
         <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.15)', letterSpacing: '0.1em' }}>© 2026 STARTPAINEL. TODOS OS DIREITOS RESERVADOS.</span>
-        <button onClick={onAdminClick} style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'rgba(255,255,255,0.12)', cursor: 'pointer', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+        <button onClick={onAdminClick} style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'rgba(255,255,255,0.22)', cursor: 'pointer', letterSpacing: '0.1em', textTransform: 'uppercase' }} title="Acesso Admin (ou pressione A, A, A)">
           <Lock size={9} /> Admin
         </button>
       </footer>
