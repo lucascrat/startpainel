@@ -89,8 +89,8 @@ export default function App() {
   // Public-facing view: only customer chat + discrete admin entry icon.
   if (!isAuthenticated) {
     return (
-      <div className="flex flex-col h-[100dvh] bg-slate-50 font-sans overflow-hidden">
-        <main className="flex-1 overflow-hidden">
+      <div className="flex flex-col min-h-[100dvh] font-sans">
+        <main className="flex-1">
           <PublicChat onAdminClick={() => setShowLogin(true)} />
         </main>
         {loginModal}
