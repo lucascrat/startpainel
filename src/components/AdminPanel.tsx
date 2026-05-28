@@ -7,14 +7,216 @@ import {
   Plus, Trash2, User, RefreshCw, Smartphone, CheckCircle,
   Brain, Save, Key, QrCode, DollarSign, TrendingUp,
   Tv, Monitor, Globe, ChevronRight, Calendar, Info, X, Eye,
-  Cpu, ExternalLink, Zap, ArrowRightLeft, Phone, UserPlus
+  Cpu, ExternalLink, Zap, ArrowRightLeft, Phone, UserPlus,
+  Image as ImageIcon, Crown, Gift, Layout
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
+// ─── LANDPAGE MANAGER ───────────────────────────────────────────────────────
+
+interface LandpageManagerProps {
+  catalogApps: { id: number; name: string; app_image_url: string | null; landing_category?: string | null; landing_rank?: number | null; landing_price?: string | null }[];
+  onReloadCatalog: () => void;
+}
+
+function LandpageManager({ catalogApps, onReloadCatalog }: LandpageManagerProps) {
+  const [banners, setBanners] = useState<any[]>([]);
+  const [loadingBanners, setLoadingBanners] = useState(false);
+  const [bannerForm, setBannerForm] = useState({ title: '', subtitle: '', image_url: '', cta_label: 'Saiba mais', badge: '', display_order: 0 });
+  const [editingBannerId, setEditingBannerId] = useState<number | 'new' | null>(null);
+  const [savingBanner, setSavingBanner] = useState(false);
+  const [activeTab, setActiveTab] = useState<'banners' | 'apps'>('banners');
+
+  const loadBanners = () => {
+    setLoadingBanners(true);
+    authFetch('/api/landing-banners').then(r => r.json()).then(d => Array.isArray(d) && setBanners(d)).catch(() => {}).finally(() => setLoadingBanners(false));
+  };
+
+  useEffect(() => { loadBanners(); }, []);
+
+  const saveBanner = async () => {
+    if (!bannerForm.title.trim()) return;
+    setSavingBanner(true);
+    try {
+      if (editingBannerId === 'new') {
+        await authFetch('/api/landing-banners', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bannerForm) });
+      } else {
+        await authFetch(`/api/landing-banners/${editingBannerId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...bannerForm, is_active: true }) });
+      }
+      toast.success('Banner salvo!');
+      setEditingBannerId(null);
+      setBannerForm({ title: '', subtitle: '', image_url: '', cta_label: 'Saiba mais', badge: '', display_order: 0 });
+      loadBanners();
+    } catch { toast.error('Erro ao salvar banner'); } finally { setSavingBanner(false); }
+  };
+
+  const deleteBanner = async (id: number) => {
+    if (!confirm('Excluir este banner?')) return;
+    await authFetch(`/api/landing-banners/${id}`, { method: 'DELETE' });
+    toast.success('Banner removido!');
+    loadBanners();
+  };
+
+  const updateAppLanding = async (id: number, landing_category: string | null, landing_rank: number | null, landing_price: string | null) => {
+    await authFetch(`/api/app-catalog/${id}/landing`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ landing_category, landing_rank, landing_price }),
+    });
+    toast.success('App atualizado!');
+    onReloadCatalog();
+  };
+
+  const inputCls = 'w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-500';
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gradient-to-br from-red-950 to-slate-900 p-6 rounded-2xl border border-red-900/30">
+        <div className="flex items-center gap-3 mb-4">
+          <Layout size={20} className="text-red-400" />
+          <h2 className="font-black text-white text-sm uppercase tracking-widest">Gerenciar LandPage StartFlix</h2>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6">
+          {[{ id: 'banners', label: '🎞️ Banners' }, { id: 'apps', label: '📱 Apps da Vitrine' }].map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id as any)}
+              className={`px-4 py-2 rounded-lg text-xs font-black transition ${activeTab === t.id ? 'bg-red-600 text-white' : 'bg-white/10 text-gray-400 hover:text-white'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* BANNERS */}
+        {activeTab === 'banners' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold text-gray-400">Banners do carrossel da página inicial</p>
+              <button onClick={() => { setEditingBannerId('new'); setBannerForm({ title: '', subtitle: '', image_url: '', cta_label: 'Saiba mais', badge: '', display_order: 0 }); }}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 transition">
+                <Plus size={12} />Novo banner
+              </button>
+            </div>
+
+            {/* Formulário de banner */}
+            {editingBannerId !== null && (
+              <div className="bg-white/10 rounded-xl p-4 space-y-3 border border-white/10">
+                <p className="text-xs font-black text-white uppercase">{editingBannerId === 'new' ? 'Novo banner' : 'Editar banner'}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Título *</label>
+                    <input value={bannerForm.title} onChange={e => setBannerForm(f => ({ ...f, title: e.target.value }))} placeholder="Ex.: O melhor IPTV" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Badge</label>
+                    <input value={bannerForm.badge} onChange={e => setBannerForm(f => ({ ...f, badge: e.target.value }))} placeholder="Ex.: ⚡ Ativação instantânea" className={inputCls} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Subtítulo</label>
+                  <input value={bannerForm.subtitle} onChange={e => setBannerForm(f => ({ ...f, subtitle: e.target.value }))} placeholder="Descrição curta do banner" className={inputCls} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">URL da imagem de fundo</label>
+                    <input value={bannerForm.image_url} onChange={e => setBannerForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://..." className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Texto do botão CTA</label>
+                    <input value={bannerForm.cta_label} onChange={e => setBannerForm(f => ({ ...f, cta_label: e.target.value }))} placeholder="Saiba mais" className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={saveBanner} disabled={savingBanner || !bannerForm.title.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition">
+                    <Save size={12} />{savingBanner ? 'Salvando...' : 'Salvar'}
+                  </button>
+                  <button onClick={() => setEditingBannerId(null)} className="px-4 py-2 rounded-lg text-xs font-bold text-gray-400 hover:text-white bg-white/10 transition">Cancelar</button>
+                </div>
+              </div>
+            )}
+
+            {/* Lista de banners */}
+            {loadingBanners ? <p className="text-xs text-gray-500">Carregando...</p> : (
+              <div className="space-y-2">
+                {banners.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Nenhum banner cadastrado. Os banners padrão serão exibidos.</p>}
+                {banners.map(b => (
+                  <div key={b.id} className="flex items-center gap-3 bg-white/5 rounded-xl p-3 border border-white/10">
+                    {b.image_url
+                      ? <img src={b.image_url} alt={b.title} className="w-14 h-10 rounded-lg object-cover shrink-0" />
+                      : <div className="w-14 h-10 rounded-lg bg-red-900/40 flex items-center justify-center shrink-0"><ImageIcon size={14} className="text-red-400" /></div>
+                    }
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{b.title}</p>
+                      {b.subtitle && <p className="text-[10px] text-gray-400 truncate">{b.subtitle}</p>}
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => { setEditingBannerId(b.id); setBannerForm({ title: b.title, subtitle: b.subtitle || '', image_url: b.image_url || '', cta_label: b.cta_label || 'Saiba mais', badge: b.badge || '', display_order: b.display_order || 0 }); }}
+                        className="p-1.5 rounded text-yellow-400 hover:bg-yellow-400/10 transition"><Eye size={12} /></button>
+                      <button onClick={() => deleteBanner(b.id)} className="p-1.5 rounded text-red-400 hover:bg-red-400/10 transition"><Trash2 size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* APPS DA VITRINE */}
+        {activeTab === 'apps' && (
+          <div className="space-y-3">
+            <p className="text-xs font-bold text-gray-400">Configure quais apps aparecem na vitrine pública. Deixe em branco para não exibir.</p>
+            <div className="grid gap-2">
+              {catalogApps.filter(a => a).map(app => (
+                <AppLandingRow key={app.id} app={app} onSave={updateAppLanding} />
+              ))}
+              {catalogApps.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Nenhum app no catálogo ainda.</p>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AppLandingRow({ app, onSave }: {
+  app: { id: number; name: string; app_image_url: string | null; landing_category?: string | null; landing_rank?: number | null; landing_price?: string | null };
+  onSave: (id: number, cat: string | null, rank: number | null, price: string | null) => void;
+}) {
+  const [cat, setCat]     = useState<string>(app.landing_category || '');
+  const [rank, setRank]   = useState<string>(app.landing_rank != null ? String(app.landing_rank) : '');
+  const [price, setPrice] = useState<string>(app.landing_price || '');
+
+  const inputCls = 'px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white outline-none focus:ring-1 focus:ring-red-500';
+
+  return (
+    <div className="flex items-center gap-3 bg-white/5 rounded-xl p-2.5 border border-white/10 flex-wrap">
+      {app.app_image_url
+        ? <img src={app.app_image_url} alt={app.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+        : <div className="w-10 h-10 rounded-lg bg-red-900/40 flex items-center justify-center text-xs font-black text-red-400 shrink-0">{app.name[0]}</div>
+      }
+      <p className="text-xs font-bold text-white w-28 truncate shrink-0">{app.name}</p>
+      <div className="flex items-center gap-2 flex-wrap flex-1">
+        <select value={cat} onChange={e => setCat(e.target.value)} className={inputCls}>
+          <option value="">Não exibir</option>
+          <option value="free">🎁 Gratuito</option>
+          <option value="paid">⚡ Pago</option>
+        </select>
+        <input value={rank} onChange={e => setRank(e.target.value)} placeholder="Top # (1-10)" type="number" min="1" max="10" className={`${inputCls} w-24`} />
+        {cat === 'paid' && <input value={price} onChange={e => setPrice(e.target.value)} placeholder="R$ 00,00" className={`${inputCls} w-24`} />}
+      </div>
+      <button onClick={() => onSave(app.id, cat || null, rank ? Number(rank) : null, price || null)}
+        className="shrink-0 px-3 py-1 rounded text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 transition">
+        Salvar
+      </button>
+    </div>
+  );
+}
+
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings' | 'm3u'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings' | 'm3u' | 'landpage'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
@@ -1479,6 +1681,7 @@ export default function AdminPanel() {
                     { id: 'android',     label: 'App Android',   icon: <Smartphone size={12} /> },
                     { id: 'settings',    label: 'Config',        icon: <Save size={12} /> },
                     { id: 'm3u',         label: 'Pool M3U',      icon: <Globe size={12} /> },
+                    { id: 'landpage',    label: 'Landpage',      icon: <Zap size={12} /> },
                   ] as { id: typeof activeSubTab; label: string; icon: React.ReactNode }[]
                 ).map(({ id, label, icon }) => (
                   <button
@@ -3531,6 +3734,9 @@ export default function AdminPanel() {
                   </div>
                 </div>
               );
+
+            case 'landpage':
+              return <LandpageManager catalogApps={catalogApps} onReloadCatalog={() => authFetch('/api/app-catalog').then(r => r.json()).then(d => Array.isArray(d) && setCatalogApps(d)).catch(() => {})} />;
 
             default:
               return (

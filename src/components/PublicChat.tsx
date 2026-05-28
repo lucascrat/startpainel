@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Send, Lock, Volume2, VolumeX, Play, Paperclip, X as XIcon, MessageCircle } from 'lucide-react';
+import LandingPage from './LandingPage';
 
 type Msg = {
   role: 'user' | 'model';
@@ -163,72 +164,22 @@ export default function PublicChat({ onAdminClick }: Props) {
   ) : null;
 
   // ════════════════════════════════════════════════════════════════════════
-  // TELA DE ENTRADA (nome + WhatsApp)
+  // TELA DE ENTRADA — LandPage StartFlix
   // ════════════════════════════════════════════════════════════════════════
   if (!name || !phone) {
     return (
-      <div className="flex flex-col h-full" style={{ background: `linear-gradient(135deg, ${WA_DARK_GREEN} 0%, ${WA_TEAL} 100%)` }}>
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="w-full max-w-md">
-            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
-              {/* Topo: avatar + título */}
-              <div className="px-6 pt-8 pb-6 text-center" style={{ background: `linear-gradient(135deg, ${WA_DARK_GREEN}, ${WA_TEAL})` }}>
-                <div className="relative inline-block">
-                  <img src={attendantImage} alt={attendantName} className="w-24 h-24 rounded-full border-4 border-white object-cover shadow-lg mx-auto" />
-                  <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-white"></span>
-                </div>
-                <h1 className="mt-4 text-2xl font-extrabold text-white">{attendantName}</h1>
-                <p className="text-xs text-emerald-100 uppercase tracking-widest font-bold mt-1">Online agora • responde rápido</p>
-              </div>
-
-              {/* Form */}
-              <form onSubmit={handleEnter} className="px-6 py-6 space-y-4">
-                <div>
-                  <h2 className="text-base font-bold text-slate-800 text-center">Bem-vindo ao StartPainel 👋</h2>
-                  <p className="text-xs text-slate-500 text-center mt-1">Preencha pra começar — atendimento humanizado.</p>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Seu nome</label>
-                  <input
-                    autoFocus
-                    value={nameInput}
-                    onChange={e => setNameInput(e.target.value)}
-                    placeholder="Como você se chama?"
-                    className="mt-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Seu WhatsApp</label>
-                  <input
-                    value={phoneInput}
-                    onChange={e => setPhoneInput(e.target.value)}
-                    placeholder="Ex.: 88 99999-0000"
-                    inputMode="tel"
-                    className="mt-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Pra continuar o atendimento se desconectar, e identificar seu cadastro se você já é cliente.</p>
-                </div>
-                <button
-                  type="submit"
-                  disabled={!nameInput.trim() || onlyDigits(phoneInput).length < 10}
-                  className="w-full py-3 text-white font-bold uppercase tracking-widest text-xs rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ background: `linear-gradient(135deg, ${WA_GREEN}, ${WA_TEAL})` }}
-                >
-                  Iniciar atendimento 💬
-                </button>
-                <button
-                  type="button"
-                  onClick={onAdminClick}
-                  className="w-full text-[10px] text-slate-400 hover:text-slate-600 uppercase tracking-widest font-bold pt-2"
-                >
-                  <Lock size={10} className="inline mr-1" /> Acesso administrativo
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
-        {FloatingWaButton}
-      </div>
+      <LandingPage
+        onStartChat={(n, p) => {
+          localStorage.setItem(NAME_KEY, n);
+          localStorage.setItem(PHONE_KEY, p);
+          setName(n);
+          setPhone(p);
+        }}
+        onAdminClick={onAdminClick}
+        supportWhatsapp={supportWhatsapp}
+        attendantName={attendantName}
+        attendantImage={attendantImage}
+      />
     );
   }
 

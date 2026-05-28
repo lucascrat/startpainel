@@ -171,6 +171,22 @@ async function initDB(retries = 5) {
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_3_url TEXT`,
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_4_url TEXT`,
         `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS image_5_url TEXT`,
+        // === LANDPAGE STARTFLIX — campos de categorização na vitrine pública ===
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS landing_category TEXT`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS landing_rank INTEGER`,
+        `ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS landing_price TEXT`,
+        // Tabela de banners da landpage
+        `CREATE TABLE IF NOT EXISTS landing_banners (
+          id SERIAL PRIMARY KEY,
+          title TEXT NOT NULL,
+          subtitle TEXT DEFAULT '',
+          image_url TEXT DEFAULT '',
+          cta_label TEXT DEFAULT 'Saiba mais',
+          badge TEXT DEFAULT '',
+          display_order INTEGER DEFAULT 0,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW()
+        )`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
@@ -2428,6 +2444,68 @@ app.post('/api/r2/test', requireAdmin, async (req, res) => {
   }
 });
 
+// --- LANDING PAGE DATA (público, sem auth) ---
+app.get('/api/landing-data', async (req, res) => {
+  try {
+    const [appsRes, bannersRes] = await Promise.all([
+      pool.query(
+        `SELECT id, name, app_image_url, landing_category, landing_rank, landing_price, description
+         FROM app_catalog
+         WHERE is_active = true AND landing_category IS NOT NULL
+         ORDER BY display_order ASC, name ASC`
+      ),
+      pool.query(
+        `SELECT id, title, subtitle, image_url, cta_label, badge
+         FROM landing_banners
+         WHERE is_active = true
+         ORDER BY display_order ASC, id ASC`
+      ),
+    ]);
+    res.json({ apps: appsRes.rows, banners: bannersRes.rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message });
+  }
+});
+
+// CRUD landing_banners (admin)
+app.get('/api/landing-banners', requireAdmin, async (_req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM landing_banners ORDER BY display_order ASC, id ASC');
+    res.json(r.rows);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post('/api/landing-banners', requireAdmin, async (req, res) => {
+  try {
+    const { title, subtitle = '', image_url = '', cta_label = 'Saiba mais', badge = '', display_order = 0 } = req.body;
+    const r = await pool.query(
+      `INSERT INTO landing_banners (title, subtitle, image_url, cta_label, badge, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [title, subtitle, image_url, cta_label, badge, display_order]
+    );
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.put('/api/landing-banners/:id', requireAdmin, async (req, res) => {
+  try {
+    const { title, subtitle, image_url, cta_label, badge, display_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE landing_banners SET title=$1, subtitle=$2, image_url=$3, cta_label=$4, badge=$5,
+       display_order=$6, is_active=$7 WHERE id=$8 RETURNING *`,
+      [title, subtitle, image_url, cta_label, badge, display_order, is_active, req.params.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete('/api/landing-banners/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM landing_banners WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
 // --- APP CATALOG ---
 // Catalogo de apps que a IA pode sugerir pro cliente (instalacao + screenshots).
 // Listagem publica (pra IA poder consultar via /api/public sem auth), mutacoes admin-only.
@@ -2471,16 +2549,21 @@ app.post('/api/app-catalog', requireAdmin, async (req, res) => {
   try {
     const a = normalizeAppCatalogPayload(req.body || {});
     if (!a.name) return res.status(400).json({ error: 'name e obrigatorio' });
+    const lc = req.body.landing_category ?? null;
+    const lr = req.body.landing_rank != null ? Number(req.body.landing_rank) : null;
+    const lp = req.body.landing_price ?? null;
     const result = await pool.query(
       `INSERT INTO app_catalog (name, display_order, description, app_image_url, example_image_url,
                                 example_instruction, android_link, ios_link, web_link, device_type, is_active, dns,
                                 install_video_url, youtube_url,
-                                image_1_url, image_2_url, image_3_url, image_4_url, image_5_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
+                                image_1_url, image_2_url, image_3_url, image_4_url, image_5_url,
+                                landing_category, landing_rank, landing_price)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING *`,
       [a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
        a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
        a.install_video_url, a.youtube_url,
-       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url]
+       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url,
+       lc, lr, lp]
     );
     res.json(result.rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2489,6 +2572,9 @@ app.post('/api/app-catalog', requireAdmin, async (req, res) => {
 app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
   try {
     const a = normalizeAppCatalogPayload(req.body || {});
+    const lc = 'landing_category' in req.body ? (req.body.landing_category || null) : undefined;
+    const lr = 'landing_rank' in req.body ? (req.body.landing_rank != null ? Number(req.body.landing_rank) : null) : undefined;
+    const lp = 'landing_price' in req.body ? (req.body.landing_price || null) : undefined;
     const result = await pool.query(
       `UPDATE app_catalog SET
          name = COALESCE($2, name),
@@ -2510,12 +2596,16 @@ app.put('/api/app-catalog/:id', requireAdmin, async (req, res) => {
          image_3_url = $18,
          image_4_url = $19,
          image_5_url = $20,
+         landing_category = COALESCE($21, landing_category),
+         landing_rank = COALESCE($22, landing_rank),
+         landing_price = COALESCE($23, landing_price),
          updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [req.params.id, a.name, a.display_order, a.description, a.app_image_url, a.example_image_url,
        a.example_instruction, a.android_link, a.ios_link, a.web_link, a.device_type, a.is_active, a.dns,
        a.install_video_url, a.youtube_url,
-       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url]
+       a.image_1_url, a.image_2_url, a.image_3_url, a.image_4_url, a.image_5_url,
+       lc, lr, lp]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'App nao encontrado' });
     res.json(result.rows[0]);
@@ -2527,6 +2617,20 @@ app.delete('/api/app-catalog/:id', requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM app_catalog WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH — atualiza só os campos de landpage (permite setar null para remover da vitrine)
+app.patch('/api/app-catalog/:id/landing', requireAdmin, async (req, res) => {
+  try {
+    const { landing_category = null, landing_rank = null, landing_price = null } = req.body;
+    const r = await pool.query(
+      `UPDATE app_catalog SET landing_category=$2, landing_rank=$3, landing_price=$4
+       WHERE id=$1 RETURNING id, name, landing_category, landing_rank, landing_price`,
+      [req.params.id, landing_category || null, landing_rank != null ? Number(landing_rank) : null, landing_price || null]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'App não encontrado' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
 // --- PAYMENT RECEIPTS (admin only) ---
