@@ -187,7 +187,7 @@ export default function PublicChat({ onAdminClick }: Props) {
   // TELA DE CHAT (tema WhatsApp)
   // ════════════════════════════════════════════════════════════════════════
   return (
-    <div className="flex flex-col h-full" style={{ background: WA_BG }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: WA_BG, zIndex: 1 }}>
       {/* Header estilo WhatsApp */}
       <div className="flex items-center justify-between px-4 py-3 text-white shadow-md z-10" style={{ background: WA_DARK_GREEN }}>
         <div className="flex items-center gap-3 min-w-0">
