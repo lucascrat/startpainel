@@ -4,30 +4,51 @@ import path from 'path';
 
 const CLOUDDY_LOGIN = 'https://console.clouddy.online/user/auth/login';
 const CLOUDDY_TV_EDIT = 'https://console.clouddy.online/user/tv-playlist/edit';
+const CLOUDDY_VOD_EDIT = 'https://console.clouddy.online/user/vod-playlist/edit';
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH ||
   (os.platform() === 'win32'
     ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
     : '/usr/bin/chromium');
 
 /**
- * Converte uma URL get.php (M3U Xtream) para o formato xc:// que o Clouddy usa.
- * Ex.: http://host:port/get.php?username=U&password=P&...  →  xc://U:P@host:port/streaming=m3u8
- * Se já vier em formato xc://, retorna como está.
+ * Extrai credenciais Xtream (user/pass/host/port) de uma URL get.php ou xc://.
  */
-export function toXtreamUrl(playlistUrl: string): string | null {
+function parseXtreamCreds(playlistUrl: string): { user: string; pass: string; host: string; port: string } | null {
   if (!playlistUrl) return null;
-  if (playlistUrl.startsWith('xc://')) return playlistUrl;
+  // Formato xc://user:pass@host:port/...
+  const xcMatch = playlistUrl.match(/^xc:\/\/([^:]+):([^@]+)@([^:/]+):?(\d+)?/);
+  if (xcMatch) {
+    return { user: xcMatch[1], pass: xcMatch[2], host: xcMatch[3], port: xcMatch[4] || '80' };
+  }
+  // Formato get.php?username=...&password=...
   try {
     const u = new URL(playlistUrl);
-    const username = u.searchParams.get('username');
-    const password = u.searchParams.get('password');
-    if (!username || !password) return null;
+    const user = u.searchParams.get('username');
+    const pass = u.searchParams.get('password');
+    if (!user || !pass) return null;
     const host = u.hostname;
     const port = u.port || (u.protocol === 'https:' ? '443' : '80');
-    return `xc://${username}:${password}@${host}:${port}/streaming=m3u8`;
+    return { user, pass, host, port };
   } catch {
     return null;
   }
+}
+
+/** URL formato TV (HLS): xc://U:P@host:port/streaming=m3u8 */
+export function toXtreamTvUrl(playlistUrl: string): string | null {
+  const c = parseXtreamCreds(playlistUrl);
+  return c ? `xc://${c.user}:${c.pass}@${c.host}:${c.port}/streaming=m3u8` : null;
+}
+
+/** URL formato VOD: xc://U:P@host:port/ */
+export function toXtreamVodUrl(playlistUrl: string): string | null {
+  const c = parseXtreamCreds(playlistUrl);
+  return c ? `xc://${c.user}:${c.pass}@${c.host}:${c.port}/` : null;
+}
+
+/** Alias legado — mantido para compatibilidade. */
+export function toXtreamUrl(playlistUrl: string): string | null {
+  return toXtreamTvUrl(playlistUrl);
 }
 
 /** Lança Chrome com perfil dedicado + flags anti-detecção (passa pelo Cloudflare Turnstile). */
@@ -112,10 +133,47 @@ async function loginClouddy(page: any, email: string, senha: string): Promise<bo
 }
 
 /**
- * Atualiza a playlist (link M3U/Xtream) na conta Clouddy do cliente.
+ * Atualiza o campo form[url] da página atual com newUrl (apaga o antigo) e salva.
+ */
+async function updatePlaylistField(page: any, newUrl: string, label: string): Promise<boolean> {
+  const urlInp = await page.$('#form_url, input[name="form[url]"]');
+  if (!urlInp) {
+    console.warn(`[Clouddy] Campo de URL não encontrado em ${label}`);
+    return false;
+  }
+
+  // Foco no campo, seleciona tudo e apaga
+  await urlInp.click({ clickCount: 3 });
+  await new Promise(r => setTimeout(r, 200));
+  await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
+  await page.keyboard.press('Delete');
+  await new Promise(r => setTimeout(r, 200));
+
+  // Digita a nova URL
+  await urlInp.type(newUrl, { delay: 15 });
+  await new Promise(r => setTimeout(r, 500));
+
+  // Clica Save
+  const saved = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button, input[type=submit]'))
+      .find(b => /^save$|salvar/i.test((b as HTMLButtonElement).textContent?.trim() || (b as HTMLInputElement).value || '')) as HTMLElement | null;
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  if (!saved) await page.keyboard.press('Enter');
+  await new Promise(r => setTimeout(r, 4000));
+
+  console.log(`[Clouddy] ✅ ${label} atualizada`);
+  return true;
+}
+
+/**
+ * Atualiza AS DUAS listas (TV + VOD) na conta Clouddy do cliente.
+ * Apaga a URL antiga se houver e salva a nova em cada aba.
+ *
  * @param email     email de login no Clouddy
  * @param senha     senha de login no Clouddy
- * @param playlistUrl  URL get.php ou xc:// — convertida para xc:// automaticamente
+ * @param playlistUrl  URL get.php ou xc:// — convertida automaticamente para os 2 formatos
  */
 export async function runClouddyUpdatePlaylist(
   email: string,
@@ -125,8 +183,9 @@ export async function runClouddyUpdatePlaylist(
 ): Promise<{ success: boolean; message: string }> {
   let browser: any = null;
 
-  const xcUrl = toXtreamUrl(playlistUrl);
-  if (!xcUrl) {
+  const tvUrl = toXtreamTvUrl(playlistUrl);
+  const vodUrl = toXtreamVodUrl(playlistUrl);
+  if (!tvUrl || !vodUrl) {
     return { success: false, message: 'Não consegui converter a URL da playlist para o formato Clouddy (xc://).' };
   }
 
@@ -148,39 +207,36 @@ export async function runClouddyUpdatePlaylist(
       return { success: false, message: 'Login falhou no Clouddy. Verifique email/senha ou o Cloudflare bloqueou.' };
     }
 
-    // Vai para a edição da playlist TV
-    console.log('[Clouddy] Acessando edição da playlist...');
+    const results = { tv: false, vod: false };
+
+    // ── Aba TV ──────────────────────────────────────────────────────────────
+    console.log('[Clouddy] Acessando aba TV...');
     await page.goto(CLOUDDY_TV_EDIT, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
+    console.log(`[Clouddy] Atualizando TV: ${tvUrl}`);
+    results.tv = await updatePlaylistField(page, tvUrl, 'TV');
+    try { await page.screenshot({ path: 'scratch/clouddy_tv_saved.png' }); } catch {}
 
-    // Preenche o campo form[url] com a URL xc://
-    const urlInp = await page.$('#form_url, input[name="form[url]"]');
-    if (!urlInp) {
-      try { await page.screenshot({ path: 'scratch/clouddy_no_url.png' }); } catch {}
-      throw new Error('Campo de URL da playlist não encontrado no Clouddy.');
+    // ── Aba VOD ─────────────────────────────────────────────────────────────
+    console.log('[Clouddy] Acessando aba VOD...');
+    await page.goto(CLOUDDY_VOD_EDIT, { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
+    console.log(`[Clouddy] Atualizando VOD: ${vodUrl}`);
+    results.vod = await updatePlaylistField(page, vodUrl, 'VOD');
+    try { await page.screenshot({ path: 'scratch/clouddy_vod_saved.png' }); } catch {}
+
+    if (!results.tv && !results.vod) {
+      return { success: false, message: 'Não consegui atualizar nem a TV nem o VOD no Clouddy.' };
     }
 
-    console.log(`[Clouddy] Preenchendo URL: ${xcUrl}`);
-    await urlInp.click({ clickCount: 3 });
-    await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
-    await page.keyboard.press('Backspace');
-    await urlInp.type(xcUrl, { delay: 15 });
-    await new Promise(r => setTimeout(r, 500));
+    const parts: string[] = [];
+    if (results.tv) parts.push('TV');
+    if (results.vod) parts.push('VOD');
 
-    // Clica Save
-    console.log('[Clouddy] Salvando...');
-    const saved = await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button, input[type=submit]'))
-        .find(b => /^save$|salvar/i.test((b as HTMLButtonElement).textContent?.trim() || (b as HTMLInputElement).value || '')) as HTMLElement | null;
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!saved) await page.keyboard.press('Enter');
-    await new Promise(r => setTimeout(r, 4000));
-
-    try { await page.screenshot({ path: 'scratch/clouddy_saved.png' }); } catch {}
-    console.log('[Clouddy] ✅ Playlist atualizada!');
-    return { success: true, message: 'Lista atualizada no Clouddy com sucesso! 🎬' };
+    return {
+      success: true,
+      message: `Lista atualizada no Clouddy (${parts.join(' + ')}) com sucesso! 🎬`,
+    };
 
   } catch (e: any) {
     console.error('[Clouddy] ERRO:', e.message);
