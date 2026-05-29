@@ -26,6 +26,8 @@ import {
   activateQuickPlay,
   createTestClientAndActivatePlayer,
   setCustomExpirationPuppeteer,
+  deleteExpiredTrials,
+  syncAllPanelClients,
 } from './src/services/startpainel-puppeteer.js';
 import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runBobPlayerRepair } from './src/services/bobplayer-service.js';
@@ -85,6 +87,8 @@ const handlers: Record<string, JobHandler> = {
   activate_xcloud:   ({ username, mac }, p) => activateXCloud(username, mac, p),
   activate_seeplay:  ({ username, mac }, p) => activateSeePlay(username, mac, p),
   activate_quickplay:({ username, mac }, p) => activateQuickPlay(username, mac, p),
+  delete_expired_trials: ({ clientType, period }, p) => deleteExpiredTrials({ clientType, period }, p),
+  sync_panel_clients:    ({ maxClients }, p) => syncAllPanelClients(p, maxClients || 200),
   create_test:       async (payload, p) => {
     const { username, mac, playerName, deviceKey, password } = payload;
     const result = await createTestClientAndActivatePlayer(username || '', mac, playerName, p);

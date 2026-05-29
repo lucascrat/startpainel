@@ -756,6 +756,249 @@ export async function activateSeePlay(username: string, mac: string, profileNum 
 }
 
 /**
+ * Varre TODOS os clientes do painel e retorna array com dados parseados.
+ * Pegue o nome de cada cliente, status, expiração, senha IPTV, MAC, app, telefone
+ * extraídos do campo "Comentários" do painel.
+ *
+ * Retorna até `maxClients` clientes (padrão 200).
+ */
+export interface PanelClientSync {
+  username: string;
+  panelId: string;
+  password: string | null;
+  expirationDate: string | null;  // YYYY-MM-DD
+  linesCount: number;
+  status: 'active' | 'expired';
+  name: string | null;
+  whatsapp: string | null;
+  appName: string | null;
+  appMac: string | null;
+  appPassword: string | null;
+}
+
+export async function syncAllPanelClients(
+  profileNum = 0,
+  maxClients = 200
+): Promise<{ success: boolean; clients?: PanelClientSync[]; message: string }> {
+  let browser: Browser | null = null;
+  try {
+    console.log('[Sync] === Sincronizando todos os clientes do painel ===');
+    browser = await launchBrowser(false, profileNum);
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 900 });
+
+    const loggedIn = await loginToPanel(page);
+    if (!loggedIn) return { success: false, message: 'Login no painel falhou.' };
+
+    // Vai pra lista e expande pra 50/página
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 1500));
+    await page.evaluate(() => {
+      const sel = document.querySelector('select') as HTMLSelectElement | null;
+      if (sel) { sel.value = '50'; sel.dispatchEvent(new Event('change')); }
+    });
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Coleta IDs de todas as páginas
+    const allIds: string[] = [];
+    let pageNum = 1;
+    const maxPages = 20;
+    while (pageNum <= maxPages) {
+      const ids = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('tbody tr'));
+        return rows
+          .filter(tr => (tr as HTMLElement).offsetParent !== null && tr.querySelector('a[href*="/clients/"]'))
+          .map(tr => {
+            const link = tr.querySelector('a[href*="/clients/"]') as HTMLAnchorElement;
+            const m = link?.getAttribute('href')?.match(/\/clients\/(\d+)$/);
+            return m ? m[1] : null;
+          })
+          .filter((x): x is string => !!x);
+      });
+      for (const id of ids) if (!allIds.includes(id)) allIds.push(id);
+
+      // Tenta ir pra próxima página
+      const advanced = await page.evaluate(() => {
+        const next = Array.from(document.querySelectorAll('.paginate_button.next, a.next, [data-action="next"]'))
+          .find(e => !(e.classList.contains('disabled'))) as HTMLElement | null;
+        if (next && next.offsetParent !== null) { next.click(); return true; }
+        return false;
+      });
+      if (!advanced) break;
+      pageNum++;
+      await new Promise(r => setTimeout(r, 1200));
+    }
+    console.log(`[Sync] ${allIds.length} clientes encontrados em ${pageNum} página(s)`);
+
+    // Faz fetch de cada cliente e parseia (mesma lógica do import-clients-from-panel.ts)
+    const clients: PanelClientSync[] = [];
+    const usernames: string[] = [];
+    let processed = 0;
+    for (const id of allIds.slice(0, maxClients)) {
+      try {
+        const data = await page.evaluate(async (cid: string) => {
+          const resp = await fetch(`/clients/${cid}`);
+          const html = await resp.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const vals = Array.from(doc.querySelectorAll('.col-6.col-lg-8'))
+            .map(el => (el as HTMLElement).innerText.trim())
+            .filter(t => t && !t.includes('Visualizar') && !t.includes('Ativar Player'));
+          return { vals, panelId: cid };
+        }, id);
+
+        if (!data?.vals?.length) continue;
+        const v = data.vals;
+        const username = v[0] || '';
+        const password = v[1] || null;
+        const connRaw = v[3] || '';
+        const linesCount = parseInt((connRaw.match(/\/\s*(\d+)/) || [])[1] || '1');
+        const expRaw = v[5] || v[6] || '';
+        let expirationDate: string | null = null;
+        const dm = expRaw.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        if (dm) expirationDate = `${dm[3]}-${dm[2]}-${dm[1]}`;
+        const commentsRaw = v[6] || v[7] || '';
+
+        let status: 'active' | 'expired' = 'active';
+        if (expirationDate && new Date(expirationDate) < new Date()) status = 'expired';
+
+        // Parse comentários: nome, telefone, app, mac, senha app
+        let name: string | null = null, whatsapp: string | null = null;
+        let appName: string | null = null, appMac: string | null = null, appPassword: string | null = null;
+        const lines = commentsRaw.split('\n').map(l => l.trim()).filter(l => l.length > 0 && l.length < 120);
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          const labelOnly = line.match(/^(telefone|fone|cel|celular|app\s+que\s+usa|app|mac\s+address|mac|senha|device\s+key)\s*:?\s*$/i);
+          const labelWithVal = line.match(/^(telefone|fone|cel|celular|app\s+que\s+usa|app|mac\s+address|mac|senha|device\s+key)\s*:\s*(.+)/i);
+          const phoneRaw = !labelOnly && !labelWithVal && line.match(/^[\+\d][\d\s()\-]{7,}$/);
+          const macRaw = !labelOnly && !labelWithVal && line.match(/^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$/i);
+          if (labelOnly) {
+            const lbl = labelOnly[1].toLowerCase().replace(/\s+/g, '');
+            const val = lines[i + 1] || '';
+            if (lbl.includes('telefone') || lbl === 'fone' || lbl.startsWith('cel')) { if (!whatsapp) whatsapp = val; }
+            else if (lbl.includes('app')) { if (!appName) appName = val; }
+            else if (lbl.includes('mac')) { if (!appMac) appMac = val; }
+            else if (lbl === 'senha') { if (!appPassword) appPassword = val; }
+            i += 2; continue;
+          } else if (labelWithVal) {
+            const lbl = labelWithVal[1].toLowerCase().replace(/\s+/g, '');
+            const val = labelWithVal[2].trim();
+            if (lbl.includes('telefone') || lbl === 'fone' || lbl.startsWith('cel')) { if (!whatsapp) whatsapp = val; }
+            else if (lbl.includes('app')) { if (!appName) appName = val; }
+            else if (lbl.includes('mac')) { if (!appMac) appMac = val; }
+            else if (lbl === 'senha') { if (!appPassword) appPassword = val; }
+          } else if (phoneRaw && !whatsapp) { whatsapp = line; }
+          else if (macRaw && !appMac) { appMac = line; }
+          else if (!name && line.length >= 2 && line.length < 80) { name = line; }
+          i++;
+        }
+
+        clients.push({
+          username, panelId: data.panelId,
+          password, expirationDate, linesCount, status,
+          name, whatsapp, appName, appMac, appPassword,
+        });
+        usernames.push(username);
+      } catch (e: any) {
+        console.warn(`[Sync] erro no cliente ${id}: ${e?.message?.substring(0, 60)}`);
+      }
+      processed++;
+      if (processed % 20 === 0) console.log(`[Sync] ${processed}/${allIds.length} processados`);
+    }
+
+    console.log(`[Sync] ✅ ${clients.length} clientes sincronizados`);
+    return { success: true, clients, message: `${clients.length} clientes sincronizados do painel.` };
+  } catch (e: any) {
+    console.error('[Sync] erro:', e?.message);
+    return { success: false, message: e?.message || 'Erro inesperado.' };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * Deleta testes expirados (não convertidos) no painel CMS.
+ *
+ * Usa o botão nativo "Deletar Expirados" do painel, que abre um modal:
+ *   - clientType: 'trial' (meus testes) | 'official' (meus clientes)
+ *   - period:     'day' (últimas 24h) | 'month' (esse mês) | 'all' (qualquer dia)
+ *
+ * Padrão: limpa testes expirados nas últimas 24h.
+ */
+export async function deleteExpiredTrials(
+  options: { clientType?: 'trial' | 'official'; period?: 'day' | 'month' | 'all' } = {},
+  profileNum = 0
+): Promise<RenewalResult> {
+  const clientType = options.clientType || 'trial';
+  const period = options.period || 'day';
+
+  let browser: Browser | null = null;
+  try {
+    console.log(`[Puppeteer] === Deletando ${clientType}/${period} no CMS ===`);
+    browser = await launchBrowser(false, profileNum);
+    const page = await browser.newPage();
+
+    const loggedIn = await loginToPanel(page);
+    if (!loggedIn) return { success: false, message: 'Login no painel falhou.' };
+
+    // Vai para a lista de clientes
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Clica em "Deletar Expirados"
+    const opened = await page.evaluate(() => {
+      const link = Array.from(document.querySelectorAll('a')).find(a => /deletar\s+expirados/i.test(a.textContent || ''));
+      if (link) { (link as HTMLElement).click(); return true; }
+      return false;
+    });
+    if (!opened) return { success: false, message: 'Botão "Deletar Expirados" não encontrado no painel.' };
+
+    // Aguarda modal
+    await page.waitForSelector('.modal.show, .modal[style*="block"]', { timeout: 10000 });
+    await new Promise(r => setTimeout(r, 800));
+
+    // Seleciona clientType e period
+    await page.evaluate((ct: string, p: string) => {
+      const modal = document.querySelector('.modal.show, .modal[style*="block"]') as HTMLElement;
+      const selects = modal?.querySelectorAll('select');
+      if (!selects) return;
+      selects.forEach((s) => {
+        const sel = s as HTMLSelectElement;
+        if (sel.name === 'clientType') {
+          sel.value = ct;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (sel.name === 'period') {
+          sel.value = p;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+    }, clientType, period);
+    await new Promise(r => setTimeout(r, 400));
+
+    // Clica DELETAR (confirma a ação)
+    const confirmed = await page.evaluate(() => {
+      const modal = document.querySelector('.modal.show, .modal[style*="block"]') as HTMLElement;
+      const btn = Array.from(modal?.querySelectorAll('button') || []).find(b => /^deletar$/i.test(b.textContent?.trim() || ''));
+      if (btn) { (btn as HTMLElement).click(); return true; }
+      return false;
+    });
+    if (!confirmed) return { success: false, message: 'Botão DELETAR do modal não encontrado.' };
+
+    // Aguarda processamento (pode demorar se tiver muitos)
+    await new Promise(r => setTimeout(r, 6000));
+
+    console.log(`[Puppeteer] ✅ Limpeza ${clientType}/${period} executada.`);
+    return { success: true, message: `Limpeza executada: clientType=${clientType}, period=${period}` };
+
+  } catch (e: any) {
+    console.error('[Puppeteer] Erro ao deletar expirados:', e?.message);
+    return { success: false, message: e?.message || 'Erro inesperado.' };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
  * Família Quick: uma única opção no painel ativa todos os apps abaixo:
  *  - Quick Player
  *  - Quick Player PRO

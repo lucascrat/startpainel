@@ -603,6 +603,133 @@ async function cleanupOldRecords() {
 setInterval(cleanupOldRecords, 24 * 60 * 60 * 1000).unref?.();
 setTimeout(cleanupOldRecords, 30 * 60 * 1000);
 
+// ─── SYNC DIÁRIO DOS CLIENTES DO PAINEL (00:00 todo dia) ────────────────────
+/**
+ * Lucas verifica todos os clientes do painel à meia-noite:
+ *  1. Enfileira sync_panel_clients (worker varre todos clientes do CMS)
+ *  2. Recebe array e faz upsert no banco (atualiza dados que mudaram + cria novos)
+ *  3. Enfileira delete_expired_trials para limpar testes não convertidos
+ */
+async function dailyPanelSync() {
+  try {
+    console.log('[DailySync] === Iniciando sync diário do painel ===');
+
+    // 1. Sync de clientes do painel
+    const syncJobId = await enqueueJob('sync_panel_clients', { maxClients: 300 });
+    const syncResult: any = await waitForJob(syncJobId, 15 * 60 * 1000).catch(e => ({ success: false, message: e?.message }));
+
+    if (syncResult?.success && Array.isArray(syncResult.clients)) {
+      let created = 0, updated = 0, fail = 0;
+      for (const c of syncResult.clients) {
+        try {
+          const existing = await pool.query('SELECT id FROM customers WHERE username = $1', [c.username]);
+          const playlistUrl = c.password
+            ? `http://starton.sbs:8880/get.php?username=${encodeURIComponent(c.username)}&password=${encodeURIComponent(c.password)}&type=m3u_plus&output=m3u8`
+            : null;
+          let customerId: number;
+          if (!existing.rowCount) {
+            const ins = await pool.query(
+              `INSERT INTO customers (username, name, whatsapp, password, playlist_url, expiration_date, lines_count, status)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+              [c.username, c.name || null, c.whatsapp || null, c.password || null, playlistUrl, c.expirationDate, c.linesCount, c.status]
+            );
+            customerId = ins.rows[0].id;
+            created++;
+          } else {
+            customerId = existing.rows[0].id;
+            await pool.query(
+              `UPDATE customers SET
+                 password = COALESCE($2, password),
+                 playlist_url = COALESCE($3, playlist_url),
+                 expiration_date = COALESCE($4::date, expiration_date),
+                 lines_count = $5,
+                 status = $6,
+                 name = COALESCE(NULLIF($7,''), name),
+                 whatsapp = COALESCE(NULLIF($8,''), whatsapp),
+                 updated_at = NOW()
+               WHERE username = $1`,
+              [c.username, c.password, playlistUrl, c.expirationDate, c.linesCount, c.status, c.name || null, c.whatsapp || null]
+            );
+            updated++;
+          }
+          // Upsert do app principal se existir (mac/key vindos dos comentários)
+          if (c.appName) {
+            const appExists = await pool.query(
+              `SELECT id FROM customer_apps WHERE customer_id=$1 AND app_name=$2`, [customerId, c.appName]
+            );
+            if (!appExists.rowCount) {
+              await pool.query(
+                `INSERT INTO customer_apps (customer_id, app_name, mac_address, password) VALUES ($1,$2,$3,$4)`,
+                [customerId, c.appName, c.appMac || null, c.appPassword || null]
+              );
+            } else {
+              await pool.query(
+                `UPDATE customer_apps SET mac_address=COALESCE($3,mac_address), password=COALESCE($4,password)
+                 WHERE customer_id=$1 AND app_name=$2`,
+                [customerId, c.appName, c.appMac || null, c.appPassword || null]
+              );
+            }
+          }
+        } catch (e: any) {
+          fail++;
+          console.warn(`[DailySync] falha em ${c.username}: ${e?.message?.substring(0, 80)}`);
+        }
+      }
+      console.log(`[DailySync] ✅ Sync OK — criados:${created} atualizados:${updated} falhas:${fail}`);
+    } else {
+      console.warn(`[DailySync] sync_panel_clients falhou: ${syncResult?.message || 'sem resultado'}`);
+    }
+
+    // 2. Limpa testes expirados não convertidos (testes de 6h que viraram lixo)
+    console.log('[DailySync] Limpando testes expirados não convertidos...');
+    const cleanupJobId = await enqueueJob('delete_expired_trials', { clientType: 'trial', period: 'day' });
+    const cleanupResult: any = await waitForJob(cleanupJobId, 5 * 60 * 1000).catch(e => ({ success: false, message: e?.message }));
+    if (cleanupResult?.success) {
+      console.log(`[DailySync] ✅ Limpeza de testes: ${cleanupResult.message}`);
+    } else {
+      console.warn(`[DailySync] Limpeza falhou: ${cleanupResult?.message || 'sem resultado'}`);
+    }
+
+    // Também marca como 'lost' os clientes 'teste' do nosso banco que expiraram e nunca pagaram
+    const lostRes = await pool.query(
+      `UPDATE customers SET status='lost', updated_at=NOW()
+       WHERE status='teste' AND expiration_date IS NOT NULL AND expiration_date < NOW()::date
+       RETURNING username`
+    );
+    if (lostRes.rowCount && lostRes.rowCount > 0) {
+      console.log(`[DailySync] ${lostRes.rowCount} testes não convertidos marcados como 'lost': ${lostRes.rows.map((r: any) => r.username).join(', ')}`);
+    }
+  } catch (e: any) {
+    console.error('[DailySync] erro fatal:', e?.message);
+  }
+}
+
+/** Agenda dailyPanelSync para rodar todo dia às 00:00 (horário local do servidor). */
+function scheduleMidnightSync() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(24, 0, 30, 0); // 00:00:30 do próximo dia (30s de margem)
+  const msUntilMidnight = next.getTime() - now.getTime();
+  console.log(`[DailySync] Próximo sync diário em ${(msUntilMidnight / 1000 / 60).toFixed(1)} minutos (${next.toISOString()})`);
+
+  setTimeout(() => {
+    dailyPanelSync().finally(() => {
+      // Depois do primeiro run, repete a cada 24h
+      setInterval(() => dailyPanelSync().catch(e => console.error('[DailySync] err:', e?.message)),
+        24 * 60 * 60 * 1000).unref?.();
+    });
+  }, msUntilMidnight).unref?.();
+}
+
+// Inicia o agendamento 1 min após o boot (dá tempo do worker registrar)
+setTimeout(scheduleMidnightSync, 60 * 1000);
+
+// Expõe endpoint admin pra disparar manualmente (útil pra testar)
+app.post('/api/admin/daily-sync', requireAdmin, async (_req, res) => {
+  dailyPanelSync().catch(e => console.error(e));
+  res.json({ ok: true, message: 'Daily sync disparado em background — veja os logs.' });
+});
+
 // --- VALIDACAO DO WEBHOOK (Evolution) ---
 const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
 if (!EVOLUTION_WEBHOOK_SECRET) {
@@ -1227,7 +1354,13 @@ REGRAS:
 - PLANO PAGO = register_new_customer + generate_pix (sequencia)
 - NUNCA gere Pix antes de ter MAC + nome.
 - SEMPRE use send_app_info com IDs reais do catalogo.
-- Se o cliente mandar foto de comprovante antes do cadastro, peca os dados primeiro.`;
+- Se o cliente mandar foto de comprovante antes do cadastro, peca os dados primeiro.
+- TESTES NÃO CONVERTIDOS: todo dia a meia-noite o sistema deleta automaticamente do CMS os testes de 6h que expiraram e o cliente nao virou pago. Voce não precisa fazer nada manual.
+
+SYNC DIÁRIO AUTOMÁTICO:
+- Toda madrugada às 00:00 o sistema varre todos os clientes do painel CMS e atualiza o banco com os dados mais recentes (vencimento, senha IPTV, telefone, app, MAC).
+- Se um cliente apareceu novo no painel e você ainda nao tinha visto, no proximo dia você ja sabe dele.
+- Voce mesmo cadastra clientes novos quando atende, mas o sync diário garante que nada fica desincronizado.`;
   }
 
   // === Cliente CADASTRADO — busca tudo em paralelo ===
