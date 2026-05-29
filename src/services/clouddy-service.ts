@@ -134,37 +134,119 @@ async function loginClouddy(page: any, email: string, senha: string): Promise<bo
 
 /**
  * Atualiza o campo form[url] da página atual com newUrl (apaga o antigo) e salva.
+ *
+ * IMPORTANTE: o Clouddy usa Yii/jQuery — não React puro. Os inputs são "uncontrolled"
+ * mas validação acontece no submit. Usar setter nativo HTMLInputElement.value via
+ * Object.getOwnPropertyDescriptor é o método mais confiável.
  */
 async function updatePlaylistField(page: any, newUrl: string, label: string): Promise<boolean> {
-  const urlInp = await page.$('#form_url, input[name="form[url]"]');
-  if (!urlInp) {
+  const sel = '#form_url, input[name="form[url]"]';
+  const exists = await page.$(sel);
+  if (!exists) {
     console.warn(`[Clouddy] Campo de URL não encontrado em ${label}`);
     return false;
   }
 
-  // Foco no campo, seleciona tudo e apaga
-  await urlInp.click({ clickCount: 3 });
-  await new Promise(r => setTimeout(r, 200));
-  await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
-  await page.keyboard.press('Delete');
+  // Lê valor atual
+  const valorAntes = await page.evaluate((s: string) => (document.querySelector(s) as HTMLInputElement)?.value || '', sel);
+  console.log(`[Clouddy] ${label} - valor atual: "${valorAntes || '(vazio)'}"`);
+
+  // ── ESTRATÉGIA: foca, seleciona TODO o conteúdo via .select() do JS,
+  // depois usa Input.insertText (CDP) — que substitui a seleção pelo novo texto.
+  // Isso é exatamente o que um usuário faria com Ctrl+A + Paste.
+
+  const client = await page.target().createCDPSession();
+  const inp = await page.$(sel);
+  await inp.click();
   await new Promise(r => setTimeout(r, 200));
 
-  // Digita a nova URL
-  await urlInp.type(newUrl, { delay: 15 });
+  // Seleciona todo o conteúdo do input (via JS, mais confiável que triple-click)
+  await page.evaluate((s: string) => {
+    const i = document.querySelector(s) as HTMLInputElement;
+    i.focus();
+    i.select();
+    i.setSelectionRange(0, i.value.length);
+  }, sel);
+  await new Promise(r => setTimeout(r, 200));
+
+  // Insere o novo texto via CDP — substitui o conteúdo selecionado
+  // (Input.insertText simula colar/digitar nativamente, dispara todos os eventos)
+  await client.send('Input.insertText', { text: newUrl });
   await new Promise(r => setTimeout(r, 500));
 
-  // Clica Save
-  const saved = await page.evaluate(() => {
-    const btn = Array.from(document.querySelectorAll('button, input[type=submit]'))
-      .find(b => /^save$|salvar/i.test((b as HTMLButtonElement).textContent?.trim() || (b as HTMLInputElement).value || '')) as HTMLElement | null;
-    if (btn) { btn.click(); return true; }
-    return false;
-  });
-  if (!saved) await page.keyboard.press('Enter');
-  await new Promise(r => setTimeout(r, 4000));
+  await client.detach().catch(() => {});
 
-  console.log(`[Clouddy] ✅ ${label} atualizada`);
-  return true;
+  // 4. Confirma valor
+  const valorAgora = await page.evaluate((s: string) => (document.querySelector(s) as HTMLInputElement)?.value || '', sel);
+  if (valorAgora !== newUrl) {
+    console.warn(`[Clouddy] ${label} - ⚠️ valor divergente após digitar:`);
+    console.warn(`  esperado: "${newUrl}"`);
+    console.warn(`  atual:    "${valorAgora}"`);
+    return false;
+  }
+  console.log(`[Clouddy] ${label} - ✅ campo substituído: "${valorAgora}"`);
+
+  // 5. Tira foco para garantir que o change foi commitado pelo Yii
+  await page.evaluate((s: string) => (document.querySelector(s) as HTMLInputElement)?.blur(), sel);
+  await new Promise(r => setTimeout(r, 800));
+
+  // 6. DEBUG: verifica o estado do form ANTES de salvar
+  const formState = await page.evaluate((s: string) => {
+    const inp = document.querySelector(s) as HTMLInputElement;
+    const form = inp?.closest('form');
+    return {
+      inputValue: inp?.value,
+      inputAttrValue: inp?.getAttribute('value'),
+      inputDefaultValue: inp?.defaultValue,
+      formAction: form?.action,
+      formMethod: form?.method,
+      hasYiiActiveForm: !!(window as any).yii?.activeForm,
+    };
+  }, sel);
+  console.log(`[Clouddy] ${label} - estado pré-save:`, JSON.stringify(formState, null, 2));
+
+  // 7. SUBMETE via fetch() POST com FormData — bypassa qualquer issue do submit nativo.
+  // O Clouddy aceita o form-data porque é o enctype configurado no <form>.
+  const submitResult = await page.evaluate(async (s: string) => {
+    const inp = document.querySelector(s) as HTMLInputElement;
+    const form = inp?.closest('form') as HTMLFormElement;
+    if (!form) return { ok: false, error: 'no-form' };
+
+    // Constrói FormData manualmente pegando todos os inputs do form
+    // (o construtor FormData(form) usa defaultValue para inputs file/text,
+    // o que é o bug que estamos enfrentando)
+    const fd = new FormData();
+    form.querySelectorAll('input, textarea, select').forEach((el: any) => {
+      if (!el.name) return;
+      if (el.type === 'file') {
+        // Não inclui input file vazio
+        if (el.files && el.files.length > 0) {
+          for (const f of el.files) fd.append(el.name, f);
+        }
+        return;
+      }
+      // Pega o VALOR ATUAL (não o defaultValue)
+      fd.append(el.name, el.value);
+    });
+
+    // POST via fetch usando a action do form
+    try {
+      const resp = await fetch(form.action || window.location.href, {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+        redirect: 'follow',
+      });
+      return { ok: resp.ok, status: resp.status, finalUrl: resp.url };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  }, sel);
+
+  console.log(`[Clouddy] ${label} - submit fetch:`, JSON.stringify(submitResult));
+  await new Promise(r => setTimeout(r, 1500));
+
+  return submitResult.ok === true;
 }
 
 /**
