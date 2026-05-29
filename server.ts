@@ -243,6 +243,7 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS active_device_name TEXT`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS device_locked_at TIMESTAMP`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_adjustments INTEGER DEFAULT 0`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS pending_date_adjustment JSONB DEFAULT NULL`,
         // === LEADS (potenciais clientes — capturados automaticamente) ===
         `CREATE TABLE IF NOT EXISTS leads (
           id SERIAL PRIMARY KEY,
@@ -1282,7 +1283,11 @@ PLANO:
 - Valor mensal: ${formatBRL(customer.renewal_price)}
 - Linhas contratadas: ${customer.lines_count || 1}
 - Custo por linha (interno): ${formatBRL(customer.cost_per_credit || 0)}
-- Ajustes de data usados: ${customer.expiration_adjustments || 0}/2 (${2 - (customer.expiration_adjustments || 0)} restante(s))
+- Ajustes de data usados: ${customer.expiration_adjustments || 0}/2 (${2 - (customer.expiration_adjustments || 0)} gratuito(s) restante(s))${
+  customer.pending_date_adjustment
+    ? `\n- ⏳ AJUSTE PAGO PENDENTE: aguardando pagamento de R$ ${(customer.pending_date_adjustment as any).amount?.toFixed(2)} para mudar vencimento para ${(customer.pending_date_adjustment as any).newDate} (+${(customer.pending_date_adjustment as any).extraDays} dias)`
+    : ''
+}
 - Total ja pago: ${formatBRL(customer.amount_paid || 0)}
 ${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}
 ${customer.password ? `- Senha da lista: ${customer.password}` : ''}
@@ -1807,13 +1812,18 @@ AJUSTE DE DATA DE VENCIMENTO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Cliente pode pedir para mudar o dia de vencimento do plano (ex: "meu salário cai dia 13, posso mudar?").
 - Use adjust_expiration_date com o username e a nova data (YYYY-MM-DD).
-- Cada cliente tem direito a **no máximo 2 ajustes** no total — sem custo adicional.
-- Antes de usar, verifique no contexto do cliente o campo expiration_adjustments:
-  * 0 ajustes: pode ajustar (sobram 2)
-  * 1 ajuste: pode ajustar (sobra 1) — avise que é o último
-  * 2 ajustes: NÃO pode mais ajustar — explique o limite com simpatia
+- Cada cliente tem direito a **2 ajustes gratuitos** — após isso é cobrado R$ 1,00 por dia extra.
+- Antes de usar, verifique no contexto do cliente o campo "Ajustes de data usados":
+  * 0 ou 1 usados → ajuste gratuito, execute direto.
+  * 2 usados → ajuste pago: calcule os dias a mais (nova data − vencimento atual).
+    - Se nova data = mesma ou anterior → gratuito mesmo assim (cliente não ganha dias).
+    - Se nova data > vencimento atual → cobra R$ 1,00/dia extra (base R$ 30,00/30 dias).
+    - Use adjust_expiration_date normalmente — o sistema gera o Pix e aguarda pagamento.
+    - Quando o cliente mandar o comprovante, use register_pix_receipt — o ajuste é executado automaticamente.
 - Não use para "renovar" (isso é register_pix_receipt). Use só para mudar o DIA de vencimento.
 - A nova data deve ser futura e dentro dos próximos 60 dias.
+- Exemplo: vence dia 26/06, cliente quer mudar para 13/06 do mesmo mês = −13 dias = gratuito.
+- Exemplo: vence dia 26/06, cliente quer mudar para 13/07 = +17 dias = R$ 17,00.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VENDAS E OBJEÇÕES
@@ -4415,7 +4425,7 @@ app.post('/api/webhooks/evolution/:event?',
           // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
           // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
         } else if (call.name === 'adjust_expiration_date') {
-          const ok = await handleAdjustExpirationDate(remoteJid, call.args.username, call.args.new_date, call.args.reason);
+          const ok = await handleAdjustExpirationDate(remoteJid, pushName, call.args.username, call.args.new_date, call.args.reason);
           if (ok) toolsThatSent++;
         } else if (call.name === 'send_app_info') {
           const ok = await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
@@ -4497,6 +4507,7 @@ app.post('/api/webhooks/evolution/:event?',
 
 async function handleAdjustExpirationDate(
   remoteJid: string,
+  pushName: string,
   username: string,
   newDate: string,   // YYYY-MM-DD
   reason: string
@@ -4504,13 +4515,11 @@ async function handleAdjustExpirationDate(
   try {
     const evo = await getEvolutionService();
 
-    // Valida formato da data
     if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
       await evo.sendMessage(remoteJid, '❌ Data inválida. Use o formato YYYY-MM-DD (ex: 2026-06-13).');
       return true;
     }
 
-    // Busca o cliente e verifica contador de ajustes
     const res = await pool.query(
       `SELECT id, username, expiration_date, expiration_adjustments FROM customers WHERE username = $1`,
       [username]
@@ -4522,41 +4531,84 @@ async function handleAdjustExpirationDate(
 
     const customer = res.rows[0];
     const adjustments = customer.expiration_adjustments || 0;
+    const newDateObj = new Date(newDate + 'T12:00:00Z');
+    const currentExp = customer.expiration_date ? new Date(customer.expiration_date) : null;
 
-    if (adjustments >= 2) {
-      await evo.sendMessage(remoteJid,
-        `⚠️ Não foi possível alterar a data. Você já utilizou os 2 ajustes permitidos por plano.\n\nSe precisar de ajuda, fale com nosso suporte. 😊`
-      );
-      return true;
-    }
+    // Dias a mais que o cliente ganha com o novo vencimento
+    const extraDays = currentExp
+      ? Math.round((newDateObj.getTime() - currentExp.getTime()) / 86400000)
+      : 0;
 
-    // Formata data para exibição DD/MM/YYYY
     const [year, month, day] = newDate.split('-');
     const displayDate = `${day}/${month}/${year}`;
 
-    // Enfileira job para alterar no painel
-    enqueueJob('set_custom_expiration', { username, newDate });
+    // ── AJUSTE GRATUITO (dentro dos 2 permitidos) ──────────────────────────
+    if (adjustments < 2) {
+      enqueueJob('set_custom_expiration', { username, newDate });
+      await pool.query(
+        `UPDATE customers
+           SET expiration_date         = $1::date,
+               expiration_adjustments  = expiration_adjustments + 1,
+               pending_date_adjustment = NULL,
+               updated_at              = NOW()
+         WHERE id = $2`,
+        [newDate, customer.id]
+      );
+      const adjustmentsLeft = 1 - adjustments;
+      await evo.sendMessage(remoteJid,
+        `✅ Pronto! Alterei seu vencimento para *${displayDate}*.\n\n` +
+        `_Motivo: ${reason}_\n\n` +
+        (adjustmentsLeft > 0
+          ? `ℹ️ Você ainda tem *${adjustmentsLeft} ajuste gratuito* disponível.`
+          : `ℹ️ Este foi seu último ajuste gratuito.`)
+      );
+      console.log(`[AdjustExp] ${username}: →${newDate} grátis (${adjustments + 1}/2)`);
+      return true;
+    }
 
-    // Atualiza banco imediatamente
+    // ── AJUSTE PAGO (além do limite gratuito) ──────────────────────────────
+    // Se não ganha dias extras (data igual ou anterior), faz gratuito mesmo assim
+    if (extraDays <= 0) {
+      enqueueJob('set_custom_expiration', { username, newDate });
+      await pool.query(
+        `UPDATE customers
+           SET expiration_date         = $1::date,
+               pending_date_adjustment = NULL,
+               updated_at              = NOW()
+         WHERE id = $2`,
+        [newDate, customer.id]
+      );
+      await evo.sendMessage(remoteJid,
+        `✅ Pronto! Alterei seu vencimento para *${displayDate}*. 😊\n\n` +
+        `_(Como a nova data não adiciona dias ao seu plano, não houve cobrança.)_`
+      );
+      console.log(`[AdjustExp] ${username}: →${newDate} sem dias extras, gratuito`);
+      return true;
+    }
+
+    // Cliente ganha extraDays dias → cobra R$1/dia (base R$30/30 dias)
+    const charge = parseFloat(extraDays.toFixed(2)); // R$ 1,00 por dia
+    const currentExpDisplay = currentExp
+      ? currentExp.toLocaleDateString('pt-BR', { timeZone: 'America/Fortaleza' })
+      : '?';
+
+    // Salva ajuste pendente no banco para executar após pagamento
     await pool.query(
-      `UPDATE customers
-         SET expiration_date = $1::date,
-             expiration_adjustments = expiration_adjustments + 1,
-             updated_at = NOW()
-       WHERE id = $2`,
-      [newDate, customer.id]
+      `UPDATE customers SET pending_date_adjustment = $1 WHERE id = $2`,
+      [JSON.stringify({ newDate, extraDays, amount: charge, reason }), customer.id]
     );
 
-    const adjustmentsLeft = 1 - adjustments; // após este ajuste
+    // Gera o Pix para o valor proporcional
+    await handlePixGenerationTool(remoteJid, pushName, username, charge);
+
     await evo.sendMessage(remoteJid,
-      `✅ Pronto! Alterei seu vencimento para *${displayDate}*.\n\n` +
-      `_Motivo registrado: ${reason}_\n\n` +
-      (adjustmentsLeft > 0
-        ? `ℹ️ Você ainda tem *${adjustmentsLeft} ajuste* disponível no seu plano.`
-        : `ℹ️ Este foi seu último ajuste de data permitido.`)
+      `📅 Seu vencimento atual é *${currentExpDisplay}*.\n\n` +
+      `Para ajustar para *${displayDate}* (+ ${extraDays} dia${extraDays > 1 ? 's' : ''}), o valor é:\n\n` +
+      `💰 *R$ ${charge.toFixed(2).replace('.', ',')}* (R$ 1,00/dia)\n\n` +
+      `O QR Code Pix foi enviado acima. Assim que confirmar o pagamento, altero sua data automaticamente! 😊`
     );
 
-    console.log(`[AdjustExp] ${username}: expiração alterada para ${newDate} (ajuste ${adjustments + 1}/2, motivo: ${reason})`);
+    console.log(`[AdjustExp] ${username}: ajuste pago pendente →${newDate} +${extraDays}d = R$${charge}`);
     return true;
   } catch (e: any) {
     console.error('[AdjustExp] erro:', e?.message || e);
@@ -4590,25 +4642,49 @@ async function handleRegisterPixReceipt(
     );
     console.log(`[Receipt] registrado #${inserted.rows[0].id} pagador=${payerName} valor=${amount} cliente=${customerUsername || 'desconhecido'}`);
 
-    // Renova: bumpa expiration_date em 30 dias (se já vencido, conta a partir de hoje).
     if (customerId) {
-      const currentRes = await pool.query('SELECT status, username FROM customers WHERE id = $1', [customerId]);
-      const wasTeste = currentRes.rows[0]?.status === 'teste';
-      const username = currentRes.rows[0]?.username;
-
-      await pool.query(
-        `UPDATE customers SET expiration_date = GREATEST(COALESCE(expiration_date, NOW()::date), NOW()::date) + INTERVAL '30 days', status = 'active', last_renewal = NOW(), updated_at = NOW() WHERE id = $1`,
+      const currentRes = await pool.query(
+        `SELECT status, username, pending_date_adjustment FROM customers WHERE id = $1`,
         [customerId]
       );
-      console.log(`[Receipt] cliente ${customerUsername} renovado por +30 dias`);
+      const wasTeste = currentRes.rows[0]?.status === 'teste';
+      const username = currentRes.rows[0]?.username;
+      const pendingAdj = currentRes.rows[0]?.pending_date_adjustment as {
+        newDate: string; extraDays: number; amount: number; reason: string;
+      } | null;
 
-      if (wasTeste && username) {
-        console.log(`[Receipt] Cliente ${username} era teste. Ativando linha oficial no CMS...`);
-        enqueueJob('create_client', { username });
-      } else if (username) {
-        // Renova no painel CMS (clica Extender) para clientes já cadastrados
-        console.log(`[Receipt] Enfileirando renovação no painel para ${username}...`);
-        enqueueJob('renew_client', { username });
+      // ── Verifica se é pagamento de ajuste de data pendente ──────────────
+      if (pendingAdj) {
+        // Executa o ajuste de data pago
+        const [y, m, d] = pendingAdj.newDate.split('-');
+        const displayDate = `${d}/${m}/${y}`;
+        enqueueJob('set_custom_expiration', { username, newDate: pendingAdj.newDate });
+        await pool.query(
+          `UPDATE customers
+             SET expiration_date         = $1::date,
+                 expiration_adjustments  = expiration_adjustments + 1,
+                 pending_date_adjustment = NULL,
+                 updated_at              = NOW()
+           WHERE id = $2`,
+          [pendingAdj.newDate, customerId]
+        );
+        console.log(`[Receipt] ajuste de data pago executado para ${username}: →${pendingAdj.newDate} (+${pendingAdj.extraDays}d, R$${pendingAdj.amount})`);
+        // A IA deve mandar a mensagem de confirmação — não enviamos aqui para não duplicar
+      } else {
+        // ── Renovação normal: +30 dias ────────────────────────────────────
+        await pool.query(
+          `UPDATE customers SET expiration_date = GREATEST(COALESCE(expiration_date, NOW()::date), NOW()::date) + INTERVAL '30 days', status = 'active', last_renewal = NOW(), updated_at = NOW() WHERE id = $1`,
+          [customerId]
+        );
+        console.log(`[Receipt] cliente ${customerUsername} renovado por +30 dias`);
+
+        if (wasTeste && username) {
+          console.log(`[Receipt] Cliente ${username} era teste. Ativando linha oficial no CMS...`);
+          enqueueJob('create_client', { username });
+        } else if (username) {
+          console.log(`[Receipt] Enfileirando renovação no painel para ${username}...`);
+          enqueueJob('renew_client', { username });
+        }
       }
     } else {
       console.warn(`[Receipt] sem cliente vinculado a ${remoteJid}${altJid ? ' (alt ' + altJid + ')' : ''} — renovacao manual necessaria`);
