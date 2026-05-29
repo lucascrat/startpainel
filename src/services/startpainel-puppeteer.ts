@@ -55,6 +55,8 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--disable-blink-features=AutomationControlled',
       '--window-size=1280,900',
       '--disable-infobars',
+      '--disable-features=PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
+      '--password-store=basic',
     ],
     defaultViewport: { width: 1280, height: 900 },
   }) as unknown as Browser;
