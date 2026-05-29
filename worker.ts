@@ -28,6 +28,7 @@ import {
 } from './src/services/startpainel-puppeteer.js';
 import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runBobPlayerRepair } from './src/services/bobplayer-service.js';
+import { runClouddyUpdatePlaylist } from './src/services/clouddy-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 import { runSmartOneSetup, initSmartOneSession } from './src/services/smartone-service.js';
 import { runVUProSetup } from './src/services/vupro-service.js';
@@ -74,6 +75,7 @@ const handlers: Record<string, JobHandler> = {
   renew_client:          ({ username }, p) => renewClientPuppeteer(username, p),
   set_custom_expiration: ({ username, newDate }, p) => setCustomExpirationPuppeteer(username, newDate, p),
   bob_repair:           ({ mac, key, playlistUrl }, p) => runBobPlayerRepair(mac, key, playlistUrl, p),
+  clouddy_repair:       ({ email, senha, playlistUrl }, p) => runClouddyUpdatePlaylist(email, senha, playlistUrl, p),
   create_client:     ({ username }, p) => createClientAndGetPlaylist(username, p),
   mac_support:       ({ mac, key, playlistUrl }, p) => runIBOSupportAutomation(mac, key, playlistUrl, p),
   activate_ultra:    ({ username, mac }, p) => activateUltraPlayer(username, mac, p),

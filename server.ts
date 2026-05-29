@@ -1796,6 +1796,7 @@ PROCEDIMENTO "SEM SINAL" / "CANAIS NÃO ABREM" / "LISTA SUMIU" / "APP VAZIO":
        • IBO Pro → repair_ibo_pro_playlist
        • VU Player Pro → repair_vupro_playlist
        • Bob Player → repair_bob_playlist
+       • Clouddy → repair_clouddy_playlist (usa email/senha de login, não MAC)
        • SmartOne → activate_smartone (com o MAC cadastrado)
 2º) USE O MAC/KEY QUE JÁ ESTÁ NO CONTEXTO. Se o cliente já tem o app cadastrado (ex: IBO), você JÁ tem o MAC — NÃO peça. Só peça o MAC se o app NÃO estiver na lista "APPS DESTE CLIENTE".
 3º) Se o cliente tem vários apps cadastrados, identifique qual deles ele está usando agora (pergunte se não souber) e aja sobre esse.
@@ -1866,7 +1867,8 @@ TOOLS DISPONÍVEIS
 - generate_pix(username, amount): gera QR Code Pix pra renovação. Use username e renewal_price do CONTEXTO.
 - register_pix_receipt(payer_name, amount, paid_at): registra comprovante de Pix recebido em foto.
 - adjust_expiration_date(username, new_date, reason): muda o dia de vencimento do plano (máx 2x por cliente, sem custo). new_date no formato YYYY-MM-DD.
-- register_and_activate_app(username, app_name, mac, device_key): registra ou atualiza o app do cliente no banco E ativa/atualiza a lista automaticamente. Use quando cliente manda MAC e diz qual app usa — mesmo se o app não estiver cadastrado ainda.
+- register_and_activate_app(username, app_name, mac, device_key): registra ou atualiza o app do cliente no banco E ativa/atualiza a lista automaticamente. Use quando cliente manda MAC e diz qual app usa — mesmo se o app não estiver cadastrado ainda. (Para Clouddy: mac=email de login, device_key=senha de login.)
+- repair_clouddy_playlist(username): atualiza a lista no Clouddy (console.clouddy.online). Usa email/senha do cliente (já cadastrados). Use quando cliente do Clouddy reclama de sem sinal.
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
 - request_screenshot(app_id, custom_instruction): pede print de tela específica do app (MAC/Key/erro).
 - activate_smartone(username, mac): configura o SmartOne automaticamente — acessa o site, faz login e adiciona a playlist do cliente. Use quando o cliente tem ou quer o SmartOne.
@@ -2197,6 +2199,18 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
               type: "OBJECT",
               properties: {
                 username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+              },
+              required: ["username"],
+            },
+          },
+          // Reparo da lista do Clouddy
+          {
+            name: "repair_clouddy_playlist",
+            description: "Atualiza automaticamente a lista do cliente no Clouddy (console.clouddy.online). USE QUANDO: cliente usa Clouddy e reporta 'sem sinal', 'app vazio', 'canais não abrem'. Faz login com email/senha do cliente e atualiza o link da playlist.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente no painel." },
               },
               required: ["username"],
             },
@@ -4463,6 +4477,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'repair_bob_playlist') {
           const ok = await handleRepairBobPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'repair_clouddy_playlist') {
+          const ok = await handleRepairClouddyPlaylist(remoteJid, call.args.username);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'repair_ibo_pro_playlist') {
           const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
@@ -5182,6 +5199,7 @@ function detectAppType(appName: string): string {
   if (n.includes('ULTRA')) return 'ultra';
   if (n.includes('QUICKPLAY') || n.includes('QUICK PLAYER')) return 'quickplayer';
   if (n.includes('BOB')) return 'bob';
+  if (n.includes('CLOUDD') || n.includes('CLOUDY')) return 'clouddy';
   return 'generic';
 }
 
@@ -5348,6 +5366,24 @@ async function handleRegisterAndActivateApp(remoteJid: string, args: any): Promi
                 : `😕 Não consegui atualizar agora. O operador vai verificar em breve.`
             );
           }
+        } catch { }
+      })();
+
+    } else if (appType === 'clouddy') {
+      // Clouddy usa email + senha (mac=email, deviceKey=senha)
+      await evo.sendMessage(remoteJid,
+        `✅ App *Clouddy* registrado!\n\n🔧 Atualizando sua lista no Clouddy (login: ${mac})...\n\nAguarde 1-2 minutinhos. 🎬`
+      );
+      (async () => {
+        try {
+          const jobId = await enqueueJob('clouddy_repair', { email: mac, senha: deviceKey, playlistUrl: customer.playlist_url || '' });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid,
+            result?.success
+              ? `✅ Lista atualizada no Clouddy! Abre o app que já vai estar funcionando. 🎬`
+              : `😕 Não consegui atualizar agora. O operador vai verificar em breve.`
+          );
         } catch { }
       })();
 
@@ -5553,6 +5589,75 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
     return true;
   } catch (e: any) {
     console.error('[Tool repair_ibo_pro_playlist] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Tool handler: atualiza a lista no Clouddy (console.clouddy.online).
+ * O Clouddy usa email + senha de login (salvos em mac_address/device_key do app).
+ */
+async function handleRepairClouddyPlaylist(remoteJid: string, username: string): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    if (!username) {
+      await evo.sendMessage(remoteJid, '😕 Preciso do seu usuário para atualizar o Clouddy. Pode confirmar?');
+      return true;
+    }
+
+    const custRes = await pool.query('SELECT id, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer) {
+      await evo.sendMessage(remoteJid, `😕 Não achei seu cadastro com o usuário "${username}".`);
+      return true;
+    }
+
+    // Busca o app Clouddy — email no mac_address, senha no device_key
+    const appsRes = await pool.query(
+      `SELECT app_name, mac_address, device_key FROM customer_apps WHERE customer_id = $1`,
+      [customer.id]
+    );
+    const clouddyApp = appsRes.rows.find((a: any) => {
+      const n = (a.app_name || '').toUpperCase();
+      return n.includes('CLOUDD') || n.includes('CLOUDY') || (a.mac_address || '').includes('@');
+    });
+
+    if (!clouddyApp || !clouddyApp.mac_address || !clouddyApp.device_key) {
+      await evo.sendMessage(remoteJid, '😕 Para atualizar o Clouddy preciso do seu email e senha de login. Pode me passar?');
+      return true;
+    }
+
+    const email = clouddyApp.mac_address;
+    const senha = clouddyApp.device_key;
+
+    await evo.sendMessage(remoteJid,
+      `🔧 Vou atualizar sua lista no Clouddy agora (login: ${email}).\n\nIsso leva 1-2 minutinhos. Já te aviso! 🎬`
+    );
+
+    (async () => {
+      try {
+        const jobId = await enqueueJob('clouddy_repair', {
+          email, senha, playlistUrl: customer.playlist_url || '',
+        });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+        await evo2.sendMessage(remoteJid,
+          result?.success
+            ? `✅ Lista atualizada no Clouddy! Abre o app que já vai estar funcionando. 🎬`
+            : `😕 Não consegui atualizar agora. O operador vai verificar em breve.`
+        );
+      } catch (e: any) {
+        console.error('[ClouddyRepair] background:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Tive um problema técnico. O operador vai verificar.');
+        } catch {}
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[handleRepairClouddyPlaylist] erro:', e?.message);
     return false;
   }
 }
