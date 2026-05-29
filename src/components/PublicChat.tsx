@@ -56,6 +56,27 @@ export default function PublicChat({ onAdminClick }: Props) {
   const audioRef  = useRef<HTMLAudioElement | null>(null);
   const fileRef   = useRef<HTMLInputElement | null>(null);
 
+  // --- Frases rotativas ao lado do botão de WhatsApp
+  const waPhrases = [
+    '👋 Oi! Chama no zap!',
+    '🟢 Estou online no zap',
+    '💬 Atendimento 24h no zap',
+    '⚡ Precisar, chama no zap!',
+  ];
+  const [waPhraseIdx, setWaPhraseIdx] = useState(0);
+  const [waBubbleVisible, setWaBubbleVisible] = useState(true);
+  useEffect(() => {
+    // Pisca + troca a frase: some por 400ms, troca, reaparece.
+    const interval = setInterval(() => {
+      setWaBubbleVisible(false);
+      setTimeout(() => {
+        setWaPhraseIdx(i => (i + 1) % waPhrases.length);
+        setWaBubbleVisible(true);
+      }, 400);
+    }, 4200);
+    return () => clearInterval(interval);
+  }, []);
+
   // --- Áudio
   const playAudio = (url: string) => {
     try {
@@ -148,55 +169,138 @@ export default function PublicChat({ onAdminClick }: Props) {
     }
   };
 
-  // --- Floating button para abrir o WhatsApp suporte direto (redondo, pulsando, acima da input bar)
+  // --- Floating button para abrir o WhatsApp suporte direto (redondo, pulsando, com balão rotativo)
   const FloatingWaButton = supportWhatsapp ? (
-    <a
-      href={`https://wa.me/${supportWhatsapp}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Falar direto no WhatsApp"
-      aria-label="Falar no WhatsApp"
+    <div
       style={{
         position: 'fixed',
         right: 16,
-        bottom: 96,                       // acima da input bar (que fica ~70-80px do bottom)
+        bottom: 96,           // acima da input bar (que fica ~70-80px do bottom)
         zIndex: 50,
-        width: 56,
-        height: 56,
-        borderRadius: '50%',
-        background: '#25D366',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        color: '#fff',
-        textDecoration: 'none',
-        boxShadow: '0 8px 24px rgba(37, 211, 102, 0.5)',
-        animation: 'waPulse 1.8s ease-in-out infinite',
+        gap: 10,
+        pointerEvents: 'none', // o filho <a> que recebe clicks
       }}
     >
-      <span
-        aria-hidden
+      {/* BALÃO DE FALA com frases rotativas */}
+      <div
         style={{
-          position: 'absolute',
-          inset: 0,
-          borderRadius: '50%',
-          border: '2px solid #25D366',
-          animation: 'waRing 1.8s ease-out infinite',
-          opacity: 0.7,
+          opacity: waBubbleVisible ? 1 : 0,
+          transform: waBubbleVisible ? 'translateX(0)' : 'translateX(12px)',
+          transition: 'opacity 0.35s ease, transform 0.35s ease',
+          background: '#fff',
+          color: '#0b3d1f',
+          padding: '9px 14px',
+          borderRadius: 18,
+          borderBottomRightRadius: 4,
+          fontSize: 12,
+          fontWeight: 700,
+          whiteSpace: 'nowrap',
+          boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+          position: 'relative',
+          animation: 'waBubbleBounce 2.6s ease-in-out infinite',
+          pointerEvents: 'none',
         }}
-      />
-      <MessageCircle size={26} className="fill-white text-white" style={{ position: 'relative', zIndex: 1 }} />
+      >
+        {waPhrases[waPhraseIdx]}
+        {/* Triângulo apontando pra direita (pro botão) */}
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            right: -6,
+            bottom: 10,
+            width: 0,
+            height: 0,
+            borderTop: '6px solid transparent',
+            borderBottom: '6px solid transparent',
+            borderLeft: '8px solid #fff',
+          }}
+        />
+      </div>
+
+      {/* BOTÃO REDONDO */}
+      <a
+        href={`https://wa.me/${supportWhatsapp}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Falar direto no WhatsApp"
+        aria-label="Falar no WhatsApp"
+        style={{
+          pointerEvents: 'auto',
+          position: 'relative',
+          width: 56,
+          height: 56,
+          borderRadius: '50%',
+          background: '#25D366',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fff',
+          textDecoration: 'none',
+          boxShadow: '0 8px 24px rgba(37, 211, 102, 0.5)',
+          animation: 'waPulse 1.8s ease-in-out infinite',
+        }}
+      >
+        {/* Anel se expandindo (efeito de chamada recebida) */}
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '50%',
+            border: '2px solid #25D366',
+            animation: 'waRing 1.8s ease-out infinite',
+            opacity: 0.7,
+          }}
+        />
+        {/* Badge "1" tipo notificação não-lida */}
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: -4,
+            right: -4,
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#E50914',
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: 900,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '2px solid #fff',
+            animation: 'waBadge 1.4s ease-in-out infinite',
+            zIndex: 2,
+          }}
+        >
+          1
+        </span>
+        <MessageCircle size={26} className="fill-white text-white" style={{ position: 'relative', zIndex: 1 }} />
+      </a>
+
       <style>{`
         @keyframes waPulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 8px 24px rgba(37,211,102,0.5); }
-          50%      { transform: scale(1.08); box-shadow: 0 10px 32px rgba(37,211,102,0.7); }
+          0%, 100% { transform: scale(1);    box-shadow: 0 8px 24px rgba(37,211,102,0.5); }
+          50%      { transform: scale(1.08); box-shadow: 0 10px 32px rgba(37,211,102,0.75); }
         }
         @keyframes waRing {
           0%   { transform: scale(1);   opacity: 0.7; }
-          100% { transform: scale(1.6); opacity: 0;   }
+          100% { transform: scale(1.7); opacity: 0;   }
+        }
+        @keyframes waBubbleBounce {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-3px); }
+        }
+        @keyframes waBadge {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.18); }
         }
       `}</style>
-    </a>
+    </div>
   ) : null;
 
   // ════════════════════════════════════════════════════════════════════════
