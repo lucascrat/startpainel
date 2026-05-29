@@ -148,18 +148,54 @@ export default function PublicChat({ onAdminClick }: Props) {
     }
   };
 
-  // --- Floating button para abrir o WhatsApp suporte direto (sempre visível)
+  // --- Floating button para abrir o WhatsApp suporte direto (redondo, pulsando, acima da input bar)
   const FloatingWaButton = supportWhatsapp ? (
     <a
       href={`https://wa.me/${supportWhatsapp}`}
       target="_blank"
       rel="noopener noreferrer"
       title="Falar direto no WhatsApp"
-      className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#1da855] text-white px-4 py-3 rounded-full shadow-xl shadow-emerald-900/30 transition-transform hover:scale-105"
-      style={{ boxShadow: '0 8px 24px rgba(37, 211, 102, 0.4)' }}
+      aria-label="Falar no WhatsApp"
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 96,                       // acima da input bar (que fica ~70-80px do bottom)
+        zIndex: 50,
+        width: 56,
+        height: 56,
+        borderRadius: '50%',
+        background: '#25D366',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff',
+        textDecoration: 'none',
+        boxShadow: '0 8px 24px rgba(37, 211, 102, 0.5)',
+        animation: 'waPulse 1.8s ease-in-out infinite',
+      }}
     >
-      <MessageCircle size={20} className="fill-white text-white" />
-      <span className="hidden sm:inline text-sm font-bold">WhatsApp</span>
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '50%',
+          border: '2px solid #25D366',
+          animation: 'waRing 1.8s ease-out infinite',
+          opacity: 0.7,
+        }}
+      />
+      <MessageCircle size={26} className="fill-white text-white" style={{ position: 'relative', zIndex: 1 }} />
+      <style>{`
+        @keyframes waPulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 8px 24px rgba(37,211,102,0.5); }
+          50%      { transform: scale(1.08); box-shadow: 0 10px 32px rgba(37,211,102,0.7); }
+        }
+        @keyframes waRing {
+          0%   { transform: scale(1);   opacity: 0.7; }
+          100% { transform: scale(1.6); opacity: 0;   }
+        }
+      `}</style>
     </a>
   ) : null;
 
