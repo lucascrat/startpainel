@@ -3696,7 +3696,7 @@ export default function AdminPanel() {
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-black text-slate-800">Master Player Pro</p>
-                        <p className="text-xs text-slate-500 font-medium">APK com relay configurado para <span className="font-bold text-slate-700">atendimento.appbr.pro/iptv/</span></p>
+                        <p className="text-xs text-slate-500 font-medium">APK com relay configurado para <span className="font-bold text-slate-700">startflix.appbr.pro/iptv/</span></p>
                       </div>
                       <a
                         href="/app/download"
@@ -3718,7 +3718,7 @@ export default function AdminPanel() {
                     <div className="space-y-3">
                       {[
                         { step: '1', text: 'Usuário abre o app e digita login + senha' },
-                        { step: '2', text: 'App envia requisição para atendimento.appbr.pro/iptv/' },
+                        { step: '2', text: 'App envia requisição para startflix.appbr.pro/iptv/' },
                         { step: '3', text: 'Nosso servidor tenta autenticar no DNS 1, 2, 3... até obter resposta válida' },
                         { step: '4', text: 'A resposta do provedor é repassada ao app transparentemente' },
                         { step: '5', text: 'O DNS bem-sucedido fica em cache por 30 min para esse usuário' },
