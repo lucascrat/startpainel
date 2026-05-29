@@ -1798,6 +1798,7 @@ PROCEDIMENTO "SEM SINAL" / "CANAIS NÃO ABREM" / "LISTA SUMIU" / "APP VAZIO":
        • SmartOne → activate_smartone (com o MAC cadastrado)
 2º) USE O MAC/KEY QUE JÁ ESTÁ NO CONTEXTO. Se o cliente já tem o app cadastrado (ex: IBO), você JÁ tem o MAC — NÃO peça. Só peça o MAC se o app NÃO estiver na lista "APPS DESTE CLIENTE".
 3º) Se o cliente tem vários apps cadastrados, identifique qual deles ele está usando agora (pergunte se não souber) e aja sobre esse.
+4º) CLIENTE MANDA O MAC ESPONTANEAMENTE: se o cliente informar MAC (e/ou Device Key) e disser qual app usa — mesmo sem reclamar de problema — use *register_and_activate_app*. Isso registra o app na conta E já ativa a lista. Funciona mesmo que o app não esteja cadastrado ainda.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FLUXO — RENOVAÇÃO
@@ -1864,6 +1865,7 @@ TOOLS DISPONÍVEIS
 - generate_pix(username, amount): gera QR Code Pix pra renovação. Use username e renewal_price do CONTEXTO.
 - register_pix_receipt(payer_name, amount, paid_at): registra comprovante de Pix recebido em foto.
 - adjust_expiration_date(username, new_date, reason): muda o dia de vencimento do plano (máx 2x por cliente, sem custo). new_date no formato YYYY-MM-DD.
+- register_and_activate_app(username, app_name, mac, device_key): registra ou atualiza o app do cliente no banco E ativa/atualiza a lista automaticamente. Use quando cliente manda MAC e diz qual app usa — mesmo se o app não estiver cadastrado ainda.
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
 - request_screenshot(app_id, custom_instruction): pede print de tela específica do app (MAC/Key/erro).
 - activate_smartone(username, mac): configura o SmartOne automaticamente — acessa o site, faz login e adiciona a playlist do cliente. Use quando o cliente tem ou quer o SmartOne.
@@ -2133,7 +2135,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
         functionDeclarations: [
           { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } },
           { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
-          { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } },
+          { name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } },
           { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } },
           { name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } },
           // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
@@ -4454,6 +4456,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'repair_vupro_playlist') {
           const ok = await handleRepairVUProPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'register_and_activate_app') {
+          const ok = await handleRegisterAndActivateApp(remoteJid, call.args);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'activate_player') {
           const ok = await handleActivatePlayerAccount(remoteJid, call.args);
           if (ok) toolsThatSent++;
@@ -5143,6 +5148,208 @@ async function handleGenerateStartflixAccess(remoteJid: string, args: any): Prom
  */
 const _lastRepair = new Map<string, number>();
 const REPAIR_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos
+
+/**
+ * Detecta o tipo de app a partir do nome informado pelo cliente.
+ * Retorna uma categoria interna usada para rotear a ativação.
+ */
+function detectAppType(appName: string): string {
+  const n = appName.toUpperCase().replace(/\s+/g, '');
+  if (n.includes('IBOPRO') || n.includes('IBO PRO')) return 'ibo_pro';
+  if (n.includes('IBO')) return 'ibo';
+  if (n.includes('VUPRO') || n.includes('VU PRO') || n.includes('VUPLAYER')) return 'vu_pro';
+  if (n.includes('SMARTONE') || n.includes('SMART ONE') || n.includes('SMART-ONE')) return 'smartone';
+  if (n.includes('XCLOUD') || n.includes('X-CLOUD') || n.includes('X CLOUD')) return 'xcloud';
+  if (n.includes('FUNPLAY') || n.includes('FUN PLAY') || n.includes('FUN')) return 'funplay';
+  if (n.includes('LAZER')) return 'lazerplay';
+  if (n.includes('SEE')) return 'seeplay';
+  if (n.includes('ULTRA')) return 'ultra';
+  if (n.includes('QUICKPLAY') || n.includes('QUICK PLAYER')) return 'quickplayer';
+  return 'generic';
+}
+
+/**
+ * Upsert em customer_apps: cria se não existe, atualiza MAC/key se existir.
+ * Retorna o id do registro.
+ */
+async function upsertCustomerApp(
+  customerId: number,
+  appName: string,
+  mac: string,
+  deviceKey: string | null
+): Promise<number> {
+  const existing = await pool.query(
+    `SELECT id FROM customer_apps
+     WHERE customer_id = $1
+       AND (UPPER(app_name) LIKE $2 OR UPPER(app_model) LIKE $2)
+     LIMIT 1`,
+    [customerId, `%${appName.toUpperCase().slice(0, 8)}%`]
+  );
+
+  if (existing.rowCount) {
+    await pool.query(
+      `UPDATE customer_apps
+         SET mac_address = COALESCE($2, mac_address),
+             device_key  = COALESCE(NULLIF($3,''), device_key)
+       WHERE id = $1`,
+      [existing.rows[0].id, mac || null, deviceKey || null]
+    );
+    return existing.rows[0].id;
+  }
+
+  const ins = await pool.query(
+    `INSERT INTO customer_apps (customer_id, app_name, app_model, mac_address, device_key, is_tv)
+     VALUES ($1, $2, $2, $3, $4, true) RETURNING id`,
+    [customerId, appName, mac || null, deviceKey || null]
+  );
+  return ins.rows[0].id;
+}
+
+/**
+ * Tool handler: registra/atualiza o app no banco e aciona a ativação correta.
+ */
+async function handleRegisterAndActivateApp(remoteJid: string, args: any): Promise<boolean> {
+  try {
+    const username: string = (args.username || '').trim();
+    const appName: string  = (args.app_name || '').trim();
+    const mac: string      = (args.mac || '').trim();
+    const deviceKey: string = (args.device_key || '').trim();
+
+    if (!username || !appName || !mac) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Preciso do seu usuário, nome do app e MAC para continuar.');
+      return true;
+    }
+
+    // Busca o cliente
+    const custRes = await pool.query(
+      `SELECT id, username, playlist_url, status FROM customers WHERE username = $1`,
+      [username]
+    );
+    if (!custRes.rowCount) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, `❌ Cliente "${username}" não encontrado no sistema.`);
+      return true;
+    }
+    const customer = custRes.rows[0];
+
+    // Upsert no banco
+    await upsertCustomerApp(customer.id, appName, mac, deviceKey || null);
+    console.log(`[RegisterApp] ${username}: ${appName} MAC=${mac} Key=${deviceKey||'—'} salvo/atualizado`);
+
+    const evo = await getEvolutionService();
+    const appType = detectAppType(appName);
+
+    // Rota de ativação por tipo de app
+    if (appType === 'ibo_pro') {
+      await evo.sendMessage(remoteJid,
+        `✅ App *${appName}* registrado!\n\n🔧 Atualizando sua lista no IBO Pro (MAC: ${mac})...\n\nAguarde 1-2 minutinhos. 🎬`
+      );
+      (async () => {
+        try {
+          const jobId = await enqueueJob('ibo_pro_support', { mac, key: deviceKey, playlistUrl: customer.playlist_url || '' });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid,
+            result?.success
+              ? `✅ Lista atualizada no IBO Pro! Abre o app que já vai estar funcionando. 🎬`
+              : `😕 Não consegui atualizar agora. O operador vai verificar em breve.`
+          );
+        } catch { }
+      })();
+
+    } else if (appType === 'ibo') {
+      await evo.sendMessage(remoteJid,
+        `✅ App *${appName}* registrado!\n\n🔧 Verificando seu sinal no IBO (MAC: ${mac})...\n\nAguarde 1-2 minutinhos. 🎬`
+      );
+      (async () => {
+        try {
+          const jobId = await enqueueJob('ibo_repair', { mac, key: deviceKey, playlistUrl: customer.playlist_url || '' });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid,
+            result?.success
+              ? (result.message || `✅ Lista atualizada no IBO Player! Abre o app. 🎬`)
+              : `😕 Não consegui atualizar agora. O operador vai verificar.`
+          );
+        } catch { }
+      })();
+
+    } else if (appType === 'vu_pro') {
+      await evo.sendMessage(remoteJid,
+        `✅ App *${appName}* registrado!\n\n🔧 Configurando VU Player Pro (MAC: ${mac})...\n\nAguarde 1-2 minutinhos. 🎬`
+      );
+      (async () => {
+        try {
+          const listName = username;
+          const jobId = await enqueueJob('vu_pro_support', { mac, key: deviceKey || '', playlistUrl: customer.playlist_url || '', listName });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid,
+            result?.success
+              ? `✅ VU Player Pro configurado! Abre o app que a lista já está lá. 🎬`
+              : `😕 Não consegui configurar agora. O operador vai verificar.`
+          );
+        } catch { }
+      })();
+
+    } else if (appType === 'smartone') {
+      await evo.sendMessage(remoteJid,
+        `✅ App *SmartOne* registrado!\n\n⚙️ Configurando o SmartOne (MAC: ${mac})...\n\nAguarde uns 30 segundos. 🎬`
+      );
+      (async () => {
+        try {
+          const listName = `${username} - SmartOne`;
+          const jobId = await enqueueJob('activate_smartone', { mac, listName, playlistUrl: customer.playlist_url || '' });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid,
+            result?.success
+              ? `✅ SmartOne configurado! Abre o app e já vai estar funcionando. 🎬`
+              : `😕 Não consegui configurar o SmartOne agora. O operador vai verificar.`
+          );
+        } catch { }
+      })();
+
+    } else {
+      // Apps simples: X-Cloud, Fun Play, Ultra, Lazer, See, QuickPlayer, genérico
+      const jobTypeMap: Record<string, string> = {
+        xcloud: 'activate_xcloud', funplay: 'activate_funplay',
+        lazerplay: 'activate_lazerplay', seeplay: 'activate_seeplay',
+        ultra: 'activate_ultra', quickplayer: 'activate_quickplayer',
+      };
+      const jobType = jobTypeMap[appType];
+
+      if (jobType) {
+        await evo.sendMessage(remoteJid,
+          `✅ App *${appName}* registrado!\n\n⚙️ Ativando sua lista (MAC: ${mac})...\n\nAguarde uns 30 segundos. 🎬`
+        );
+        (async () => {
+          try {
+            const jobId = await enqueueJob(jobType, { username, mac });
+            const result: any = await waitForJob(jobId);
+            const evo2 = await getEvolutionService();
+            await evo2.sendMessage(remoteJid,
+              result?.success
+                ? `✅ *${appName}* ativado! Abre o app que já está funcionando. 🎬`
+                : `😕 Não consegui ativar agora. O operador vai verificar.`
+            );
+          } catch { }
+        })();
+      } else {
+        // App não tem automação — só salva e confirma
+        await evo.sendMessage(remoteJid,
+          `✅ Ótimo! Registrei o *${appName}* (MAC: ${mac}${deviceKey ? ` / Key: ${deviceKey}` : ''}) na sua conta.\n\nSempre que precisar atualizar sua lista, é só me avisar! 😊`
+        );
+      }
+    }
+
+    return true;
+  } catch (e: any) {
+    console.error('[RegisterAndActivateApp] erro:', e?.message || e);
+    return false;
+  }
+}
 
 /**
  * Tool handler: ativa um player para cliente existente.
