@@ -4516,6 +4516,10 @@ async function handleRegisterPixReceipt(
       if (wasTeste && username) {
         console.log(`[Receipt] Cliente ${username} era teste. Ativando linha oficial no CMS...`);
         enqueueJob('create_client', { username });
+      } else if (username) {
+        // Renova no painel CMS (clica Extender) para clientes já cadastrados
+        console.log(`[Receipt] Enfileirando renovação no painel para ${username}...`);
+        enqueueJob('renew_client', { username });
       }
     } else {
       console.warn(`[Receipt] sem cliente vinculado a ${remoteJid}${altJid ? ' (alt ' + altJid + ')' : ''} — renovacao manual necessaria`);
