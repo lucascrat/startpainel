@@ -1795,6 +1795,7 @@ PROCEDIMENTO "SEM SINAL" / "CANAIS NÃO ABREM" / "LISTA SUMIU" / "APP VAZIO":
        • IBO Player / IBO IPTV → repair_ibo_playlist
        • IBO Pro → repair_ibo_pro_playlist
        • VU Player Pro → repair_vupro_playlist
+       • Bob Player → repair_bob_playlist
        • SmartOne → activate_smartone (com o MAC cadastrado)
 2º) USE O MAC/KEY QUE JÁ ESTÁ NO CONTEXTO. Se o cliente já tem o app cadastrado (ex: IBO), você JÁ tem o MAC — NÃO peça. Só peça o MAC se o app NÃO estiver na lista "APPS DESTE CLIENTE".
 3º) Se o cliente tem vários apps cadastrados, identifique qual deles ele está usando agora (pergunte se não souber) e aja sobre esse.
@@ -2196,6 +2197,18 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
               type: "OBJECT",
               properties: {
                 username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+              },
+              required: ["username"],
+            },
+          },
+          // Reparo da lista do Bob Player
+          {
+            name: "repair_bob_playlist",
+            description: "Verifica validade e atualiza automaticamente a lista do cliente no Bob Player (bobplayer.com). USE QUANDO: cliente usa Bob Player e reporta 'sem sinal', 'app vazio', 'canais não abrem'. Atualiza todos os dispositivos Bob Player cadastrados do cliente.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                username: { type: "STRING", description: "Username do cliente no painel." },
               },
               required: ["username"],
             },
@@ -4447,6 +4460,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'activate_smartone') {
           const ok = await handleActivateSmartOne(remoteJid, call.args.username, call.args.mac);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'repair_bob_playlist') {
+          const ok = await handleRepairBobPlaylist(remoteJid, call.args.username);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'repair_ibo_pro_playlist') {
           const ok = await handleRepairIboProPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
@@ -5165,6 +5181,7 @@ function detectAppType(appName: string): string {
   if (n.includes('SEE')) return 'seeplay';
   if (n.includes('ULTRA')) return 'ultra';
   if (n.includes('QUICKPLAY') || n.includes('QUICK PLAYER')) return 'quickplayer';
+  if (n.includes('BOB')) return 'bob';
   return 'generic';
 }
 
@@ -5308,6 +5325,29 @@ async function handleRegisterAndActivateApp(remoteJid: string, args: any): Promi
               ? `✅ SmartOne configurado! Abre o app e já vai estar funcionando. 🎬`
               : `😕 Não consegui configurar o SmartOne agora. O operador vai verificar.`
           );
+        } catch { }
+      })();
+
+    } else if (appType === 'bob') {
+      await evo.sendMessage(remoteJid,
+        `✅ App *Bob Player* registrado!\n\n🔧 Verificando e atualizando sua lista no Bob Player (MAC: ${mac})...\n\nAguarde 1-2 minutinhos. 🎬`
+      );
+      (async () => {
+        try {
+          const jobId = await enqueueJob('bob_repair', { mac, key: deviceKey, playlistUrl: customer.playlist_url || '' });
+          const result: any = await waitForJob(jobId);
+          const evo2 = await getEvolutionService();
+          if (result?.status === 'expired') {
+            await evo2.sendMessage(remoteJid,
+              `⚠️ Seu Bob Player está com a licença vencida!\n\n${result.message}\n\nEntre em contato com o suporte do app para renovar.`
+            );
+          } else {
+            await evo2.sendMessage(remoteJid,
+              result?.success
+                ? `✅ Lista atualizada no Bob Player! Abre o app que já vai estar funcionando. 🎬`
+                : `😕 Não consegui atualizar agora. O operador vai verificar em breve.`
+            );
+          }
         } catch { }
       })();
 
@@ -5513,6 +5553,85 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
     return true;
   } catch (e: any) {
     console.error('[Tool repair_ibo_pro_playlist] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Tool handler: Verifica e repara lista no Bob Player (bobplayer.com).
+ */
+async function handleRepairBobPlaylist(remoteJid: string, username: string): Promise<boolean> {
+  try {
+    if (!username) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Preciso do seu usuário para verificar o Bob Player. Pode me confirmar?');
+      return true;
+    }
+
+    const custRes = await pool.query('SELECT id, playlist_url FROM customers WHERE username = $1', [username]);
+    const customer = custRes.rows[0];
+    if (!customer) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, `😕 Não achei seu cadastro com o usuário "${username}".`);
+      return true;
+    }
+
+    // Busca todos os apps Bob Player do cliente
+    const appsRes = await pool.query(
+      `SELECT app_name, mac_address, device_key FROM customer_apps WHERE customer_id = $1 AND UPPER(app_name) LIKE '%BOB%' ORDER BY created_at`,
+      [customer.id]
+    );
+
+    if (!appsRes.rowCount || appsRes.rows.every((a: any) => !a.mac_address)) {
+      const evo = await getEvolutionService();
+      await evo.sendMessage(remoteJid, '😕 Para atualizar o Bob Player preciso do seu MAC e Device Key. Pode me passar?');
+      return true;
+    }
+
+    const evo = await getEvolutionService();
+    const devices = appsRes.rows.filter((a: any) => a.mac_address);
+    await evo.sendMessage(remoteJid,
+      `🔧 Vou verificar e atualizar o Bob Player agora.\n\n${devices.map((d: any, i: number) => `📱 Dispositivo ${i + 1}: MAC ${d.mac_address}`).join('\n')}\n\nIsso leva 1-2 minutinhos. Já te aviso! 🎬`
+    );
+
+    // Processa todos os dispositivos Bob Player
+    (async () => {
+      try {
+        const evo2 = await getEvolutionService();
+        const results: string[] = [];
+
+        for (const device of devices) {
+          const jobId = await enqueueJob('bob_repair', {
+            mac: device.mac_address,
+            key: device.device_key || '',
+            playlistUrl: customer.playlist_url || '',
+          });
+          const result: any = await waitForJob(jobId);
+
+          if (result?.status === 'expired') {
+            results.push(`📱 MAC ${device.mac_address}: ⚠️ Licença VENCIDA — precisa renovar o app.`);
+          } else if (result?.success) {
+            results.push(`📱 MAC ${device.mac_address}: ✅ Lista atualizada!`);
+          } else {
+            results.push(`📱 MAC ${device.mac_address}: ❌ Não consegui atualizar.`);
+          }
+        }
+
+        await evo2.sendMessage(remoteJid,
+          `🎬 Bob Player — resultado:\n\n${results.join('\n')}\n\nSe ainda tiver sem sinal, me avisa!`
+        );
+      } catch (e: any) {
+        console.error('[BobRepair] background error:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Tive um problema técnico. O operador vai verificar em breve.');
+        } catch {}
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[handleRepairBobPlaylist] erro:', e?.message);
     return false;
   }
 }
