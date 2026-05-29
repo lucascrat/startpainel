@@ -2013,7 +2013,7 @@ IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas s
       systemPrompt += `
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CANAL: CHAT WEB (startflix.appbr.pro)
+CANAL: CHAT WEB (atendimento.appbr.pro)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Você está atendendo PELO SITE (não pelo WhatsApp). Atua igual, mas com uma regra extra:
 - QUANDO o cliente disser que quer *assinar*, *pagar*, *contratar*, *fechar plano*, *renovar* (ou seja, finalizar uma compra/pagamento) → termine sua resposta com o marcador *[CONTINUAR_NO_WHATSAPP]* numa linha sozinha. O sistema vai mostrar pra ele um botão pra ir pro WhatsApp oficial do suporte, onde fechamos a venda em segurança. Diga algo como: "Pra finalizar com segurança, vamos seguir no WhatsApp! Clica no botão abaixo 👇" e finalize com [CONTINUAR_NO_WHATSAPP].
@@ -5739,8 +5739,8 @@ async function iptvRelayHandler(req: express.Request, res: express.Response, pre
       return res.json({
         status: 1,
         exp_date: '2099-12-31',
-        url: `https://startflix.appbr.pro/${prefix}/`,
-        panelurl: `https://startflix.appbr.pro/${prefix}/`,
+        url: `https://atendimento.appbr.pro/${prefix}/`,
+        panelurl: `https://atendimento.appbr.pro/${prefix}/`,
         type: 'mag',
         auth: 1
       });
@@ -6099,7 +6099,7 @@ async function autoRegisterEvolutionWebhook() {
       return;
     }
 
-    const webhookUrl = `https://startflix.appbr.pro/api/webhooks/evolution`;
+    const webhookUrl = `https://atendimento.appbr.pro/api/webhooks/evolution`;
 
     // Evolution API v2 — payload encapsulado em "webhook" (formato correto da v2)
     const res = await fetch(`${cfg.evolution_api_url}/webhook/set/${cfg.evolution_instance}`, {
@@ -6152,7 +6152,7 @@ app.post('/api/admin/evolution/setup-webhook', requireAdmin, async (req, res) =>
       return res.status(400).json({ error: 'Evolution API não configurada' });
     }
 
-    const webhookUrl = `https://startflix.appbr.pro/api/webhooks/evolution`;
+    const webhookUrl = `https://atendimento.appbr.pro/api/webhooks/evolution`;
 
     const wRes = await fetch(`${cfg.evolution_api_url}/webhook/set/${cfg.evolution_instance}`, {
       method: 'POST',

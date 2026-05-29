@@ -30,7 +30,7 @@ import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 import { runSmartOneSetup, initSmartOneSession } from './src/services/smartone-service.js';
 import { runVUProSetup } from './src/services/vupro-service.js';
 
-const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://startflix.appbr.pro').replace(/\/$/, '');
+const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
 const WORKER_TOKEN = process.env.WORKER_TOKEN;
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS || 5000);
