@@ -1200,7 +1200,7 @@ PASSO 5 — OFERECER TESTE GRATIS DE 6 HORAS:
 Quando ele mandar o MAC:
 - Pergunte se ele quer fazer um *teste gratis de 6 horas* pra ver a qualidade antes de pagar.
 - Se ele aceitar: chame IMEDIATAMENTE a tool *create_test_account* com:
-  * player_name = nome exato do app que ele instalou (Ultra Player / Fun Play / Lazer Play / X-Cloud / See Play)
+  * player_name = nome exato do app que ele instalou (Ultra Player / Fun Play / Lazer Play / FocoX Play / X-Cloud / See Play / Quick Player / Quick Player PRO / QPlay / Big Player)
   * mac = MAC ou Código de Ativação que ele forneceu
 - A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando! Para o X-Cloud, use o Código de Ativação no campo 'mac'.
 - Se ele NAO quiser teste e ja quiser comprar: va pro PASSO 6.
@@ -1218,7 +1218,7 @@ PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
   * Peca o nome completo dele.
   * Use a tool *register_new_customer* com full_name, desired_username, app_id, mac.
   * Em seguida use *generate_pix* com o valor TOTAL — consulte a seção VALORES deste prompt para os preços atualizados (planos por tela + taxa de ativação por app pago: IBO Player, IBO Pro, VU Player, BOB Player).
-    - Apps grátis (Ultra, Fun, Lazer, X-Cloud, See) e celular NÃO somam taxa alguma.
+    - Apps grátis (Ultra, Fun, Lazer/FocoX, X-Cloud, See, Quick Player/QPlay/Big Player) e celular NÃO somam taxa alguma.
 - Avise: "Assim que confirmar o pagamento, ja transformo seu teste em conta definitiva. 🎬"
 
 REGRAS:
@@ -1546,7 +1546,7 @@ ${paidAppsList}
    - Cada aparelho diferente (TV da sala, TV do quarto, TV box) = 1 taxa cada.
    - IMPORTANTE: a taxa do app pago é COBRADA UMA VEZ na ativação/renovação anual. A mensalidade continua sendo só o valor da lista.
 
-3) APPS GRÁTIS — todos os outros do nosso catálogo (Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play, etc):
+3) APPS GRÁTIS — todos os outros do nosso catálogo (Ultra Player, Fun Play, Lazer Play / FocoX Play, X-Cloud, See Play, Quick Player / Quick Player PRO / QPlay / Big Player, etc):
    - Ativação 100% GRÁTIS — você ativa pra ele sem cobrar nada.
    - Cliente só paga o valor da lista (R$ ${p1} / R$ ${p2} / R$ ${p3} conforme nº de telas).
 
@@ -2152,7 +2152,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
             parameters: {
               type: "OBJECT",
               properties: {
-                player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'X-Cloud', 'See Play', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
+                player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'FocoX Play', 'X-Cloud', 'See Play', 'Quick Player', 'Quick Player PRO', 'QPlay', 'Big Player', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
                 mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
                 username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: se voce sabe o primeiro nome do cliente (ex: 'João') → use '{nome}appbr' em minúsculas sem acento (ex: 'joaoappbr'). Se nao souber o nome → use 'Testeappbr1', 'Testeappbr2', etc (número sequencial curto). NUNCA use 'Teste123' genérico — sempre siga esse padrão." },
                 device_key: { type: "STRING", description: "Senha / Device Key do app (obrigatório para VU Player Pro, opcional para outros, ex: '687840')." },
@@ -2267,12 +2267,12 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           // Ativação de player para cliente EXISTENTE
           {
             name: "activate_player",
-            description: "Ativa um player (X-Cloud, Fun Play, Ultra, etc) para um cliente que JA EXISTE no sistema. Use quando o cliente passa o MAC/Código e pede pra ativar o app. Nao use pra criar teste gratis (use create_test_account).",
+            description: "Ativa um player para um cliente que JA EXISTE no sistema, passando MAC pelo painel CMS. Apps suportados: Ultra Player, Fun Play, Lazer Play / FocoX Play, X-Cloud, See Play, Quick Player / Quick Player PRO / QPlay / Big Player. Use quando o cliente passa o MAC/Código e pede pra ativar o app. Nao use pra criar teste gratis (use create_test_account).",
             parameters: {
               type: "OBJECT",
               properties: {
                 username: { type: "STRING", description: "Username do cliente (do CONTEXTO)." },
-                player_name: { type: "STRING", description: "Nome do player. Valores: 'Ultra Player', 'Fun Play', 'X-Cloud', 'Lazer Play', 'See Play'." },
+                player_name: { type: "STRING", description: "Nome do player. Valores: 'Ultra Player', 'Fun Play', 'X-Cloud', 'Lazer Play', 'FocoX Play', 'See Play', 'Quick Player', 'Quick Player PRO', 'QPlay', 'Big Player'." },
                 mac: { type: "STRING", description: "MAC ou Código de Ativação." },
               },
               required: ["username", "player_name", "mac"],
@@ -5056,13 +5056,15 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     }
 
     // Valida que e um dos players suportados (caso a IA invente um nome)
-    const validPlayers = ['ultra player', 'fun play', 'lazer play', 'x-cloud', 'xcloud', 'see play', 'smartone', 'smart-one', 'smart one', 'vu player pro', 'vupro', 'vu player'];
+    const validPlayers = ['ultra player', 'fun play', 'lazer play', 'focox', 'foco x', 'x-cloud', 'xcloud', 'see play',
+      'smartone', 'smart-one', 'smart one', 'vu player pro', 'vupro', 'vu player',
+      'quick player', 'quickplay', 'qplay', 'q play', 'big player', 'bigplayer'];
     const playerLower = playerName.toLowerCase();
     if (!validPlayers.some(p => playerLower.includes(p.replace('-', '')) || playerLower.includes(p))) {
       console.warn(`[Tool create_test_account] player invalido: "${playerName}"`);
       try {
         const evo = await getEvolutionService();
-        await evo.sendMessage(remoteJid, `😕 Nao reconheco o player "${playerName}". Os disponiveis sao: Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play, SmartOne, VU Player Pro. Qual deles voce instalou?`);
+        await evo.sendMessage(remoteJid, `😕 Nao reconheco o player "${playerName}". Os disponiveis sao: Ultra Player, Fun Play, Lazer Play / FocoX Play, X-Cloud, See Play, Quick Player / QPlay / Big Player, SmartOne, VU Player Pro. Qual deles voce instalou?`);
         return true;
       } catch { return false; }
     }
@@ -5194,10 +5196,14 @@ function detectAppType(appName: string): string {
   if (n.includes('SMARTONE') || n.includes('SMART ONE') || n.includes('SMART-ONE')) return 'smartone';
   if (n.includes('XCLOUD') || n.includes('X-CLOUD') || n.includes('X CLOUD')) return 'xcloud';
   if (n.includes('FUNPLAY') || n.includes('FUN PLAY') || n.includes('FUN')) return 'funplay';
-  if (n.includes('LAZER')) return 'lazerplay';
+  if (n.includes('LAZER') || n.includes('FOCOX') || n.includes('FOCO X')) return 'lazerplay';
   if (n.includes('SEE')) return 'seeplay';
   if (n.includes('ULTRA')) return 'ultra';
-  if (n.includes('QUICKPLAY') || n.includes('QUICK PLAYER')) return 'quickplayer';
+  // Família Quick: Quick Player, Quick Player PRO, QPlay, Big Player — todos ativam pela mesma opção
+  if (n.includes('QUICKPLAY') || n.includes('QUICK PLAYER') || n.includes('QUICK PRO') ||
+      n.includes('QPLAY') || n.includes('Q PLAY') || n.includes('BIGPLAYER') || n.includes('BIG PLAYER')) {
+    return 'quickplayer';
+  }
   if (n.includes('BOB')) return 'bob';
   if (n.includes('CLOUDD') || n.includes('CLOUDY')) return 'clouddy';
   return 'generic';
@@ -5392,7 +5398,7 @@ async function handleRegisterAndActivateApp(remoteJid: string, args: any): Promi
       const jobTypeMap: Record<string, string> = {
         xcloud: 'activate_xcloud', funplay: 'activate_funplay',
         lazerplay: 'activate_lazerplay', seeplay: 'activate_seeplay',
-        ultra: 'activate_ultra', quickplayer: 'activate_quickplayer',
+        ultra: 'activate_ultra', quickplayer: 'activate_quickplay',
       };
       const jobType = jobTypeMap[appType];
 
@@ -5442,8 +5448,10 @@ async function handleActivatePlayerAccount(remoteJid: string, args: any): Promis
     let playerType = 'ultra';
     if (playerLower.includes('fun')) playerType = 'funplay';
     else if (playerLower.includes('cloud')) playerType = 'xcloud';
-    else if (playerLower.includes('lazer')) playerType = 'lazerplay';
+    else if (playerLower.includes('lazer') || playerLower.includes('focox') || playerLower.includes('foco x')) playerType = 'lazerplay';
     else if (playerLower.includes('see')) playerType = 'seeplay';
+    // Família Quick: Quick Player / Quick Player PRO / QPlay / Big Player — uma só opção
+    else if (playerLower.includes('quick') || playerLower.includes('qplay') || playerLower.includes('q play') || playerLower.includes('big player') || playerLower.includes('bigplayer')) playerType = 'quickplay';
 
     const evo = await getEvolutionService();
     await evo.sendMessage(remoteJid, `⚙️ Entendido! Vou ativar o *${playerName}* no seu acesso agora mesmo (MAC/Código: ${mac}).\n\nAguarde uns 30 segundinhos...`);

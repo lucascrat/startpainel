@@ -23,6 +23,7 @@ import {
   activateLazerPlay,
   activateXCloud,
   activateSeePlay,
+  activateQuickPlay,
   createTestClientAndActivatePlayer,
   setCustomExpirationPuppeteer,
 } from './src/services/startpainel-puppeteer.js';
@@ -83,6 +84,7 @@ const handlers: Record<string, JobHandler> = {
   activate_lazerplay:({ username, mac }, p) => activateLazerPlay(username, mac, p),
   activate_xcloud:   ({ username, mac }, p) => activateXCloud(username, mac, p),
   activate_seeplay:  ({ username, mac }, p) => activateSeePlay(username, mac, p),
+  activate_quickplay:({ username, mac }, p) => activateQuickPlay(username, mac, p),
   create_test:       async (payload, p) => {
     const { username, mac, playerName, deviceKey, password } = payload;
     const result = await createTestClientAndActivatePlayer(username || '', mac, playerName, p);

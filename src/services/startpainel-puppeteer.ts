@@ -566,23 +566,26 @@ export async function activatePlayer(username: string, mac: string, playerName: 
     await new Promise(r => setTimeout(r, 2000));
 
     // 2.5 Verifica se a pesquisa retornou resultado antes de procurar o botao.
-    // DataTables.net renderiza td.dataTables_empty quando nao tem match — usa isso
-    // como sinal primario. Fallback: contar tbody rows com dado real.
+    // DataTables sempre mantem a row "Nenhum registro encontrado" no DOM (oculta com
+    // display:none quando ha resultados). Por isso só conta como "vazio" quando ela
+    // estiver VISIVEL (offsetParent !== null).
     const searchResult = await page.evaluate(() => {
-      const emptyCell = document.querySelector('td.dataTables_empty, .dataTables_empty');
-      if (emptyCell) return { found: false, hint: emptyCell.textContent?.trim() || 'no results cell' };
-      const rows = Array.from(document.querySelectorAll('tbody tr'));
-      // Algumas tabelas mostram so 1 linha com 'No matching records found' / 'Nenhum'
+      const emptyCell = document.querySelector('td.dataTables_empty, .dataTables_empty') as HTMLElement | null;
+      if (emptyCell && emptyCell.offsetParent !== null) {
+        return { found: false, hint: emptyCell.textContent?.trim() || 'no results cell visible' };
+      }
+      const rows = Array.from(document.querySelectorAll('tbody tr')) as HTMLElement[];
+      // Conta só rows visíveis com dado real
       const dataRows = rows.filter(tr => {
+        if (tr.offsetParent === null) return false; // oculta
         const txt = tr.textContent?.toLowerCase() || '';
         if (txt.includes('no data') || txt.includes('no matching') ||
             txt.includes('nenhum registro') || txt.includes('nenhum resultado') ||
             txt.includes('sem registros')) return false;
-        // Linha valida tem >=2 colunas com conteudo
         const cells = tr.querySelectorAll('td');
         return cells.length >= 2;
       });
-      return { found: dataRows.length > 0, hint: `${dataRows.length} linha(s) na tabela` };
+      return { found: dataRows.length > 0, hint: `${dataRows.length} linha(s) visível(eis)` };
     });
 
     if (!searchResult.found) {
@@ -593,18 +596,33 @@ export async function activatePlayer(username: string, mac: string, playerName: 
       };
     }
 
-    // 3. Click "Visualizar" / "Detalhes"
+    // 3. Click "Detalhes" / "Visualizar" — clica no botão da row do cliente certo
+    // (alguns layouts do CMS rotulam Detalhes, outros Visualizar)
     console.log('[Puppeteer] Clicando em Detalhes/Visualizar...');
-    const viewBtnSelector = 'a[data-original-title="Visualizar"], a[title="Visualizar"], a[href*="/view"], .fa-eye';
-    const viewBtn = await page.$(viewBtnSelector);
-    if (!viewBtn) {
-       throw new Error('Botao Detalhes/Visualizar nao encontrado (cliente foi encontrado mas selector do botao nao bate). Pode ser que o CMS atualizou — me avisa.');
+    const clickedView = await page.evaluate((uname: string) => {
+      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      const target = rows.find(tr => {
+        if ((tr as HTMLElement).offsetParent === null) return false;
+        return Array.from(tr.querySelectorAll('td')).some(td => (td.textContent || '').trim() === uname);
+      });
+      if (!target) return false;
+      // Procura botão de "Detalhes" ou "Visualizar" dentro da row
+      const btn = target.querySelector(
+        'a[data-original-title="Detalhes"], a[title="Detalhes"], ' +
+        'a[data-original-title="Visualizar"], a[title="Visualizar"], ' +
+        'a[href*="/view"], .fa-eye'
+      ) as HTMLElement | null;
+      if (btn) { btn.click(); return true; }
+      // Fallback: clica no primeiro botão de ação que vai pra /clients/ID (sem sufixo)
+      const links = Array.from(target.querySelectorAll('a[href]')) as HTMLAnchorElement[];
+      const detailLink = links.find(a => /\/clients\/\d+$/.test(a.getAttribute('href') || ''));
+      if (detailLink) { detailLink.click(); return true; }
+      return false;
+    }, username);
+
+    if (!clickedView) {
+      throw new Error('Botao Detalhes/Visualizar nao encontrado (cliente foi encontrado mas selector do botao nao bate). Pode ser que o CMS atualizou — me avisa.');
     }
-    
-    await page.evaluate((selector) => {
-      const el = document.querySelector(selector) as HTMLElement;
-      if (el) el.click();
-    }, viewBtnSelector);
 
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
@@ -721,8 +739,12 @@ export async function activateFunPlay(username: string, mac: string, profileNum 
   return activatePlayer(username, mac, 'Fun Play', profileNum);
 }
 
+/**
+ * Lazer Play / FocoX Play — mesma opção no painel.
+ * O dropdown mostra "Lazer Play / FocoX Play" (value="lazer_start").
+ */
 export async function activateLazerPlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
-  return activatePlayer(username, mac, 'Lazer Play', profileNum);
+  return activatePlayer(username, mac, 'lazer', profileNum);
 }
 
 export async function activateXCloud(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
@@ -731,6 +753,19 @@ export async function activateXCloud(username: string, mac: string, profileNum =
 
 export async function activateSeePlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
   return activatePlayer(username, mac, 'See Play', profileNum);
+}
+
+/**
+ * Família Quick: uma única opção no painel ativa todos os apps abaixo:
+ *  - Quick Player
+ *  - Quick Player PRO
+ *  - QPlay
+ *  - Big Player
+ * O texto exato no dropdown é "Quick Player / Quick Player PRO / QPlay / Big Player"
+ * (value="quick_start"). Matching por substring "quick" é suficiente.
+ */
+export async function activateQuickPlay(username: string, mac: string, profileNum = 0): Promise<RenewalResult> {
+  return activatePlayer(username, mac, 'quick', profileNum);
 }
 
 /**
