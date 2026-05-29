@@ -242,6 +242,7 @@ async function initDB(retries = 5) {
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS active_device_id TEXT`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS active_device_name TEXT`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS device_locked_at TIMESTAMP`,
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS expiration_adjustments INTEGER DEFAULT 0`,
         // === LEADS (potenciais clientes — capturados automaticamente) ===
         `CREATE TABLE IF NOT EXISTS leads (
           id SERIAL PRIMARY KEY,
@@ -1281,6 +1282,7 @@ PLANO:
 - Valor mensal: ${formatBRL(customer.renewal_price)}
 - Linhas contratadas: ${customer.lines_count || 1}
 - Custo por linha (interno): ${formatBRL(customer.cost_per_credit || 0)}
+- Ajustes de data usados: ${customer.expiration_adjustments || 0}/2 (${2 - (customer.expiration_adjustments || 0)} restante(s))
 - Total ja pago: ${formatBRL(customer.amount_paid || 0)}
 ${customer.playlist_url ? `- URL playlist: ${customer.playlist_url}` : ''}
 ${customer.password ? `- Senha da lista: ${customer.password}` : ''}
@@ -1801,6 +1803,19 @@ FLUXO — RENOVAÇÃO
 - Após gerar Pix e cliente não confirmar pagamento: não fique cobrando. Se ele voltar depois, retome naturalmente.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AJUSTE DE DATA DE VENCIMENTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Cliente pode pedir para mudar o dia de vencimento do plano (ex: "meu salário cai dia 13, posso mudar?").
+- Use adjust_expiration_date com o username e a nova data (YYYY-MM-DD).
+- Cada cliente tem direito a **no máximo 2 ajustes** no total — sem custo adicional.
+- Antes de usar, verifique no contexto do cliente o campo expiration_adjustments:
+  * 0 ajustes: pode ajustar (sobram 2)
+  * 1 ajuste: pode ajustar (sobra 1) — avise que é o último
+  * 2 ajustes: NÃO pode mais ajustar — explique o limite com simpatia
+- Não use para "renovar" (isso é register_pix_receipt). Use só para mudar o DIA de vencimento.
+- A nova data deve ser futura e dentro dos próximos 60 dias.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VENDAS E OBJEÇÕES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Quando o cliente hesitar ou achar caro, não abandone — responda com valor:
@@ -1838,6 +1853,7 @@ TOOLS DISPONÍVEIS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - generate_pix(username, amount): gera QR Code Pix pra renovação. Use username e renewal_price do CONTEXTO.
 - register_pix_receipt(payer_name, amount, paid_at): registra comprovante de Pix recebido em foto.
+- adjust_expiration_date(username, new_date, reason): muda o dia de vencimento do plano (máx 2x por cliente, sem custo). new_date no formato YYYY-MM-DD.
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
 - request_screenshot(app_id, custom_instruction): pede print de tela específica do app (MAC/Key/erro).
 - activate_smartone(username, mac): configura o SmartOne automaticamente — acessa o site, faz login e adiciona a playlist do cliente. Use quando o cliente tem ou quer o SmartOne.
@@ -2109,6 +2125,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
           { name: "save_customer_app", description: "Salva dados de um app.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, appName: { type: "STRING" } }, required: ["username", "appName"] } },
           { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } },
+          { name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } },
           // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
           { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
           // App catalog — pede print de uma area especifica do app
@@ -4397,6 +4414,9 @@ app.post('/api/webhooks/evolution/:event?',
           await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored, altJid);
           // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
           // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
+        } else if (call.name === 'adjust_expiration_date') {
+          const ok = await handleAdjustExpirationDate(remoteJid, call.args.username, call.args.new_date, call.args.reason);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'send_app_info') {
           const ok = await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
           if (ok) toolsThatSent++;
@@ -4474,6 +4494,75 @@ app.post('/api/webhooks/evolution/:event?',
 
   } catch (err: any) { console.error('[Webhook Error]', err); }
 });
+
+async function handleAdjustExpirationDate(
+  remoteJid: string,
+  username: string,
+  newDate: string,   // YYYY-MM-DD
+  reason: string
+): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+
+    // Valida formato da data
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      await evo.sendMessage(remoteJid, '❌ Data inválida. Use o formato YYYY-MM-DD (ex: 2026-06-13).');
+      return true;
+    }
+
+    // Busca o cliente e verifica contador de ajustes
+    const res = await pool.query(
+      `SELECT id, username, expiration_date, expiration_adjustments FROM customers WHERE username = $1`,
+      [username]
+    );
+    if (!res.rowCount) {
+      await evo.sendMessage(remoteJid, `❌ Cliente "${username}" não encontrado no sistema.`);
+      return true;
+    }
+
+    const customer = res.rows[0];
+    const adjustments = customer.expiration_adjustments || 0;
+
+    if (adjustments >= 2) {
+      await evo.sendMessage(remoteJid,
+        `⚠️ Não foi possível alterar a data. Você já utilizou os 2 ajustes permitidos por plano.\n\nSe precisar de ajuda, fale com nosso suporte. 😊`
+      );
+      return true;
+    }
+
+    // Formata data para exibição DD/MM/YYYY
+    const [year, month, day] = newDate.split('-');
+    const displayDate = `${day}/${month}/${year}`;
+
+    // Enfileira job para alterar no painel
+    enqueueJob('set_custom_expiration', { username, newDate });
+
+    // Atualiza banco imediatamente
+    await pool.query(
+      `UPDATE customers
+         SET expiration_date = $1::date,
+             expiration_adjustments = expiration_adjustments + 1,
+             updated_at = NOW()
+       WHERE id = $2`,
+      [newDate, customer.id]
+    );
+
+    const adjustmentsLeft = 1 - adjustments; // após este ajuste
+    await evo.sendMessage(remoteJid,
+      `✅ Pronto! Alterei seu vencimento para *${displayDate}*.\n\n` +
+      `_Motivo registrado: ${reason}_\n\n` +
+      (adjustmentsLeft > 0
+        ? `ℹ️ Você ainda tem *${adjustmentsLeft} ajuste* disponível no seu plano.`
+        : `ℹ️ Este foi seu último ajuste de data permitido.`)
+    );
+
+    console.log(`[AdjustExp] ${username}: expiração alterada para ${newDate} (ajuste ${adjustments + 1}/2, motivo: ${reason})`);
+    return true;
+  } catch (e: any) {
+    console.error('[AdjustExp] erro:', e?.message || e);
+    return false;
+  }
+}
 
 async function handleRegisterPixReceipt(
   remoteJid: string,

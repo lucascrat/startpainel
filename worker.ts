@@ -24,6 +24,7 @@ import {
   activateXCloud,
   activateSeePlay,
   createTestClientAndActivatePlayer,
+  setCustomExpirationPuppeteer,
 } from './src/services/startpainel-puppeteer.js';
 import { runIBOSupportAutomation, runIBORepairAutomation } from './src/services/ibo-support-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
@@ -69,7 +70,8 @@ function releaseProfile(n: number) {
 type JobHandler = (payload: any, profileNum: number) => Promise<any>;
 
 const handlers: Record<string, JobHandler> = {
-  renew_client:      ({ username }, p) => renewClientPuppeteer(username, p),
+  renew_client:          ({ username }, p) => renewClientPuppeteer(username, p),
+  set_custom_expiration: ({ username, newDate }, p) => setCustomExpirationPuppeteer(username, newDate, p),
   create_client:     ({ username }, p) => createClientAndGetPlaylist(username, p),
   mac_support:       ({ mac, key, playlistUrl }, p) => runIBOSupportAutomation(mac, key, playlistUrl, p),
   activate_ultra:    ({ username, mac }, p) => activateUltraPlayer(username, mac, p),

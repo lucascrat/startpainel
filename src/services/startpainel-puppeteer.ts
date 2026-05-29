@@ -227,6 +227,95 @@ async function performRenewalFlow(page: Page, clientUsername: string): Promise<R
 }
 
 
+/**
+ * Altera a data de expiração de um cliente via "Plano Personalizado" no painel.
+ * @param username  username do cliente
+ * @param newDate   nova data no formato YYYY-MM-DD
+ * @param profileNum perfil Chrome do worker (1-5)
+ */
+export async function setCustomExpirationPuppeteer(
+  username: string,
+  newDate: string,   // YYYY-MM-DD
+  profileNum = 0
+): Promise<RenewalResult> {
+  if (!ADMIN_USER || !ADMIN_PASS) return { success: false, message: 'Credenciais não configuradas' };
+
+  let browser: Browser | null = null;
+  try {
+    console.log(`\n[Puppeteer] === Alterando expiração de ${username} para ${newDate} ===`);
+    browser = await launchBrowser(false, profileNum);
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 900 });
+
+    const loggedIn = await loginToPanel(page);
+    if (!loggedIn) return { success: false, message: 'Login falhou no painel' };
+
+    // 1. Busca o cliente
+    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.waitForSelector('input[type="search"]', { timeout: 15000 });
+    await page.click('input[type="search"]', { clickCount: 3 });
+    await page.type('input[type="search"]', username, { delay: 80 });
+    await new Promise(r => setTimeout(r, 1800));
+
+    // 2. Clica no botão Extender da linha do cliente
+    const clicked = await page.evaluate((uname: string) => {
+      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      const row = rows.find(tr => Array.from(tr.querySelectorAll('td')).some(td => td.textContent?.trim() === uname));
+      if (!row) return false;
+      const btn = row.querySelector('a[data-original-title="Extender"], a[title="Extender"], a[href*="extend"]') as HTMLElement | null;
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, username);
+
+    if (!clicked) return { success: false, message: `Cliente "${username}" não encontrado na lista` };
+
+    // 3. Aguarda o modal aparecer
+    await page.waitForSelector('.modal.show, .modal[style*="block"]', { timeout: 10000 });
+    await new Promise(r => setTimeout(r, 800));
+
+    // 4. Seleciona "Personalizado" no select
+    await page.evaluate(() => {
+      const modal = document.querySelector('.modal.show') as HTMLElement;
+      const sel = modal?.querySelector('select') as HTMLSelectElement;
+      if (sel) {
+        sel.value = 'custom';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    await new Promise(r => setTimeout(r, 600));
+
+    // 5. Seta a data no input[name="customDate"] (formato YYYY-MM-DD)
+    await page.evaluate((date: string) => {
+      const modal = document.querySelector('.modal.show') as HTMLElement;
+      const input = modal?.querySelector('input[name="customDate"]') as HTMLInputElement;
+      if (!input) return;
+      const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      nativeSet?.call(input, date);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, newDate);
+    await new Promise(r => setTimeout(r, 400));
+
+    // 6. Confirma clicando em "Extender"
+    await page.evaluate(() => {
+      const btn = document.querySelector('.modal.show .extendButton, .modal.show button.btn-success') as HTMLElement | null;
+      btn?.click();
+    });
+    await new Promise(r => setTimeout(r, 3000));
+
+    return {
+      success: true,
+      message: `✅ Expiração de "${username}" alterada para ${newDate} com sucesso!`,
+      screenshotBase64: await page.screenshot({ encoding: 'base64' }) as string,
+    };
+
+  } catch (e: any) {
+    return { success: false, message: `Erro: ${e?.message}` };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
 export async function renewClientPuppeteerVisible(username: string, profileNum = 0): Promise<RenewalResult> {
   let browser: Browser | null = null;
   try {
