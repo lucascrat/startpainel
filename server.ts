@@ -730,6 +730,31 @@ app.post('/api/admin/daily-sync', requireAdmin, async (_req, res) => {
   res.json({ ok: true, message: 'Daily sync disparado em background — veja os logs.' });
 });
 
+/**
+ * Admin: altera o renewal_price de um cliente específico.
+ * Sem validação de piso (admin tem controle total).
+ * body: { username, renewal_price }
+ */
+app.post('/api/admin/customer-price', requireAdmin, async (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim();
+    const renewalPrice = parseFloat(req.body?.renewal_price);
+    if (!username || isNaN(renewalPrice) || renewalPrice < 0) {
+      return res.status(400).json({ error: 'username e renewal_price (numero >= 0) sao obrigatorios' });
+    }
+    const r = await pool.query(
+      `UPDATE customers SET renewal_price=$1, updated_at=NOW() WHERE username=$2 RETURNING id, username, renewal_price, lines_count`,
+      [renewalPrice.toFixed(2), username]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: `Cliente "${username}" nao encontrado.` });
+    console.log(`[Admin] Preço de ${username} alterado para R$${renewalPrice}`);
+    res.json({ ok: true, customer: r.rows[0] });
+  } catch (e: any) {
+    console.error('[Admin price] erro:', e?.message);
+    res.status(500).json({ error: e?.message || 'Erro interno.' });
+  }
+});
+
 // --- VALIDACAO DO WEBHOOK (Evolution) ---
 const EVOLUTION_WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET;
 if (!EVOLUTION_WEBHOOK_SECRET) {
@@ -1966,11 +1991,44 @@ VENDAS E OBJEÇÕES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Quando o cliente hesitar ou achar caro, não abandone — responda com valor:
 
-"Tá caro" → "R$ 25 por mês dá em torno de R$ 0,83 por dia — você tem acesso a canais ao vivo, filmes e séries sem limite 😄 E o celular já vem incluso sem custo extra."
+"Tá caro" → "R$ 25 por mês dá em torno de R$ 0,83 por dia — você tem acesso a canais ao vivo, filmes e séries sem limite 😄 E o celular já vem incluso sem custo extra. Pelos meus concorrentes esse mesmo sinal sai por até R$ 60 só pra 1 tela!"
 "Vou pensar" → "Claro! Se quiser testar antes de decidir, posso te dar 6 horas grátis agora pra você ver com seus próprios olhos. Sem compromisso."
-"Tem mais barato?" → "Esse é nosso melhor preço. O que posso garantir é qualidade — imagem em HD, catálogo atualizado e suporte direto comigo se tiver qualquer problema."
+"Tem mais barato?" → ATENÇÃO: regras de negociação abaixo.
 "Já tenho outro serviço" → "Entendo! Mas não custa nada testar os 6h grátis e comparar. Quer ver?"
 "O que é esse serviço?" → "Trabalhamos com os melhores players de vídeo do mercado e fazemos a ativação do sinal neles. Temos vários apps parceiros pra SmartTV, TV Box, celular e iPhone. Você escolhe o app, a gente ativa o sinal e pronto."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEGOCIAÇÃO DE PREÇO (DESCONTOS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Você TEM AUTORIZAÇÃO para negociar descontos com novos clientes. Use a tool *set_customer_price* pra salvar o valor combinado no cadastro dele.
+
+PREÇOS PADRÃO (sem desconto):
+- 1 tela:  R$ 25
+- 2 telas: R$ 50
+- 3 telas: R$ 75
+- 4+ telas: R$ 25 por tela
+
+DESCONTOS PERMITIDOS (use quando o cliente pedir):
+- 1 tela:  R$ 25 (NÃO DESCONTE — esse é o piso, regra da casa)
+- 2 telas: pode fechar por R$ 45 (R$ 5 de desconto)
+- 3 telas: pode fechar por R$ 60 (R$ 15 de desconto)
+- 4+ telas: mantém R$ 25 por tela, não desconte
+
+ESTRATÉGIA DE NEGOCIAÇÃO:
+1) Primeira resposta sempre é o preço cheio, com defesa de valor:
+   "R$ 50 pra 2 telas é o nosso melhor preço. Pelos concorrentes esse mesmo sinal sai por até R$ 60 só por 1 tela! Garanto qualidade premium e suporte direto comigo se tiver qualquer problema 😊"
+
+2) Se o cliente insistir em desconto e ele tiver 2 ou 3 telas:
+   "Olha, vou abrir uma exceção pra você fechar comigo. Pra 2 telas posso fazer R$ 45 (em vez de R$ 50). Fica combinado? 👍"
+   Depois que ele aceitar → chame *set_customer_price* com o novo valor.
+
+3) Se cliente de 1 tela pedir desconto:
+   "Cara, em 1 tela R$ 25 já é o nosso piso — não consigo trabalhar abaixo disso. Mas garanto: pelos concorrentes esse mesmo serviço passa de R$ 60 só por 1 tela. Você não vai achar essa qualidade por menos."
+   NÃO chame set_customer_price abaixo de R$ 25 — o sistema vai bloquear.
+
+4) SEMPRE defenda a qualidade: pontue suporte direto via WhatsApp, ativação rápida, app parceiro, canais HD, catálogo atualizado.
+
+5) O valor salvo via set_customer_price fica permanente: as próximas renovações vão usar o valor descontado. Não precisa repetir todo mês.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SITUAÇÕES ESPECIAIS
@@ -2000,6 +2058,7 @@ TOOLS DISPONÍVEIS
 - generate_pix(username, amount): gera QR Code Pix pra renovação. Use username e renewal_price do CONTEXTO.
 - register_pix_receipt(payer_name, amount, paid_at): registra comprovante de Pix recebido em foto.
 - adjust_expiration_date(username, new_date, reason): muda o dia de vencimento do plano (máx 2x por cliente, sem custo). new_date no formato YYYY-MM-DD.
+- set_customer_price(username, new_price, reason): salva valor negociado de mensalidade no cadastro do cliente. Pisos: 1 tela R$ 25 (não desconte), 2 telas R$ 45, 3 telas R$ 60.
 - register_and_activate_app(username, app_name, mac, device_key): registra ou atualiza o app do cliente no banco E ativa/atualiza a lista automaticamente. Use quando cliente manda MAC e diz qual app usa — mesmo se o app não estiver cadastrado ainda. (Para Clouddy: mac=email de login, device_key=senha de login.)
 - repair_clouddy_playlist(username): atualiza a lista no Clouddy (console.clouddy.online). Usa email/senha do cliente (já cadastrados). Use quando cliente do Clouddy reclama de sem sinal.
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
@@ -2274,6 +2333,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           { name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } },
           { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } },
           { name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } },
+          { name: "set_customer_price", description: "Salva um valor customizado de mensalidade no cadastro do cliente (renewal_price). Use quando voce negociar um desconto com o cliente (ex: 2 telas por R$ 45 em vez de R$ 50). Limites mínimos: 1 tela R$ 25 (NUNCA menos), 2 telas R$ 45, 3 telas R$ 60, +3 telas R$ 25 por tela. Esse valor sera usado nas proximas renovacoes e Pix gerados pra esse cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_price: { type: "NUMBER", description: "Novo valor mensal em reais (ex: 45.00)." }, reason: { type: "STRING", description: "Motivo do desconto (ex: 'fidelidade', 'cliente antigo', 'mae do amigo do dono')." } }, required: ["username", "new_price", "reason"] } },
           // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
           { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
           // App catalog — pede print de uma area especifica do app
@@ -4589,6 +4649,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'adjust_expiration_date') {
           const ok = await handleAdjustExpirationDate(remoteJid, pushName, call.args.username, call.args.new_date, call.args.reason);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'set_customer_price') {
+          const ok = await handleSetCustomerPrice(remoteJid, call.args.username, call.args.new_price, call.args.reason);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'send_app_info') {
           const ok = await handleSendAppInfo(remoteJid, call.args.app_id, call.args.message);
           if (ok) toolsThatSent++;
@@ -4675,6 +4738,80 @@ app.post('/api/webhooks/evolution/:event?',
 
   } catch (err: any) { console.error('[Webhook Error]', err); }
 });
+
+/**
+ * Calcula o preço mínimo aceitável para um plano baseado no número de telas.
+ *  - 1 tela:  R$ 25 (nunca menos — regra de qualidade do serviço)
+ *  - 2 telas: R$ 45 (desconto de R$ 5 vs preço padrão R$ 50)
+ *  - 3 telas: R$ 60 (desconto de R$ 15 vs preço padrão R$ 75)
+ *  - 4+ telas: R$ 25/tela (sem desconto adicional)
+ */
+function minPriceForLines(linesCount: number): number {
+  if (!linesCount || linesCount <= 1) return 25;
+  if (linesCount === 2) return 45;
+  if (linesCount === 3) return 60;
+  return linesCount * 25;
+}
+
+/**
+ * Tool handler: salva preço customizado da mensalidade no cadastro do cliente.
+ * Valida o piso por número de telas para impedir descontos abaixo do limite.
+ */
+async function handleSetCustomerPrice(
+  remoteJid: string,
+  username: string,
+  newPrice: number,
+  reason: string
+): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    if (!username || typeof newPrice !== 'number' || newPrice <= 0) {
+      await evo.sendMessage(remoteJid, '😕 Preciso do username e do valor (em reais) pra ajustar o preço.');
+      return true;
+    }
+
+    const res = await pool.query(
+      `SELECT id, name, lines_count, renewal_price FROM customers WHERE username = $1`, [username]
+    );
+    if (!res.rowCount) {
+      await evo.sendMessage(remoteJid, `❌ Cliente "${username}" não encontrado no sistema.`);
+      return true;
+    }
+    const c = res.rows[0];
+    const lines = c.lines_count || 1;
+    const minPrice = minPriceForLines(lines);
+    const oldPrice = parseFloat(c.renewal_price || 0);
+
+    // Bloqueia preço abaixo do piso
+    if (newPrice < minPrice) {
+      await evo.sendMessage(remoteJid,
+        `⚠️ Não posso aplicar esse desconto.\n\n` +
+        `Para *${lines} tela${lines > 1 ? 's' : ''}* o valor mínimo é *R$ ${minPrice.toFixed(2).replace('.', ',')}* — nosso serviço tem qualidade premium e não trabalhamos abaixo disso.\n\n` +
+        `Posso fazer no mínimo R$ ${minPrice.toFixed(2).replace('.', ',')} pra ${lines} tela${lines > 1 ? 's' : ''}, tudo bem?`
+      );
+      console.log(`[SetPrice] BLOQUEADO: ${username} - tentou R$${newPrice}, minimo R$${minPrice} (${lines} telas)`);
+      return true;
+    }
+
+    await pool.query(
+      `UPDATE customers SET renewal_price = $1, updated_at = NOW() WHERE id = $2`,
+      [newPrice.toFixed(2), c.id]
+    );
+
+    const formatted = `R$ ${newPrice.toFixed(2).replace('.', ',')}`;
+    const oldFormatted = `R$ ${oldPrice.toFixed(2).replace('.', ',')}`;
+    await evo.sendMessage(remoteJid,
+      `✅ Combinado! Ajustei sua mensalidade para *${formatted}* (${lines} tela${lines > 1 ? 's' : ''}).\n\n` +
+      `_Motivo: ${reason}_\n\n` +
+      `Esse valor já fica salvo no seu cadastro pras próximas renovações. 😊`
+    );
+    console.log(`[SetPrice] ${username}: ${oldFormatted} → ${formatted} (${lines} telas, motivo: ${reason})`);
+    return true;
+  } catch (e: any) {
+    console.error('[SetPrice] erro:', e?.message);
+    return false;
+  }
+}
 
 async function handleAdjustExpirationDate(
   remoteJid: string,
