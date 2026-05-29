@@ -1,6 +1,8 @@
 import { launchBrowser } from './startpainel-puppeteer.js';
 
-const VUPRO_LOGIN_URL = 'https://vuproplayer.com/login';
+// Domínio principal do VU Player Pro (atualizado em 2026 — antigo era vuproplayer.com)
+const VUPRO_LOGIN_URL = 'https://vuplayer.pro/login';
+const VUPRO_FALLBACK_URL = 'https://vuproplayer.com/login';
 const VUPRO_PROFILE_NUM = 98; // Perfil dedicado para o VU Player Pro
 
 /**
@@ -31,9 +33,22 @@ export async function runVUProSetup(
     const page = await (browser as any).newPage();
     await page.setViewport({ width: 1366, height: 768 });
 
-    // ── 1. Acessa a página de login ───────────────────────────────────────────
+    // ── 1. Acessa a página de login (com fallback para domínio antigo) ────────
     console.log('[VUPro] Acessando página de login...');
-    await page.goto(VUPRO_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 35_000 });
+    let loadedUrl = '';
+    try {
+      await page.goto(VUPRO_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30_000 });
+      loadedUrl = VUPRO_LOGIN_URL;
+    } catch (e: any) {
+      console.warn(`[VUPro] Falha em ${VUPRO_LOGIN_URL}: ${e.message?.substring(0, 80)}. Tentando fallback...`);
+      try {
+        await page.goto(VUPRO_FALLBACK_URL, { waitUntil: 'networkidle2', timeout: 30_000 });
+        loadedUrl = VUPRO_FALLBACK_URL;
+      } catch (e2: any) {
+        throw new Error(`Não consegui acessar nem ${VUPRO_LOGIN_URL} nem ${VUPRO_FALLBACK_URL}: ${e2.message?.substring(0, 80)}`);
+      }
+    }
+    console.log(`[VUPro] Carregou ${loadedUrl}`);
     await new Promise(r => setTimeout(r, 2000));
 
     // Se já estiver logado (redirecionou para mylist ou similar), ótimo.

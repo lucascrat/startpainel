@@ -2242,7 +2242,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           // Reparo da lista do VU Player Pro
           {
             name: "repair_vupro_playlist",
-            description: "Verifica validade e reativa/atualiza automaticamente a playlist do cliente no app VU Player Pro (vuproplayer.com/login). USE QUANDO: cliente reporta 'sem sinal', 'canais nao abrem', 'app sem conteudo', 'lista sumiu' E usa VU Player Pro.",
+            description: "Verifica validade e reativa/atualiza automaticamente a playlist do cliente no app VU Player Pro (vuplayer.pro/login). USE QUANDO: cliente reporta 'sem sinal', 'canais nao abrem', 'app sem conteudo', 'lista sumiu' E usa VU Player Pro.",
             parameters: {
               type: "OBJECT",
               properties: {
@@ -5317,7 +5317,7 @@ async function handleRegisterAndActivateApp(remoteJid: string, args: any): Promi
       (async () => {
         try {
           const listName = username;
-          const jobId = await enqueueJob('vu_pro_support', { mac, key: deviceKey || '', playlistUrl: customer.playlist_url || '', listName });
+          const jobId = await enqueueJob('vupro_setup', { mac, deviceKey: deviceKey || '', playlistUrl: customer.playlist_url || '', listName });
           const result: any = await waitForJob(jobId);
           const evo2 = await getEvolutionService();
           await evo2.sendMessage(remoteJid,
