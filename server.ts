@@ -187,6 +187,29 @@ async function initDB(retries = 5) {
           is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT NOW()
         )`,
+        // Jogos do dia (alimentado por TheSportsDB + curadoria manual de canais)
+        `CREATE TABLE IF NOT EXISTS daily_games (
+          id SERIAL PRIMARY KEY,
+          source_id TEXT UNIQUE,                -- idEvent da TheSportsDB (null se cadastro manual)
+          game_date DATE NOT NULL,              -- data do jogo (YYYY-MM-DD)
+          kickoff_time TIMESTAMP,               -- horario do apito inicial (UTC)
+          league TEXT,
+          league_badge TEXT,
+          home_team TEXT NOT NULL,
+          home_logo TEXT,
+          away_team TEXT NOT NULL,
+          away_logo TEXT,
+          status TEXT DEFAULT 'scheduled',      -- scheduled | live | finished
+          home_score INTEGER,
+          away_score INTEGER,
+          channels JSONB DEFAULT '[]'::jsonb,   -- [{name:'SporTV',logo:'...'},{name:'GE',logo:'...'}]
+          highlight BOOLEAN DEFAULT false,      -- destaque na landpage (jogo grande)
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_daily_games_date ON daily_games (game_date)`,
+        `CREATE INDEX IF NOT EXISTS idx_daily_games_kickoff ON daily_games (kickoff_time)`,
         // Campos financeiros do cliente (usados no AdminPanel pro calculo de lucro).
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS lines_count INTEGER DEFAULT 1`,
         `ALTER TABLE customers ADD COLUMN IF NOT EXISTS cost_per_credit DECIMAL(10,2) DEFAULT 0`,
@@ -2502,6 +2525,201 @@ app.put('/api/landing-banners/:id', requireAdmin, async (req, res) => {
 app.delete('/api/landing-banners/:id', requireAdmin, async (req, res) => {
   try {
     await pool.query('DELETE FROM landing_banners WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// ============================================================
+// DAILY GAMES — jogos do dia (TheSportsDB + curadoria manual)
+// ============================================================
+// Ligas que queremos sincronizar (IDs da TheSportsDB)
+const DAILY_GAMES_LEAGUES: Array<{ id: string; name: string }> = [
+  { id: '4351', name: 'Brasileirão Série A' },
+  { id: '4391', name: 'Brasileirão Série B' },
+  { id: '4480', name: 'UEFA Champions League' },
+  { id: '4444', name: 'Copa Libertadores' },
+  { id: '4346', name: 'Copa do Brasil' },
+  { id: '4328', name: 'Premier League' },
+  { id: '4335', name: 'La Liga' },
+  { id: '4332', name: 'Serie A Italiana' },
+  { id: '4331', name: 'Bundesliga' },
+  { id: '4334', name: 'Ligue 1' },
+];
+
+// Cache em memória da última sincronização (evita rebuscar a cada request)
+const dailyGamesSyncCache = { lastSyncDate: '' as string, lastSyncAt: 0 };
+
+async function syncDailyGamesFromTheSportsDB(date: string): Promise<{ inserted: number; updated: number }> {
+  let inserted = 0, updated = 0;
+  for (const league of DAILY_GAMES_LEAGUES) {
+    try {
+      const url = `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${date}&l=${encodeURIComponent(league.name)}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const data: any = await r.json();
+      const events: any[] = data.events || [];
+      for (const ev of events) {
+        // Só esportes que são futebol
+        if (ev.strSport && ev.strSport !== 'Soccer') continue;
+        const kickoff = ev.strTimestamp || (ev.dateEvent && ev.strTime ? `${ev.dateEvent}T${ev.strTime}` : null);
+        const params: any[] = [
+          ev.idEvent,
+          ev.dateEvent || date,
+          kickoff,
+          ev.strLeague || league.name,
+          ev.strLeagueBadge || null,
+          ev.strHomeTeam,
+          ev.strHomeTeamBadge || null,
+          ev.strAwayTeam,
+          ev.strAwayTeamBadge || null,
+          (ev.strStatus || 'scheduled').toLowerCase().includes('finish') ? 'finished'
+            : (ev.strStatus || '').toLowerCase().includes('live') ? 'live'
+            : 'scheduled',
+          ev.intHomeScore != null ? Number(ev.intHomeScore) : null,
+          ev.intAwayScore != null ? Number(ev.intAwayScore) : null,
+        ];
+        // Insert/update — preserva `channels` (curadoria manual) e `highlight` em update
+        const result = await pool.query(
+          `INSERT INTO daily_games
+             (source_id, game_date, kickoff_time, league, league_badge, home_team, home_logo, away_team, away_logo, status, home_score, away_score)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (source_id) DO UPDATE SET
+             game_date    = EXCLUDED.game_date,
+             kickoff_time = EXCLUDED.kickoff_time,
+             league       = EXCLUDED.league,
+             league_badge = EXCLUDED.league_badge,
+             home_team    = EXCLUDED.home_team,
+             home_logo    = EXCLUDED.home_logo,
+             away_team    = EXCLUDED.away_team,
+             away_logo    = EXCLUDED.away_logo,
+             status       = EXCLUDED.status,
+             home_score   = EXCLUDED.home_score,
+             away_score   = EXCLUDED.away_score,
+             updated_at   = NOW()
+           RETURNING (xmax = 0) AS was_inserted`,
+          params,
+        );
+        if (result.rows[0]?.was_inserted) inserted++; else updated++;
+      }
+    } catch (e: any) {
+      console.warn(`[DailyGames] Falha ao buscar liga ${league.name}:`, e?.message || e);
+    }
+  }
+  dailyGamesSyncCache.lastSyncDate = date;
+  dailyGamesSyncCache.lastSyncAt = Date.now();
+  return { inserted, updated };
+}
+
+// GET público — jogos do dia (auto-sync se cache expirou ou data mudou)
+app.get('/api/daily-games', async (req, res) => {
+  try {
+    const today = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+
+    // Sync se: data diferente do último, ou faz mais de 30min do último sync
+    const now = Date.now();
+    const needSync = dailyGamesSyncCache.lastSyncDate !== today
+                  || (now - dailyGamesSyncCache.lastSyncAt) > 30 * 60_000;
+    if (needSync) {
+      // Não bloqueia o request — dispara em background mas serve o que tem em DB.
+      // Próxima request já pega atualizado.
+      void syncDailyGamesFromTheSportsDB(today).catch(e => console.warn('[DailyGames] sync bg falhou:', e?.message));
+      dailyGamesSyncCache.lastSyncAt = now; // marca pra não disparar duas em paralelo
+    }
+
+    const result = await pool.query(
+      `SELECT id, source_id, game_date, kickoff_time, league, league_badge,
+              home_team, home_logo, away_team, away_logo,
+              status, home_score, away_score, channels, highlight
+       FROM daily_games
+       WHERE game_date = $1 AND is_active = true
+       ORDER BY highlight DESC, kickoff_time ASC NULLS LAST`,
+      [today],
+    );
+    res.json({ date: today, games: result.rows });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// POST admin — força sync agora (síncrono, retorna contagem)
+app.post('/api/daily-games/refresh', requireAdmin, async (req, res) => {
+  try {
+    const date = (req.body?.date as string) || new Date().toISOString().slice(0, 10);
+    const result = await syncDailyGamesFromTheSportsDB(date);
+    res.json({ ok: true, date, ...result });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// GET admin — lista (com filtros opcionais)
+app.get('/api/daily-games/admin', requireAdmin, async (req, res) => {
+  try {
+    const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+    const result = await pool.query(
+      `SELECT * FROM daily_games WHERE game_date = $1 ORDER BY kickoff_time ASC NULLS LAST`,
+      [date],
+    );
+    res.json({ date, games: result.rows });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// PUT admin — edita canais/destaque/visibilidade
+app.put('/api/daily-games/:id', requireAdmin, async (req, res) => {
+  try {
+    const { channels, highlight, is_active, home_team, away_team, home_logo, away_logo, league, kickoff_time } = req.body || {};
+    await pool.query(
+      `UPDATE daily_games SET
+         channels    = COALESCE($2::jsonb, channels),
+         highlight   = COALESCE($3, highlight),
+         is_active   = COALESCE($4, is_active),
+         home_team   = COALESCE($5, home_team),
+         away_team   = COALESCE($6, away_team),
+         home_logo   = COALESCE($7, home_logo),
+         away_logo   = COALESCE($8, away_logo),
+         league      = COALESCE($9, league),
+         kickoff_time= COALESCE($10::timestamp, kickoff_time),
+         updated_at  = NOW()
+       WHERE id = $1`,
+      [
+        req.params.id,
+        channels != null ? JSON.stringify(channels) : null,
+        highlight ?? null,
+        is_active ?? null,
+        home_team ?? null,
+        away_team ?? null,
+        home_logo ?? null,
+        away_logo ?? null,
+        league ?? null,
+        kickoff_time ?? null,
+      ],
+    );
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// POST admin — cria manualmente (jogo não coberto pela API)
+app.post('/api/daily-games', requireAdmin, async (req, res) => {
+  try {
+    const { game_date, kickoff_time, league, league_badge,
+            home_team, home_logo, away_team, away_logo,
+            channels, highlight } = req.body || {};
+    if (!game_date || !home_team || !away_team) {
+      return res.status(400).json({ error: 'game_date, home_team e away_team são obrigatórios' });
+    }
+    const r = await pool.query(
+      `INSERT INTO daily_games
+         (game_date, kickoff_time, league, league_badge, home_team, home_logo, away_team, away_logo, channels, highlight)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+       RETURNING id`,
+      [game_date, kickoff_time || null, league || null, league_badge || null,
+       home_team, home_logo || null, away_team, away_logo || null,
+       JSON.stringify(channels || []), !!highlight],
+    );
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// DELETE admin
+app.delete('/api/daily-games/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM daily_games WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });

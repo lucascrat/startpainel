@@ -8,11 +8,300 @@ import {
   Brain, Save, Key, QrCode, DollarSign, TrendingUp,
   Tv, Monitor, Globe, ChevronRight, Calendar, Info, X, Eye,
   Cpu, ExternalLink, Zap, ArrowRightLeft, Phone, UserPlus,
-  Image as ImageIcon, Crown, Gift, Layout
+  Image as ImageIcon, Crown, Gift, Layout, Trophy, Radio, Clock, Plus as PlusIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
+
+// ─── DAILY GAMES MANAGER (Jogos do Dia) ─────────────────────────────────────
+
+interface DailyGame {
+  id: number; source_id: string | null; game_date: string; kickoff_time: string | null;
+  league: string | null; league_badge: string | null;
+  home_team: string; home_logo: string | null;
+  away_team: string; away_logo: string | null;
+  status: 'scheduled' | 'live' | 'finished'; home_score: number | null; away_score: number | null;
+  channels: Array<{ name: string; logo?: string }>;
+  highlight: boolean; is_active: boolean;
+}
+
+// Canais brasileiros mais comuns (sugestões de 1 clique)
+const COMMON_CHANNELS = [
+  { name: 'SporTV',    logo: 'https://logodownload.org/wp-content/uploads/2018/05/sportv-logo.png' },
+  { name: 'SporTV 2',  logo: 'https://logodownload.org/wp-content/uploads/2018/05/sportv-logo.png' },
+  { name: 'Globo',     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Rede_Globo_logo_2021.png/200px-Rede_Globo_logo_2021.png' },
+  { name: 'ESPN',      logo: 'https://logodownload.org/wp-content/uploads/2014/02/espn-logo-0.png' },
+  { name: 'ESPN 2',    logo: 'https://logodownload.org/wp-content/uploads/2014/02/espn-logo-0.png' },
+  { name: 'TNT',       logo: 'https://logodownload.org/wp-content/uploads/2017/04/tnt-logo-0.png' },
+  { name: 'Premiere',  logo: 'https://logodownload.org/wp-content/uploads/2018/05/premiere-logo-0.png' },
+  { name: 'Band',      logo: 'https://logodownload.org/wp-content/uploads/2014/03/band-logo-1.png' },
+  { name: 'Record',    logo: 'https://logodownload.org/wp-content/uploads/2014/04/record-logo-0.png' },
+  { name: 'Cazé TV',   logo: '' },
+  { name: 'CNN Br',    logo: '' },
+  { name: 'Paramount+',logo: '' },
+  { name: 'HBO Max',   logo: '' },
+  { name: 'Disney+',   logo: '' },
+];
+
+function DailyGamesManager() {
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [games, setGames] = useState<DailyGame[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const r = await authFetch(`/api/daily-games/admin?date=${date}`);
+      const data = await r.json();
+      setGames(data.games || []);
+    } catch { toast.error('Falha ao carregar jogos'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { reload(); }, [date]);
+
+  const refreshFromAPI = async () => {
+    setRefreshing(true);
+    try {
+      const r = await authFetch('/api/daily-games/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date }) });
+      const d = await r.json();
+      if (d.ok) { toast.success(`✓ Sincronizado: ${d.inserted} novos, ${d.updated} atualizados`); reload(); }
+      else { toast.error(d.error || 'Falha ao sincronizar'); }
+    } catch { toast.error('Falha de rede'); }
+    finally { setRefreshing(false); }
+  };
+
+  const saveGame = async (id: number, patch: Partial<DailyGame>) => {
+    try {
+      await authFetch(`/api/daily-games/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      toast.success('Salvo');
+      reload();
+      setEditingId(null);
+    } catch { toast.error('Falha ao salvar'); }
+  };
+
+  const deleteGame = async (id: number) => {
+    if (!confirm('Excluir este jogo da landpage?')) return;
+    try {
+      await authFetch(`/api/daily-games/${id}`, { method: 'DELETE' });
+      toast.success('Excluído');
+      reload();
+    } catch { toast.error('Falha ao excluir'); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-violet-50 to-white p-5 rounded-2xl border border-violet-100">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="text-base font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+              <Trophy size={18} className="text-violet-600" /> Jogos do Dia
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">Sincroniza automaticamente da TheSportsDB. Edite os canais transmissores manualmente.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-violet-500" />
+            <button onClick={refreshFromAPI} disabled={refreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 text-white text-xs font-black uppercase tracking-wider rounded-lg transition">
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Sincronizando...' : 'Sincronizar API'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista */}
+      {loading ? (
+        <div className="p-12 text-center text-slate-400 text-sm font-bold">Carregando...</div>
+      ) : games.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-2xl border-2 border-dashed border-slate-200">
+          <Trophy size={36} className="mx-auto text-slate-300 mb-3" />
+          <p className="text-sm font-black text-slate-400 uppercase tracking-wider">Nenhum jogo para {date}</p>
+          <p className="text-xs text-slate-400 mt-2">Clique em "Sincronizar API" para buscar os jogos automaticamente.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {games.map(g => (
+            <GameAdminRow
+              key={g.id}
+              game={g}
+              isEditing={editingId === g.id}
+              onEdit={() => setEditingId(g.id)}
+              onCancel={() => setEditingId(null)}
+              onSave={(patch) => saveGame(g.id, patch)}
+              onDelete={() => deleteGame(g.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GameAdminRow({ game, isEditing, onEdit, onCancel, onSave, onDelete }: {
+  game: DailyGame; isEditing: boolean;
+  onEdit: () => void; onCancel: () => void;
+  onSave: (patch: Partial<DailyGame>) => void; onDelete: () => void;
+}) {
+  const [channels, setChannels] = useState(game.channels || []);
+  const [highlight, setHighlight] = useState(game.highlight);
+  const [isActive, setIsActive] = useState(game.is_active);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelLogo, setNewChannelLogo] = useState('');
+
+  useEffect(() => {
+    setChannels(game.channels || []);
+    setHighlight(game.highlight);
+    setIsActive(game.is_active);
+  }, [game]);
+
+  const addChannel = (c: { name: string; logo?: string }) => {
+    if (!c.name.trim()) return;
+    if (channels.some(x => x.name.toLowerCase() === c.name.toLowerCase())) return;
+    setChannels([...channels, c]);
+  };
+  const removeChannel = (idx: number) => setChannels(channels.filter((_, i) => i !== idx));
+
+  const timeStr = game.kickoff_time
+    ? new Date(game.kickoff_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : '--:--';
+
+  return (
+    <div className={`bg-white p-4 rounded-2xl border ${highlight ? 'border-violet-300 shadow-md shadow-violet-100' : 'border-slate-200'}`}>
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Time casa */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {game.home_logo
+            ? <img src={game.home_logo} alt="" className="w-9 h-9 object-contain" />
+            : <div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-xs font-black text-slate-400">{game.home_team[0]}</div>}
+          <span className="text-sm font-black text-slate-700 truncate">{game.home_team}</span>
+        </div>
+
+        {/* Placar/VS + horário */}
+        <div className="text-center px-2">
+          {(game.status === 'live' || game.status === 'finished') && game.home_score != null
+            ? <div className="text-lg font-black text-slate-800">{game.home_score} <span className="text-slate-300">×</span> {game.away_score}</div>
+            : <div className="text-xs font-black text-slate-300">VS</div>}
+          <div className="text-[10px] font-bold text-violet-600 flex items-center justify-center gap-1">
+            <Clock size={9} /> {timeStr}
+          </div>
+        </div>
+
+        {/* Time visitante */}
+        <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
+          <span className="text-sm font-black text-slate-700 truncate">{game.away_team}</span>
+          {game.away_logo
+            ? <img src={game.away_logo} alt="" className="w-9 h-9 object-contain" />
+            : <div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-xs font-black text-slate-400">{game.away_team[0]}</div>}
+        </div>
+
+        {/* Ações */}
+        <div className="flex items-center gap-1 shrink-0">
+          {!isEditing ? (
+            <>
+              <button onClick={onEdit} title="Editar" className="p-2 hover:bg-violet-50 rounded-lg text-violet-600 transition">
+                <Radio size={14} />
+              </button>
+              <button onClick={onDelete} title="Excluir" className="p-2 hover:bg-red-50 rounded-lg text-red-500 transition">
+                <Trash2 size={14} />
+              </button>
+            </>
+          ) : (
+            <button onClick={onCancel} title="Cancelar" className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Liga + canais (visão compacta quando não editando) */}
+      {!isEditing && (
+        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{game.league}</span>
+          <div className="flex items-center gap-1 flex-wrap">
+            {channels.length === 0
+              ? <span className="text-[10px] text-slate-400 italic">Sem canais cadastrados</span>
+              : channels.map((c, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-50 text-violet-700 text-[10px] font-black rounded border border-violet-100">
+                    {c.logo && <img src={c.logo} className="w-3 h-3 object-contain" alt="" />}
+                    {c.name}
+                  </span>
+                ))
+            }
+            {highlight && <span className="text-[9px] font-black bg-violet-600 text-white px-1.5 py-0.5 rounded">⭐ DESTAQUE</span>}
+            {!isActive && <span className="text-[9px] font-black bg-slate-400 text-white px-1.5 py-0.5 rounded">OCULTO</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Form de edição */}
+      {isEditing && (
+        <div className="mt-3 pt-3 border-t border-slate-200 space-y-3">
+          <div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Canais transmissores</p>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {channels.map((c, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-violet-50 border border-violet-200 rounded text-xs font-bold text-violet-700">
+                  {c.logo && <img src={c.logo} className="w-3 h-3 object-contain" alt="" />}
+                  {c.name}
+                  <button onClick={() => removeChannel(i)} className="ml-1 text-violet-400 hover:text-red-500"><X size={10} /></button>
+                </span>
+              ))}
+            </div>
+            {/* Sugestões */}
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Adicionar rápido:</p>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {COMMON_CHANNELS
+                .filter(c => !channels.some(x => x.name.toLowerCase() === c.name.toLowerCase()))
+                .map((c, i) => (
+                  <button key={i} onClick={() => addChannel(c)}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-slate-200 hover:border-violet-400 hover:bg-violet-50 rounded text-[10px] font-bold text-slate-600 transition">
+                    {c.logo && <img src={c.logo} className="w-3 h-3 object-contain" alt="" />}
+                    + {c.name}
+                  </button>
+                ))}
+            </div>
+            {/* Custom */}
+            <div className="flex gap-2 items-center">
+              <input value={newChannelName} onChange={e => setNewChannelName(e.target.value)} placeholder="Nome do canal"
+                className="flex-1 px-2 py-1.5 border border-slate-200 rounded text-xs outline-none focus:ring-2 focus:ring-violet-300" />
+              <input value={newChannelLogo} onChange={e => setNewChannelLogo(e.target.value)} placeholder="URL do logo (opcional)"
+                className="flex-1 px-2 py-1.5 border border-slate-200 rounded text-xs outline-none focus:ring-2 focus:ring-violet-300" />
+              <button onClick={() => { addChannel({ name: newChannelName.trim(), logo: newChannelLogo.trim() || undefined }); setNewChannelName(''); setNewChannelLogo(''); }}
+                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-900 text-white text-xs font-black rounded">
+                + ADD
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={highlight} onChange={e => setHighlight(e.target.checked)} className="rounded" />
+              ⭐ Destaque na landpage
+            </label>
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="rounded" />
+              Visível
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="px-4 py-2 text-xs font-black text-slate-500 hover:bg-slate-100 rounded-lg">Cancelar</button>
+            <button onClick={() => onSave({ channels, highlight, is_active: isActive })}
+              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-black uppercase tracking-wider rounded-lg">
+              Salvar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── LANDPAGE MANAGER ───────────────────────────────────────────────────────
 
@@ -216,7 +505,7 @@ function AppLandingRow({ app, onSave }: {
 }
 
 export default function AdminPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings' | 'm3u' | 'landpage'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'financial' | 'automations' | 'ai' | 'startflix' | 'wareztv' | 'android' | 'settings' | 'm3u' | 'landpage' | 'games'>('users');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [financials, setFinancials] = useState<any>(null);
   const [startflixUsers, setStartflixUsers] = useState<any[]>([]);
@@ -1682,6 +1971,7 @@ export default function AdminPanel() {
                     { id: 'settings',    label: 'Config',        icon: <Save size={12} /> },
                     { id: 'm3u',         label: 'Pool M3U',      icon: <Globe size={12} /> },
                     { id: 'landpage',    label: 'Landpage',      icon: <Zap size={12} /> },
+                    { id: 'games',       label: 'Jogos do Dia',  icon: <Trophy size={12} /> },
                   ] as { id: typeof activeSubTab; label: string; icon: React.ReactNode }[]
                 ).map(({ id, label, icon }) => (
                   <button
@@ -3737,6 +4027,9 @@ export default function AdminPanel() {
 
             case 'landpage':
               return <LandpageManager catalogApps={catalogApps} onReloadCatalog={() => authFetch('/api/app-catalog').then(r => r.json()).then(d => Array.isArray(d) && setCatalogApps(d)).catch(() => {})} />;
+
+            case 'games':
+              return <DailyGamesManager />;
 
             default:
               return (

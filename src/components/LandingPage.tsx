@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageCircle, Lock, X, Play, Phone, Menu, Check, ChevronRight, Star, Tv, Film, TrendingUp, Zap, Gift, Crown } from 'lucide-react';
+import { MessageCircle, Lock, X, Play, Phone, Menu, Check, ChevronRight, Star, Tv, Film, TrendingUp, Zap, Gift, Crown, Trophy, Radio, Clock } from 'lucide-react';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface LandingApp {
@@ -9,6 +9,22 @@ interface LandingApp {
   landing_price: string | null; description: string | null;
 }
 interface Banner { id: number; title: string; subtitle: string; image_url: string; cta_label: string; badge: string; }
+interface DailyGame {
+  id: number;
+  game_date: string;
+  kickoff_time: string | null;
+  league: string | null;
+  league_badge: string | null;
+  home_team: string;
+  home_logo: string | null;
+  away_team: string;
+  away_logo: string | null;
+  status: 'scheduled' | 'live' | 'finished';
+  home_score: number | null;
+  away_score: number | null;
+  channels: Array<{ name: string; logo?: string }>;
+  highlight: boolean;
+}
 interface Props {
   onStartChat: (name: string, phone: string) => void;
   onAdminClick: () => void;
@@ -68,10 +84,15 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
   const [navOpen, setNavOpen]       = useState(false);
   const [scrolled, setScrolled]     = useState(false);
 
+  // Jogos do dia
+  const [games, setGames] = useState<DailyGame[]>([]);
+  const [gamesDate, setGamesDate] = useState('');
+
   const heroRef    = useRef<HTMLDivElement>(null);
   const appsRef    = useRef<HTMLDivElement>(null);
   const catalogRef = useRef<HTMLDivElement>(null);
   const top10Ref   = useRef<HTMLDivElement>(null);
+  const gamesRef   = useRef<HTMLDivElement>(null);
 
   // Fetch landing data + TMDB
   useEffect(() => {
@@ -82,6 +103,12 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
       setFreeApps(apps.filter(a => a.landing_category === 'free'));
       setPaidApps(apps.filter(a => a.landing_category === 'paid'));
       setTop10(apps.filter(a => a.landing_rank != null).sort((a, b) => a.landing_rank! - b.landing_rank!).slice(0, 10));
+    }).catch(() => {});
+
+    // Jogos do dia (cache em DB + auto-sync no backend)
+    fetch('/api/daily-games').then(r => r.json()).then(d => {
+      setGames(d.games || []);
+      setGamesDate(d.date || '');
     }).catch(() => {});
 
     const fetchTMDB = (url: string) =>
@@ -151,7 +178,7 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
         </div>
 
         <div className="nav-links" style={{ display: 'flex', gap: 28, alignItems: 'center' }}>
-          {[{ l: 'Catálogo', r: catalogRef }, { l: 'Apps Disponíveis', r: appsRef }, { l: 'Top 10', r: top10Ref }].map(item => (
+          {[{ l: '⚽ Jogos do Dia', r: gamesRef }, { l: 'Catálogo', r: catalogRef }, { l: 'Apps Disponíveis', r: appsRef }, { l: 'Top 10', r: top10Ref }].map(item => (
             <button key={item.l} onClick={() => scrollTo(item.r)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', cursor: 'pointer', textTransform: 'uppercase', padding: 0, transition: 'color 0.2s' }}
               onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.6)')}>
               {item.l}
@@ -180,7 +207,7 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
         {navOpen && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             style={{ position: 'sticky', top: 64, zIndex: 49, background: 'rgba(8,8,8,0.99)', borderBottom: `1px solid ${C.border}`, padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {[{ l: '🎬 Catálogo', r: catalogRef }, { l: '📱 Apps Disponíveis', r: appsRef }, { l: '👑 Top 10', r: top10Ref }].map(i => (
+            {[{ l: '⚽ Jogos do Dia', r: gamesRef }, { l: '🎬 Catálogo', r: catalogRef }, { l: '📱 Apps Disponíveis', r: appsRef }, { l: '👑 Top 10', r: top10Ref }].map(i => (
               <button key={i.l} onClick={() => scrollTo(i.r)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 700, textAlign: 'left', cursor: 'pointer' }}>{i.l}</button>
             ))}
           </motion.div>
@@ -306,6 +333,45 @@ export default function LandingPage({ onStartChat, onAdminClick, supportWhatsapp
             ))}
           </div>
         </div>
+      )}
+
+      {/* ━━━ JOGOS DO DIA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {games.length > 0 && (
+        <section ref={gamesRef} style={{ padding: 'clamp(48px,6vw,80px) clamp(16px,4vw,56px)', background: 'linear-gradient(180deg, rgba(20,14,30,0.4) 0%, rgba(8,8,8,1) 100%)' }}>
+          <SceneBadge text="SCENE LIVE · JOGOS DO DIA" />
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 8 }}>
+            <div>
+              <h2 style={{ fontSize: 'clamp(28px,4.5vw,60px)', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '-2px', lineHeight: 0.93 }}>
+                <span style={{ color: '#fff' }}>JOGOS </span><span style={{ color: C.purpleL }}>DO DIA</span>
+              </h2>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8, letterSpacing: '0.1em', fontWeight: 700, textTransform: 'uppercase' }}>
+                <span style={{ color: '#22c55e' }}>● AO VIVO</span> · {games.length} {games.length === 1 ? 'PARTIDA' : 'PARTIDAS'} HOJE · TUDO TRANSMITIDO PELA STARTFLIX
+              </p>
+            </div>
+            {gamesDate && (
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: 6, border: `1px solid ${C.border}` }}>
+                📅 {new Date(gamesDate + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 14, marginTop: 28 }}>
+            {games.map((g, i) => <GameCard key={g.id} game={g} index={i} onCTA={() => setShowModal(true)} />)}
+          </div>
+
+          <div style={{ marginTop: 32, padding: '18px 22px', background: 'rgba(124,58,237,0.08)', border: `1px solid rgba(124,58,237,0.2)`, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Trophy size={28} style={{ color: C.purpleL }} />
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 900, color: '#fff', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Não perca nenhum lance</p>
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>Todos esses canais ao vivo na StartFlix em 4K HDR</p>
+              </div>
+            </div>
+            <button onClick={() => setShowModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.purple, color: '#fff', border: 'none', borderRadius: 8, padding: '12px 22px', fontSize: 12, fontWeight: 900, letterSpacing: '0.08em', cursor: 'pointer', textTransform: 'uppercase', boxShadow: `0 4px 16px rgba(124,58,237,0.4)` }}>
+              📺 ASSISTIR AGORA <ChevronRight size={14} />
+            </button>
+          </div>
+        </section>
       )}
 
       {/* ━━━ CATÁLOGO TMDB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
@@ -598,6 +664,138 @@ function AppCard({ app, index, badge, badgeColor, onCTA, ctaLabel, ctaColor, sho
           {ctaLabel} →
         </button>
       </div>
+    </motion.div>
+  );
+}
+
+// ─── GAME CARD (jogos do dia) ──────────────────────────────────────────────────
+function GameCard({ game, index, onCTA }: { game: DailyGame; index: number; onCTA: () => void; }) {
+  const PURPLE_L = '#A855F7';
+  const PURPLE   = '#7C3AED';
+  const BORDER   = 'rgba(255,255,255,0.07)';
+
+  // Formata horário (kickoff_time vem em UTC, exibe em horário local BR)
+  const timeStr = game.kickoff_time
+    ? new Date(game.kickoff_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : '--:--';
+
+  const isLive     = game.status === 'live';
+  const isFinished = game.status === 'finished';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ delay: Math.min(index * 0.04, 0.4) }}
+      whileHover={{ y: -4, boxShadow: '0 12px 30px rgba(124,58,237,0.25)' } as any}
+      onClick={onCTA}
+      style={{
+        background: game.highlight
+          ? 'linear-gradient(135deg, #1a0a3a 0%, #0d0020 100%)'
+          : '#111',
+        border: game.highlight ? `1px solid rgba(168,85,247,0.4)` : `1px solid ${BORDER}`,
+        borderRadius: 14,
+        padding: '16px 18px',
+        cursor: 'pointer',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Cabeçalho: liga + horário + status */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+          {game.league_badge && (
+            <img src={game.league_badge} alt={game.league || ''} style={{ width: 22, height: 22, objectFit: 'contain', flexShrink: 0 }} />
+          )}
+          <span style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {game.league || 'Futebol'}
+          </span>
+        </div>
+        {isLive ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9, fontWeight: 900, color: '#fff', background: '#E50914', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.12em' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff', animation: 'pulse 1.2s infinite' }} />
+            AO VIVO
+          </span>
+        ) : isFinished ? (
+          <span style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.05)', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.12em' }}>
+            ENCERRADO
+          </span>
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 900, color: PURPLE_L, background: 'rgba(124,58,237,0.15)', padding: '3px 10px', borderRadius: 6, letterSpacing: '0.05em' }}>
+            <Clock size={11} /> {timeStr}
+          </span>
+        )}
+      </div>
+
+      {/* Times */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        {/* Time da casa */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', minWidth: 0 }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, overflow: 'hidden', flexShrink: 0 }}>
+            {game.home_logo
+              ? <img src={game.home_logo} alt={game.home_team} style={{ width: '85%', height: '85%', objectFit: 'contain' }} />
+              : <span style={{ fontSize: 22, fontWeight: 900, color: PURPLE_L }}>{game.home_team[0]}</span>}
+          </div>
+          <p style={{ fontSize: 11, fontWeight: 900, color: '#fff', textTransform: 'uppercase', lineHeight: 1.2, letterSpacing: '0.02em', wordBreak: 'break-word' }}>
+            {game.home_team}
+          </p>
+        </div>
+
+        {/* Placar ou X */}
+        <div style={{ flexShrink: 0, textAlign: 'center', minWidth: 56 }}>
+          {(isLive || isFinished) && game.home_score != null && game.away_score != null ? (
+            <div style={{ fontSize: 26, fontWeight: 900, color: '#fff', letterSpacing: '-1px', lineHeight: 1 }}>
+              {game.home_score} <span style={{ color: 'rgba(255,255,255,0.25)' }}>×</span> {game.away_score}
+            </div>
+          ) : (
+            <div style={{ fontSize: 24, fontWeight: 900, color: 'rgba(255,255,255,0.15)', letterSpacing: '-1px' }}>VS</div>
+          )}
+        </div>
+
+        {/* Time visitante */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', minWidth: 0 }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, overflow: 'hidden', flexShrink: 0 }}>
+            {game.away_logo
+              ? <img src={game.away_logo} alt={game.away_team} style={{ width: '85%', height: '85%', objectFit: 'contain' }} />
+              : <span style={{ fontSize: 22, fontWeight: 900, color: PURPLE_L }}>{game.away_team[0]}</span>}
+          </div>
+          <p style={{ fontSize: 11, fontWeight: 900, color: '#fff', textTransform: 'uppercase', lineHeight: 1.2, letterSpacing: '0.02em', wordBreak: 'break-word' }}>
+            {game.away_team}
+          </p>
+        </div>
+      </div>
+
+      {/* Canais transmissores */}
+      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <Radio size={11} style={{ color: PURPLE_L }} />
+          <span style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+            Transmissão
+          </span>
+        </div>
+        {game.channels && game.channels.length > 0 ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {game.channels.map((c, ci) => (
+              <span key={ci} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(255,255,255,0.06)', border: `1px solid ${BORDER}`, borderRadius: 5, padding: '4px 8px', fontSize: 10, fontWeight: 800, color: '#fff' }}>
+                {c.logo && <img src={c.logo} alt={c.name} style={{ width: 14, height: 14, objectFit: 'contain' }} />}
+                {c.name}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontStyle: 'italic' }}>
+            Disponível na StartFlix · todos os canais
+          </p>
+        )}
+      </div>
+
+      {/* Tag de destaque */}
+      {game.highlight && (
+        <div style={{ position: 'absolute', top: 0, right: 0, background: PURPLE, color: '#fff', fontSize: 8, fontWeight: 900, letterSpacing: '0.15em', padding: '4px 10px', borderBottomLeftRadius: 8 }}>
+          ⭐ DESTAQUE
+        </div>
+      )}
     </motion.div>
   );
 }
