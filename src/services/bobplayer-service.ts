@@ -38,19 +38,36 @@ async function loginBobPlayer(page: any, mac: string, deviceKey: string): Promis
 
   if (inputs.length >= 3 && geminiKey) {
     console.log('[BobPlayer] Resolvendo captcha com Gemini...');
-    const screenshot = await page.screenshot({ encoding: 'base64' });
-    const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    try {
-      const result = await model.generateContent([
-        'Retorne apenas o texto do captcha nesta imagem. Somente o código, sem espaços.',
-        { inlineData: { data: screenshot as string, mimeType: 'image/png' } },
-      ]);
-      const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
-      console.log(`[BobPlayer] Captcha: "${captchaText}"`);
-      const b2 = await inputs[2].boundingBox();
-      if (b2) { await page.mouse.click(b2.x+b2.width/2,b2.y+b2.height/2); await page.keyboard.type(captchaText,{delay:120}); }
-    } catch (e: any) { console.warn('[BobPlayer] Gemini falhou:', e.message); }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const screenshot = await page.screenshot({ encoding: 'base64' });
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const result = await model.generateContent([
+          'Retorne apenas o texto do captcha nesta imagem. Somente o código, sem espaços.',
+          { inlineData: { data: screenshot as string, mimeType: 'image/png' } },
+        ]);
+        const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
+        console.log(`[BobPlayer] Captcha: "${captchaText}" (tentativa ${attempt})`);
+        const b2 = await inputs[2].boundingBox();
+        if (b2) { await page.mouse.click(b2.x+b2.width/2,b2.y+b2.height/2); await page.keyboard.type(captchaText,{delay:120}); }
+        break;
+      } catch (e: any) {
+        const is429 = e.message?.includes('429') || e.status === 429;
+        if (is429 && attempt < 3) {
+          console.warn(`[BobPlayer] Gemini 429 — aguardando 35s (tentativa ${attempt}/3)...`);
+          await new Promise(r => setTimeout(r, 35000));
+          await page.evaluate(() => {
+            (Array.from(document.querySelectorAll('button'))
+              .find(b => /refresh/i.test(b.textContent || '')) as HTMLElement | null)?.click();
+          });
+          await new Promise(r => setTimeout(r, 1200));
+        } else {
+          console.warn(`[BobPlayer] Gemini falhou (tentativa ${attempt}):`, e.message?.substring(0, 120));
+          break;
+        }
+      }
+    }
   }
 
   await new Promise(r => setTimeout(r, 1500));
