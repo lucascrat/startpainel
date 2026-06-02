@@ -1929,6 +1929,37 @@ Siga esse fluxo naturalmente, sem parecer questionário:
 NUNCA pule etapas: não gere teste sem ter o MAC. Não gere Pix sem saber quantas telas.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+APPS PAGOS VIA ATIVEAPP — TESTE DE 7 DIAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+O AtiveApp é nossa plataforma de ativação de apps pagos (parceiros externos). Usamos quando o cliente quer um app pago e NÃO tem nenhum dos nossos apps grátis disponíveis para o aparelho dele.
+
+APPS DISPONÍVEIS NO ATIVEAPP (pagos, exigem ativação):
+- IBO Pro, IBO Player, BOB Player, VU Player, Big Player, Box Player, Core Player, Fenix Player, Magic Player, Quick Player, Assist Plus, Fun Play (versão paga)
+Custo por ativação: ~R$ 10,80 (0,9 créditos × R$ 12/crédito). Validade: 1 ano no aparelho.
+
+REGRAS DO TESTE VIA ATIVEAPP:
+- O APP dá 7 dias de teste gratuito por MAC (período da plataforma).
+- Nosso SINAL fica ativo por 6 horas no teste. Dentro dos 7 dias, o cliente pode pedir mais sinal — chame create_test_account de novo com o mesmo MAC.
+- Após os 7 dias: o app bloqueia o MAC. Para continuar, o cliente paga a taxa anual do app (Ex: IBO Pro R$ 10/ano) + o plano mensal do sinal.
+- Se o teste do app já venceu (passou 7 dias desde a primeira ativação), NÃO ative de novo — explique que agora é cobrado.
+
+QUANDO USAR activate_ativeapp_trial:
+✅ Cliente quer testar um app pago e não tem app grátis compatível com o aparelho dele
+✅ Cliente já conhece o app e quer ativar pra testar antes de pagar
+✅ Cliente pediu especificamente IBO Pro, BOB Player, VU Player ou outro app desta lista
+❌ NÃO use para apps grátis do catálogo (Ultra Player, Fun Play grátis, X-Cloud, Quick Player, See Play, Lazer Play) — esses ative via create_test_account normal
+❌ NÃO use sem confirmar com o cliente que ele quer testar esse app específico
+
+FLUXO DE TESTE COM APP PAGO:
+1. Identifique que o cliente quer um app pago (ex: "quero testar o IBO Pro")
+2. Peça o MAC do aparelho: "Me manda o MAC que aparece na tela do ${appName} — é algo tipo XX:XX:XX:XX:XX:XX"
+3. Confirme: "Posso ativar o ${appName} pra você testar por 7 dias, tá bem?"
+4. Chame *activate_ativeapp_trial* com app_name e mac
+5. O sistema ativa em ~1-2 min e avisa o cliente automaticamente
+6. Dentro dos 7 dias: se o cliente quiser mais sinal (após as 6h), chame create_test_account com o mesmo MAC e app
+7. Após gostar: gere Pix com o valor do plano + taxa do app (confira seção VALORES)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FLUXO — DIAGNÓSTICO DE PROBLEMA TÉCNICO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Quando o cliente diz que algo não funciona, NÃO dispare ferramenta de imediato. Investigue:
@@ -2064,6 +2095,7 @@ TOOLS DISPONÍVEIS
 - send_app_info(app_id, message): manda imagem + link de download de um app do catálogo.
 - request_screenshot(app_id, custom_instruction): pede print de tela específica do app (MAC/Key/erro).
 - activate_smartone(username, mac): configura o SmartOne automaticamente — acessa o site, faz login e adiciona a playlist do cliente. Use quando o cliente tem ou quer o SmartOne.
+- activate_ativeapp_trial(app_name, mac): ativa um app pago (IBO Pro, BOB Player, VU Player, Big Player etc.) via AtiveApp para o cliente testar por 7 dias. Use quando o cliente quer testar um app pago e não tem app grátis compatível. Veja seção "APPS PAGOS VIA ATIVEAPP" para regras completas.
 
 REGRAS DE USO DAS TOOLS:
 - Tools são ações reais — só chame quando o cliente está pedindo a ação AGORA, pela primeira vez nessa conversa.
@@ -2085,6 +2117,8 @@ APÓS QUALQUER AÇÃO JÁ CONCLUÍDA — REGRA CRÍTICA:
 PRINCÍPIOS INEGOCIÁVEIS:
 - Nunca invente dados (preço, vencimento, MAC). Se não está no contexto, pergunte.
 - Nunca mande detalhes técnicos de erro pro cliente (stack trace, HTTP 500, timeout, nome de ferramenta). Se falhar, diga: "Tive um probleminha aqui, já avisei o suporte — tenta de novo daqui a pouco."
+- NUNCA diga que está "confuso", "sem entender", "não sei o que fazer" ou qualquer variação disso. Você É o Lucas — sempre seguro, sempre no controle. Se não entender algo, pergunte de forma natural e direta: "Me explica melhor?" ou "O que você quis dizer com isso?". Nunca quebre o personagem.
+- NUNCA peça pro cliente "tentar novamente em alguns minutos" sem um motivo real (falha de ferramenta). Se a mensagem do cliente não ficou clara, peça que ele explique — não diga que está com problema.
 - Se não entendeu, pergunte com naturalidade. Nunca invente intenção.
 - Valide antes de agir (confirme o MAC antes de ativar).
 - NUNCA diga a palavra "IPTV" para o cliente. Use sempre: "sinal", "ativação do sinal", "conteúdo", "player de vídeo", "app parceiro". O cliente não precisa saber detalhes técnicos do serviço.
@@ -2406,6 +2440,19 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
                 username: { type: "STRING", description: "Username do cliente no painel." },
               },
               required: ["username"],
+            },
+          },
+          // Ativação de app pago via AtiveApp (trial de 7 dias no aparelho)
+          {
+            name: "activate_ativeapp_trial",
+            description: "Ativa um app pago no sistema AtiveApp para o cliente testar por 7 dias no aparelho dele. USE QUANDO: o cliente quer testar um app pago (IBO Pro, BOB Player, VU Player, Big Player, Box Player, Core Player, Fenix Player, Magic Player etc.) e não tem nenhum app grátis disponível. O sistema faz login no AtiveApp, seleciona o app e registra o MAC — o cliente já pode abrir o app e testar. ATENÇÃO: isso consome 1 crédito AtiveApp (~R$10,80) — só ative se o cliente confirmou que quer testar. NUNCA use para apps grátis do catálogo (Ultra Player, Fun Play, X-Cloud, Quick Player, See Play etc.).",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                app_name: { type: "STRING", description: "Nome exato do app pago a ativar. Ex: 'IBO Pro', 'BOB Player', 'VU Player', 'Big Player'. Use o nome como o cliente disse." },
+                mac: { type: "STRING", description: "MAC address do aparelho do cliente (formato XX:XX:XX:XX:XX:XX)." },
+              },
+              required: ["app_name", "mac"],
             },
           },
           // Reparo da lista do Bob Player
@@ -2976,6 +3023,29 @@ app.delete('/api/daily-games/:id', requireAdmin, async (req, res) => {
 // --- APP CATALOG ---
 // Catalogo de apps que a IA pode sugerir pro cliente (instalacao + screenshots).
 // Listagem publica (pra IA poder consultar via /api/public sem auth), mutacoes admin-only.
+// ── AtiveApp Catalog ──────────────────────────────────────────────────────────
+app.get('/api/ativeapp-catalog', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM ativeapp_catalog ORDER BY name ASC`
+    );
+    res.json(result.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/ativeapp-catalog/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+    await pool.query(
+      'UPDATE ativeapp_catalog SET is_active = $1, updated_at = NOW() WHERE id = $2',
+      [is_active, id]
+    );
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── App Catalog ───────────────────────────────────────────────────────────────
 app.get('/api/app-catalog', async (req, res) => {
   try {
     const onlyActive = req.query.activeOnly === 'true' || req.query.activeOnly === '1';
@@ -4670,6 +4740,9 @@ app.post('/api/webhooks/evolution/:event?',
         } else if (call.name === 'activate_smartone') {
           const ok = await handleActivateSmartOne(remoteJid, call.args.username, call.args.mac);
           if (ok) toolsThatSent++;
+        } else if (call.name === 'activate_ativeapp_trial') {
+          const ok = await handleActivateAtiveAppTrial(remoteJid, call.args.app_name, call.args.mac);
+          if (ok) toolsThatSent++;
         } else if (call.name === 'repair_bob_playlist') {
           const ok = await handleRepairBobPlaylist(remoteJid, call.args.username);
           if (ok) toolsThatSent++;
@@ -5867,6 +5940,55 @@ async function handleRepairIboProPlaylist(remoteJid: string, username: string): 
     return true;
   } catch (e: any) {
     console.error('[Tool repair_ibo_pro_playlist] erro:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Tool handler: ativa app pago via AtiveApp (trial de 7 dias no aparelho do cliente).
+ */
+async function handleActivateAtiveAppTrial(remoteJid: string, appName: string, mac: string): Promise<boolean> {
+  try {
+    const evo = await getEvolutionService();
+    if (!appName || !mac) {
+      await evo.sendMessage(remoteJid, '😕 Preciso do nome do app e do MAC do seu aparelho pra ativar. Pode me informar?');
+      return true;
+    }
+
+    await evo.sendMessage(
+      remoteJid,
+      `📲 Vou ativar o *${appName}* no seu aparelho agora!\n\nMAC: ${mac}\n\n⏳ Isso leva uns instantes... já te aviso quando estiver pronto! 🎬`
+    );
+
+    (async () => {
+      try {
+        const jobId = await enqueueJob('ativeapp_activate', { appName, mac });
+        const result: any = await waitForJob(jobId);
+        const evo2 = await getEvolutionService();
+
+        if (result?.success) {
+          await evo2.sendMessage(
+            remoteJid,
+            `✅ *${appName} ativado com sucesso!*\n\nMAC: ${mac}\n\n🕐 Você tem *7 dias* pra testar o app. Nosso sinal fica ativo por *6 horas* — se quiser testar mais dentro desse período, é só me chamar.\n\nAbre o ${appName} aí no seu aparelho e já vai estar funcionando! 🎬\n\nGostou? Me chama que a gente fecha o plano definitivo! 😊`
+          );
+        } else {
+          await evo2.sendMessage(
+            remoteJid,
+            `😕 Não consegui ativar o ${appName} agora. Tive um probleminha técnico — já avisei o suporte e eles resolvem pra você em breve!`
+          );
+        }
+      } catch (e: any) {
+        console.error('[Tool activate_ativeapp_trial] background falhou:', e?.message);
+        try {
+          const evo3 = await getEvolutionService();
+          await evo3.sendMessage(remoteJid, '😕 Tive um problema técnico. O operador já foi avisado e te chama logo.');
+        } catch {}
+      }
+    })();
+
+    return true;
+  } catch (e: any) {
+    console.error('[Tool activate_ativeapp_trial] erro:', e?.message);
     return false;
   }
 }

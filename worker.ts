@@ -35,6 +35,7 @@ import { runClouddyUpdatePlaylist } from './src/services/clouddy-service.js';
 import { runIBOProAutomation } from './src/services/ibo-pro-support.js';
 import { runSmartOneSetup, initSmartOneSession } from './src/services/smartone-service.js';
 import { runVUProSetup } from './src/services/vupro-service.js';
+import { runAtiveAppActivation } from './src/services/ativeapp-service.js';
 
 const SERVER_URL = (process.env.WORKER_SERVER_URL || 'https://atendimento.appbr.pro').replace(/\/$/, '');
 const WORKER_TOKEN = process.env.WORKER_TOKEN;
@@ -77,6 +78,7 @@ type JobHandler = (payload: any, profileNum: number) => Promise<any>;
 const handlers: Record<string, JobHandler> = {
   renew_client:          ({ username }, p) => renewClientPuppeteer(username, p),
   set_custom_expiration: ({ username, newDate }, p) => setCustomExpirationPuppeteer(username, newDate, p),
+  ativeapp_activate:    ({ appName, mac }, p) => runAtiveAppActivation(appName, mac, p),
   bob_repair:           ({ mac, key, playlistUrl }, p) => runBobPlayerRepair(mac, key, playlistUrl, p),
   clouddy_repair:       ({ email, senha, playlistUrl }, p) => runClouddyUpdatePlaylist(email, senha, playlistUrl, p),
   create_client:     ({ username }, p) => createClientAndGetPlaylist(username, p),
