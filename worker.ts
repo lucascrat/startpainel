@@ -42,7 +42,7 @@ const WORKER_TOKEN = process.env.WORKER_TOKEN;
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS || 5000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 5);
-const VERSION = '1.1.0';
+const VERSION = '1.2.0'; // ativeapp_activate + INICIAR-WORKER.bat
 
 if (!WORKER_TOKEN) {
   console.error('❌ WORKER_TOKEN ausente no .env. Configure e tente de novo.');
