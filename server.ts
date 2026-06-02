@@ -1956,8 +1956,8 @@ QUANDO USAR activate_ativeapp_trial:
 
 FLUXO DE TESTE COM APP PAGO:
 1. Identifique que o cliente quer um app pago (ex: "quero testar o IBO Pro")
-2. Peça o MAC do aparelho: "Me manda o MAC que aparece na tela do ${appName} — é algo tipo XX:XX:XX:XX:XX:XX"
-3. Confirme: "Posso ativar o ${appName} pra você testar por 7 dias, tá bem?"
+2. Peça o MAC do aparelho: "Me manda o MAC que aparece na tela do app — é algo tipo XX:XX:XX:XX:XX:XX"
+3. Confirme: "Posso ativar o app pra você testar por 7 dias, tá bem?"
 4. Chame *activate_ativeapp_trial* com app_name e mac
 5. O sistema ativa em ~1-2 min e avisa o cliente automaticamente
 6. Dentro dos 7 dias: se o cliente quiser mais sinal (após as 6h), chame create_test_account com o mesmo MAC e app
