@@ -4567,19 +4567,43 @@ app.post('/api/webhooks/evolution/:event?',
     pushName = data.data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
     console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid}${altJid ? ' alt=' + altJid : ''})`);
 
+    // Resposta de WhatsApp List Message (cliente clicou numa opção do menu).
+    // O Evolution v2 / Baileys varia bastante onde coloca o título e o rowId,
+    // então olhamos todos os caminhos conhecidos. Se só vier o rowId, traduzimos
+    // pelo título do nosso menu (ATTENDANCE_MENU_ROWS) — assim a IA recebe um
+    // texto legível ("Testar App na TV") em vez de um id interno.
+    const listResp = msg?.listResponseMessage || msg?.message?.listResponseMessage;
+    const selectedRowId: string =
+         listResp?.singleSelectReply?.selectedRowId
+      || listResp?.singleSelectReply?.selectedRowID
+      || '';
+    const listTitle: string = listResp?.title || '';
+    const rowIdLabel = selectedRowId
+      ? (ATTENDANCE_MENU_ROWS.find(r => r.rowId === selectedRowId)?.title || selectedRowId)
+      : '';
+
     let text = msg?.conversation
       || msg?.extendedTextMessage?.text
       || msg?.imageMessage?.caption
       || msg?.videoMessage?.caption
       || msg?.message?.conversation
-      // Resposta de WhatsApp List Message: o usuário clicou numa opção do menu
-      || msg?.listResponseMessage?.title
-      || msg?.listResponseMessage?.singleSelectReply?.selectedRowId
-      || msg?.message?.listResponseMessage?.title
+      || msg?.message?.extendedTextMessage?.text
+      // Resposta de menu: prioriza o título; se não vier, traduz o rowId
+      || listTitle
+      || rowIdLabel
+      // Botões (templateButtonReply / buttonsResponseMessage)
+      || msg?.buttonsResponseMessage?.selectedDisplayText
+      || msg?.templateButtonReplyMessage?.selectedDisplayText
+      || msg?.message?.buttonsResponseMessage?.selectedDisplayText
       || '';
     const isImage = !!msg?.imageMessage;
     const isAudio = !!msg?.audioMessage;
-    if (!text && !isImage && !isAudio) return;
+    if (!text && !isImage && !isAudio) {
+      // Diagnóstico: dump das chaves disponíveis pra entender mensagens não capturadas.
+      const msgKeys = msg ? Object.keys(msg).join(', ') : '(sem msg)';
+      console.warn(`[Webhook] Mensagem sem texto reconhecível de ${remoteJid}. Chaves: [${msgKeys}]`);
+      return;
+    }
 
     // Visible placeholder for media-only messages so the AI knows what to expect.
     const storedText = text || (isImage ? '[Imagem enviada]' : isAudio ? '[Áudio enviado]' : '[Mídia]');
@@ -4598,61 +4622,20 @@ app.post('/api/webhooks/evolution/:event?',
     const historyRes = await pool.query('SELECT text, sender FROM messages WHERE remote_jid = $1 ORDER BY created_at DESC LIMIT 10', [remoteJid]);
     let chatHistory = historyRes.rows.reverse().map(m => ({ role: (m.sender === 'ai' || m.sender === 'attendant') ? 'model' : 'user', parts: [{ text: m.text || '[Mídia]' }] }));
 
-    // Novo atendimento: se o cliente mandou uma saudação após X seg parado, ignora o
-    // contexto anterior e começa do zero. Ao invés do Lucas responder com texto, enviamos
-    // uma LISTA CLICÁVEL de atalhos (Código Startflix, Testar TV, Pagamento, etc.) para
-    // agilizar o atendimento. O tempo é configurável (greeting_reset_seconds); 0 desativa.
+    // Novo atendimento: se o cliente mandou uma saudação após X seg parado, ignoramos
+    // o contexto anterior e começamos do zero — sem menu. O Lucas responde de forma
+    // humanizada (saudação + "em que posso ajudar?") via fluxo normal da IA.
+    // O tempo é configurável (greeting_reset_seconds); 0 desativa o reset.
     const resetSeconds = await getGreetingResetSeconds();
     const isNewAttendance = resetSeconds > 0
       && isGreetingMessage(text)
       && gapSinceLastMs > resetSeconds * 1000;
 
     if (isNewAttendance) {
-      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → novo atendimento: enviando menu.`);
-      const firstName = (pushName || 'Cliente').split(' ')[0];
-      const cfg = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
-      const config: any = {}; cfg.rows.forEach(r => config[r.key] = r.value);
-      const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
-
-      // 1) Tenta WhatsApp List Message (interativa). Algumas versões do Evolution/Baileys não
-      //    suportam — capturamos o erro e seguimos pro plano B.
-      let listOk = false;
-      try {
-        await evo.sendList(remoteJid, {
-          title:       `Olá, ${firstName}! 👋`,
-          description: 'Pra agilizar seu atendimento, escolha uma opção abaixo. Se preferir, é só digitar sua dúvida normalmente.',
-          buttonText:  'Ver opções',
-          footerText:  'StartPainel — atendimento',
-          sections: [{ title: 'Atalhos', rows: ATTENDANCE_MENU_ROWS }],
-        });
-        listOk = true;
-      } catch (e: any) {
-        console.warn('[Webhook] sendList falhou — usando menu em texto numerado:', e?.message);
-      }
-
-      // 2) Plano B: menu em texto numerado (funciona em qualquer WhatsApp/versão).
-      //    Sempre enviamos um texto também — se a lista nativa renderizar, o cliente vê
-      //    as duas coisas (lista clicável + texto); se não, ao menos o texto chega.
-      const textMenu =
-        `👋 Olá, ${firstName}! Pra agilizar, é só responder com o *número* da opção:\n\n` +
-        ATTENDANCE_MENU_ROWS.map((r, i) => `*${i + 1}* — ${r.title}`).join('\n') +
-        `\n\nOu digite sua dúvida normalmente que eu te atendo. 😊`;
-      try {
-        if (!listOk) {
-          await evo.sendMessage(remoteJid, textMenu);
-        }
-      } catch (e: any) {
-        console.error('[Webhook] envio do menu de texto também falhou:', e?.message);
-      }
-
-      // Registra como mensagem da IA no histórico
-      await pool.query(
-        'INSERT INTO messages (text, sender, type, remote_jid, contact_name) VALUES ($1, $2, $3, $4, $5)',
-        [listOk ? '[Menu de atalhos enviado ao cliente]' : textMenu, 'ai', 'text', remoteJid, pushName]
-      );
-
-      // Menu enviado — não chamamos a IA neste turno; aguardamos a escolha do cliente.
-      return;
+      console.log(`[Webhook] Saudação após ${Math.round(gapSinceLastMs / 1000)}s parado → reiniciando contexto (sem menu).`);
+      // Zera o histórico: a IA recebe só a saudação atual e responde do zero,
+      // sem arrastar conversa antiga de dias atrás.
+      chatHistory = [{ role: 'user', parts: [{ text: storedText }] }];
     }
 
     let mediaData = undefined;
