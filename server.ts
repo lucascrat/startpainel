@@ -340,6 +340,10 @@ setInterval(async () => {
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
+// Cache de deduplicação de webhooks: messageId → timestamp de processamento.
+// Evita que a Evolution API dispare 2x o mesmo evento e o Lucas responda em duplicata.
+const processedMessageIds = new Map<string, number>();
+
 // Global Logger — silencia rotas de polling pra reduzir spam
 const QUIET_PATHS = new Set(['/api/panel/queue', '/api/db-status', '/api/health']);
 app.use((req, res, next) => {
@@ -4540,6 +4544,26 @@ app.post('/api/webhooks/evolution/:event?',
     // key.remoteJidAlt (@s.whatsapp.net). Capturamos pra fazer lookup do cliente certo.
     const altJid: string | null = data.data.key.remoteJidAlt || null;
     if (data.data.key.fromMe) return;
+
+    // ── Deduplicação por messageId ─────────────────────────────────────────
+    // A Evolution API pode disparar o mesmo webhook 2x para a mesma mensagem,
+    // o que causaria 2 respostas da IA para o mesmo cliente. Usamos um cache
+    // em memória (TTL 60s) para ignorar IDs já processados.
+    const messageId: string = data.data.key.id || '';
+    if (messageId && processedMessageIds.has(messageId)) {
+      console.log(`[Webhook] Duplicata ignorada — messageId ${messageId} já processado.`);
+      return;
+    }
+    if (messageId) {
+      processedMessageIds.set(messageId, Date.now());
+      // Limpa entradas antigas (> 60s) para não crescer indefinidamente
+      const now = Date.now();
+      for (const [id, ts] of processedMessageIds.entries()) {
+        if (now - ts > 60_000) processedMessageIds.delete(id);
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     pushName = data.data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
     console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid}${altJid ? ' alt=' + altJid : ''})`);
 
