@@ -353,6 +353,12 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
+// Modelo do Gemini usado no chat da IA. Configurável via env GEMINI_MODEL.
+// Default: 'gemini-flash-latest' — alias oficial do Google que sempre aponta para
+// o Gemini Flash mais recente e recomendado (atualmente família 3.x), mantendo
+// compatibilidade da API. Para fixar uma versão, defina GEMINI_MODEL no .env/Coolify.
+const GEMINI_CHAT_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+
 // --- ADMIN AUTH ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(48).toString('hex');
@@ -880,6 +886,11 @@ const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
   'gemini-2.5-flash-preview-tts':  { input: 0.075,  output: 0.30 },
   'gemini-2.5-pro':                { input: 1.25,   output: 5.00 },
   'gemini-2.5-pro-preview-tts':    { input: 1.25,   output: 5.00 },
+  'gemini-flash-latest':           { input: 0.075,  output: 0.30 },
+  'gemini-flash-lite-latest':      { input: 0.05,   output: 0.20 },
+  'gemini-3.5-flash':              { input: 0.075,  output: 0.30 },
+  'gemini-3-flash-preview':        { input: 0.075,  output: 0.30 },
+  'gemini-2.0-flash':              { input: 0.075,  output: 0.30 },
 };
 
 async function logAiUsage(model: string, type: string, usage: any) {
@@ -1784,7 +1795,7 @@ async function handleAIChat(remoteJid: string, history: any[], userInfo: any, me
   try {
     const apiKey = await getGeminiApiKey();
     if (!apiKey) throw new Error("GEMINI_API_KEY não configurada — adicione em Admin → ⚙️ Configurações");
-    const GEMINI_MODEL = 'gemini-2.5-flash';
+    const GEMINI_MODEL = GEMINI_CHAT_MODEL;
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
@@ -2598,10 +2609,10 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
     const status = error?.status || error?.response?.status;
     console.error(`[AI Error] status=${status} msg=${msg}`);
     if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
-      return { text: '⏳ Estou um pouco sobrecarregado agora. Tenta de novo em uns segundos?', functionCalls: [], model: 'gemini-2.5-flash' };
+      return { text: '⏳ Estou um pouco sobrecarregado agora. Tenta de novo em uns segundos?', functionCalls: [], model: GEMINI_CHAT_MODEL };
     }
     // NUNCA expor o erro tecnico ao cliente — so uma mensagem amigavel generica.
-    return { text: '😕 Tive um probleminha aqui pra processar isso agora. Pode mandar de novo daqui a pouquinho?', functionCalls: [], model: 'gemini-2.5-flash' };
+    return { text: '😕 Tive um probleminha aqui pra processar isso agora. Pode mandar de novo daqui a pouquinho?', functionCalls: [], model: GEMINI_CHAT_MODEL };
   }
 }
 
