@@ -2472,7 +2472,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           required: ["full_name", "desired_username", "app_id"],
         },
       }),
-      toOAITool({
+      ...[{
         name: "repair_ibo_pro_playlist",
         description: "Reativa automaticamente o sinal do cliente no app IBO PRO (iboproapp.com). \n\nUSE QUANDO: cliente RECLAMA ativamente — 'sem sinal', 'nao abre canais', 'desativou', 'app vazio', 'da erro pra abrir', 'fica carregando' — E o app dele e IBO PRO.\n\nNAO USE NUNCA QUANDO: (a) cliente esta AGRADECENDO ('obrigado', 'deu certo', 'funcionou', 'valeu', 'top', 'show'); (b) cliente esta confirmando que esta funcionando ('agora foi', 'voltou', 'esta ok', 'consegui'); (c) conversa social ('oi', 'bom dia', 'tudo bem'); (d) voce ja chamou essa tool nesta conversa nos ultimos minutos. Nesses casos so responda com TEXTO de boas-vindas/agradecimento, NUNCA chame a tool de novo.",
         parameters: {
@@ -2480,9 +2480,9 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           properties: {
             username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
           },
-              required: ["username"],
-            },
-          },
+          required: ["username"],
+        },
+      },
           // Reparo da lista do Clouddy
           {
             name: "repair_clouddy_playlist",
@@ -2610,6 +2610,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
               required: ["username", "app_name", "mac"],
             },
           },
+      ].map(toOAITool),
       ...adminFunctionDeclarations.map(toOAITool),
     ];
 
