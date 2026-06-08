@@ -1,16 +1,16 @@
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { Page, Browser } from 'puppeteer-core';
 import { launchBrowser, clickButtonByText } from './startpainel-puppeteer';
 import path from 'path';
 
 /**
  * SERVIÇO DE SUPORTE AUTOMATIZADO IBO PLAYER
- * Este modulo serve como base para automacoes de alta precisao com Gemini Vision.
+ * Este modulo serve como base para automacoes de alta precisao com OpenAI Vision.
  */
 export async function runIBOSupportAutomation(mac: string, deviceKey: string, playlistUrl: string, profileNum = 0) {
   let browser: Browser | null = null;
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
   const sites = ['https://iboplayer.com/dashboard', 'https://iboiptv.com/dashboard'];
 
   try {
@@ -65,19 +65,20 @@ export async function runIBOSupportAutomation(mac: string, deviceKey: string, pl
         }
       }
 
-      // 4. GEMINI VISION: Resolve Captcha
-      console.log('[IBO Support] Chamando Gemini 2.5 Flash para ler Captcha...');
+      // 4. OPENAI VISION: Resolve Captcha
+      console.log('[IBO Support] Chamando OpenAI Vision para ler Captcha...');
       const screenshot = await page.screenshot({ encoding: 'base64' });
-      const genAI = new GoogleGenerativeAI(geminiKey!);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const prompt = "Retorne apenas o texto (letras/numeros) do captcha presente nesta imagem de login.";
-      
-      const result = await model.generateContent([
-        prompt,
-        { inlineData: { data: screenshot as string, mimeType: "image/png" } }
-      ]);
-      const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
-      console.log(`[IBO Support] Gemini leu: ${captchaText}`);
+      const openai = new OpenAI({ apiKey: openaiKey! });
+      const result = await openai.chat.completions.create({
+        model: 'gpt-4.1-mini',
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: 'Retorne apenas o texto (letras/numeros) do captcha presente nesta imagem de login.' },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
+        ]}],
+        max_tokens: 20,
+      });
+      const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase();
+      console.log(`[IBO Support] OpenAI leu: ${captchaText}`);
 
       // Preenche Captcha e aguarda 5s (Paciencia Humana)
       if (inputs.length >= 3) {
@@ -194,7 +195,7 @@ export async function runIBOSupportAutomation(mac: string, deviceKey: string, pl
  */
 export async function runIBORepairAutomation(mac: string, deviceKey: string, playlistUrl: string, profileNum = 0) {
   let browser: Browser | null = null;
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
   const sites = ['https://iboplayer.com/dashboard', 'https://iboiptv.com/dashboard'];
 
   try {
@@ -247,20 +248,23 @@ export async function runIBORepairAutomation(mac: string, deviceKey: string, pla
         }
       }
 
-      // 4. GEMINI VISION (Captcha)
+      // 4. OPENAI VISION (Captcha)
       console.log(`[IBO Repair] Tirando print do captcha...`);
       const screenshot = await page.screenshot({ encoding: 'base64' });
-      const genAI = new GoogleGenerativeAI(geminiKey!);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      
+      const openai = new OpenAI({ apiKey: openaiKey! });
+
       try {
-        const result = await model.generateContent([
-          "Retorne apenas o texto do captcha desta imagem de login. Retorne apenas o codigo.",
-          { inlineData: { data: screenshot as string, mimeType: "image/png" } }
-        ]);
-        const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
-        console.log(`[IBO Repair] Gemini leu captcha: "${captchaText}"`);
-        
+        const result = await openai.chat.completions.create({
+          model: 'gpt-4.1-mini',
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: 'Retorne apenas o texto do captcha desta imagem de login. Retorne apenas o codigo.' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
+          ]}],
+          max_tokens: 20,
+        });
+        const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase();
+        console.log(`[IBO Repair] OpenAI leu captcha: "${captchaText}"`);
+
         if (inputs.length >= 3) {
           const captchaBox = await inputs[2].boundingBox();
           if (captchaBox) {
@@ -269,8 +273,8 @@ export async function runIBORepairAutomation(mac: string, deviceKey: string, pla
             await page.keyboard.type(captchaText, { delay: 100 });
           }
         }
-      } catch (geminiErr: any) {
-        console.error(`[IBO Repair] Erro no Gemini: ${geminiErr.message}`);
+      } catch (openaiErr: any) {
+        console.error(`[IBO Repair] Erro no OpenAI: ${openaiErr.message}`);
       }
 
       await new Promise(r => setTimeout(r, 3000));

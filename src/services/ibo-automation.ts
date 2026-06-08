@@ -3,7 +3,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page } from 'puppeteer-core';
 import os from 'os';
 import path from 'path';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
 puppeteer.use(StealthPlugin());
 
@@ -30,7 +30,7 @@ async function launchBrowser(headless = false): Promise<Browser> {
   }) as unknown as Browser;
 }
 
-export async function runIboPlayerAutomation(mac: string, key: string, playlistUrl: string, geminiKey?: string, targetUrl?: string) {
+export async function runIboPlayerAutomation(mac: string, key: string, playlistUrl: string, openaiKey?: string, targetUrl?: string) {
   let browser: Browser | null = null;
   let aiUsage: any = null;
   try {
@@ -66,33 +66,35 @@ export async function runIboPlayerAutomation(mac: string, key: string, playlistU
     await page.type('input[name="mac_address"], #mac_address', mac, { delay: 100 });
     await page.type('input[name="device_key"], #device_key', key, { delay: 100 });
 
-    // Solve Captcha with Gemini if Key is available
-    if (geminiKey) {
-      console.log('[Automation] Tentando resolver Captcha com IA...');
+    // Solve Captcha with OpenAI Vision if Key is available
+    if (openaiKey) {
+      console.log('[Automation] Tentando resolver Captcha com IA (OpenAI)...');
       try {
         const captchaSelector = 'img[src*="captcha"], .captcha-img, #captcha_img';
         const captchaElement = await page.waitForSelector(captchaSelector, { timeout: 5000 });
-        
+
         if (captchaElement) {
           const screenshot = await captchaElement.screenshot({ encoding: 'base64' });
-          const genAI = new GoogleGenerativeAI(geminiKey);
-          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-          const prompt = "What is the text shown in this captcha image? Respond only with the characters found, nothing else.";
-          const result = await model.generateContent([
-            prompt,
-            { inlineData: { data: screenshot as string, mimeType: "image/png" } }
-          ]);
-          
-          const usage = (result.response as any).usageMetadata;
-          if (usage) {
-            aiUsage = {
-              promptTokens: usage.promptTokenCount,
-              candidatesTokens: usage.candidatesTokenCount,
-              model: "gemini-2.5-flash"
-            };
-          }
+          const openai = new OpenAI({ apiKey: openaiKey });
+          const result = await openai.chat.completions.create({
+            model: 'gpt-4.1-mini',
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: 'What is the text shown in this captcha image? Respond only with the characters found, nothing else.' },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
+              ],
+            }],
+            max_tokens: 20,
+          });
 
-          const captchaText = result.response.text().trim().replace(/\s/g, '');
+          aiUsage = {
+            promptTokens: result.usage?.prompt_tokens || 0,
+            candidatesTokens: result.usage?.completion_tokens || 0,
+            model: 'gpt-4.1-mini'
+          };
+
+          const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '');
           console.log('[Automation] IA identificou:', captchaText);
           const captchaInputSelector = 'input[name="captcha"], #captcha, input[placeholder*="Captcha"]';
           await page.type(captchaInputSelector, captchaText, { delay: 100 });

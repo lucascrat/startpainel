@@ -1,13 +1,13 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import { launchBrowser } from './src/services/startpainel-puppeteer.js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 
 async function debug() {
   const mac = '45:fc:2c:95:41:1f';
   const key = '880073';
   const site = 'https://iboplayer.com/device/login';
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
 
   const browser = await launchBrowser(false) as any;
   const page = await browser.newPage();
@@ -28,13 +28,16 @@ async function debug() {
   await inputs[1].type(key, { delay: 50 });
 
   const screenshot = await page.screenshot({ encoding: 'base64' });
-  const genAI = new GoogleGenerativeAI(geminiKey!);
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-  const result = await model.generateContent([
-    "Retorne apenas o texto do captcha desta imagem. Retorne apenas o codigo.",
-    { inlineData: { data: screenshot as string, mimeType: "image/png" } }
-  ]);
-  const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
+  const openai = new OpenAI({ apiKey: openaiKey! });
+  const result = await openai.chat.completions.create({
+    model: 'gpt-4.1-mini',
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: 'Retorne apenas o texto do captcha desta imagem. Retorne apenas o codigo.' },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
+    ]}],
+    max_tokens: 20,
+  });
+  const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase();
   console.log(`[Debug] Captcha: ${captchaText}`);
   await inputs[2].type(captchaText);
   await page.keyboard.press('Enter');
@@ -64,7 +67,7 @@ async function debug() {
   const html = await page.evaluate(() => document.body.innerHTML);
   const fs = await import('fs');
   fs.writeFileSync('scratch/edit_modal_debug_2.html', html);
-  
+
   await browser.close();
 }
 

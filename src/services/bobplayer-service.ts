@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import puppeteer from 'puppeteer-core';
 import os from 'os';
 import path from 'path';
@@ -59,7 +59,7 @@ async function pointerClick(page: any, selector: string): Promise<boolean> {
 }
 
 async function loginBobPlayer(page: any, mac: string, deviceKey: string): Promise<boolean> {
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
 
   console.log('[BobPlayer] Acessando bobplayer.com/login...');
   await page.goto(BOB_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -85,31 +85,37 @@ async function loginBobPlayer(page: any, mac: string, deviceKey: string): Promis
   const b1 = await inputs[1]?.boundingBox();
   if (b1) { await page.mouse.click(b1.x + b1.width / 2, b1.y + b1.height / 2, { clickCount: 3 }); await page.keyboard.type(deviceKey, { delay: 100 }); }
 
-  // Captcha com Gemini (retry em 429)
-  if (inputs.length >= 3 && geminiKey) {
+  // Captcha com OpenAI Vision (retry em rate limit)
+  if (inputs.length >= 3 && openaiKey) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const shot = await page.screenshot({ encoding: 'base64' });
-        const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const result = await model.generateContent([
-          'Retorne apenas o texto do captcha nesta imagem de login. Somente o código, sem espaços, máximo 6 caracteres.',
-          { inlineData: { data: shot as string, mimeType: 'image/png' } },
-        ]);
-        const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase().substring(0, 6);
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const result = await openai.chat.completions.create({
+          model: 'gpt-4.1-mini',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Retorne apenas o texto do captcha nesta imagem de login. Somente o código, sem espaços, máximo 6 caracteres.' },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${shot}`, detail: 'low' } },
+            ],
+          }],
+          max_tokens: 20,
+        });
+        const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase().substring(0, 6);
         console.log(`[BobPlayer] Captcha: "${captchaText}" (tentativa ${attempt})`);
         const b2 = await inputs[2].boundingBox();
         if (b2) { await page.mouse.click(b2.x + b2.width / 2, b2.y + b2.height / 2); await page.keyboard.type(captchaText, { delay: 100 }); }
         break;
       } catch (e: any) {
         if ((e.message?.includes('429') || e.status === 429) && attempt < 3) {
-          console.warn(`[BobPlayer] Gemini 429 — aguardando 35s (${attempt}/3)...`);
+          console.warn(`[BobPlayer] OpenAI rate limit — aguardando 35s (${attempt}/3)...`);
           await new Promise(r => setTimeout(r, 35000));
           await page.evaluate(() => {
             (Array.from(document.querySelectorAll('button')).find(b => /refresh/i.test(b.textContent || '')) as HTMLElement | null)?.click();
           });
           await new Promise(r => setTimeout(r, 1200));
-        } else { console.warn('[BobPlayer] Gemini falhou:', e.message?.substring(0, 100)); break; }
+        } else { console.warn('[BobPlayer] OpenAI falhou:', e.message?.substring(0, 100)); break; }
       }
     }
   }

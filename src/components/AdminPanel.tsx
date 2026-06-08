@@ -656,9 +656,9 @@ export default function AdminPanel() {
   const [isAuthSmartOne, setIsAuthSmartOne] = useState(false);
   const [smartOneAuthMsg, setSmartOneAuthMsg] = useState('');
 
-  const [geminiKey, setGeminiKey] = useState('');
-  const [geminiKeyMasked, setGeminiKeyMasked] = useState<string | null>(null);
-  const [geminiKeyConfigured, setGeminiKeyConfigured] = useState(false);
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [openaiKeyMasked, setOpenaiKeyMasked] = useState<string | null>(null);
+  const [openaiKeyConfigured, setOpenaiKeyConfigured] = useState(false);
   const [attendantName, setAttendantName] = useState('Suporte StartPainel');
   const [attendantImage, setAttendantImage] = useState('https://cdn-icons-png.flaticon.com/512/4712/4712027.png');
   const [aiSystemPrompt, setAiSystemPrompt] = useState('');
@@ -1102,10 +1102,10 @@ export default function AdminPanel() {
 
   const loadSettings = async () => {
     try {
-      const resKey = await authFetch('/api/settings/gemini_api_key');
+      const resKey = await authFetch('/api/settings/openai_api_key');
       const dataKey = await resKey.json();
-      setGeminiKeyConfigured(!!dataKey.configured);
-      setGeminiKeyMasked(dataKey.masked ?? null);
+      setOpenaiKeyConfigured(!!dataKey.configured);
+      setOpenaiKeyMasked(dataKey.masked ?? null);
 
       const resCost = await authFetch('/api/settings/default_cost_per_line');
       const dataCost = await resCost.json();
@@ -1526,10 +1526,10 @@ export default function AdminPanel() {
         body: JSON.stringify({ key, value })
       });
 
-      // Only update Gemini key when admin actually typed a new value.
-      if (geminiKey.trim().length > 0) {
-        await saveSetting('gemini_api_key', geminiKey.trim());
-        setGeminiKey('');
+      // Só atualiza a chave OpenAI quando o admin digitou um novo valor.
+      if (openaiKey.trim().length > 0) {
+        await saveSetting('openai_api_key', openaiKey.trim());
+        setOpenaiKey('');
       }
       await saveSetting('default_cost_per_line', defaultCostPerLine);
       await saveSetting('attendant_name', attendantName);
@@ -2379,15 +2379,15 @@ export default function AdminPanel() {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       <div className="space-y-2">
                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                          Chave API Gemini {geminiKeyConfigured && <span className="text-emerald-400 normal-case tracking-normal">• configurada ({geminiKeyMasked})</span>}
+                          Chave API OpenAI {openaiKeyConfigured && <span className="text-emerald-400 normal-case tracking-normal">• configurada ({openaiKeyMasked})</span>}
                         </label>
                         <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
                           <Key size={18} className="text-emerald-400" />
                           <input
                             type="password"
-                            value={geminiKey}
-                            onChange={e => setGeminiKey(e.target.value)}
-                            placeholder={geminiKeyConfigured ? 'Digite para substituir a chave atual' : 'Cole a chave AIza...'}
+                            value={openaiKey}
+                            onChange={e => setOpenaiKey(e.target.value)}
+                            placeholder={openaiKeyConfigured ? 'Digite para substituir a chave atual' : 'Cole a chave sk-proj-...'}
                             className="bg-transparent border-none text-white text-xs font-mono w-full focus:ring-0 outline-none"
                           />
                         </div>

@@ -5,7 +5,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import os from 'os';
 import path from 'path';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
 // Força o carregamento do .env do diretório atual
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -1193,6 +1193,11 @@ export async function createTestClientAndActivatePlayer(
           return alert ? alert.textContent?.trim() : 'Sem mensagem de erro visivel';
        });
        console.error(`[Puppeteer] Mensagem do painel: ${errorMsg}`);
+       // Detecta se o erro é de username já existente — retorna código identificável
+       const errLower = (errorMsg || '').toLowerCase();
+       if (errLower.includes('already') || errLower.includes('existe') || errLower.includes('duplicado') || errLower.includes('taken') || errLower.includes('em uso') || errLower.includes('cadastrado')) {
+         return { success: false, message: `USERNAME_ALREADY_EXISTS: ${finalUsername}` };
+       }
     }
     if (!/\/clients\/\d+/.test(currentUrl)) {
       // Fallback: ir pra lista e procurar o cliente
@@ -1686,27 +1691,27 @@ export async function supportIBOPlayer(mac: string, deviceKey: string, playlistU
         await page.keyboard.type(deviceKey, { delay: 200 });
       }
 
-      // === PASSO: Resolve Captcha com Gemini ===
-      const geminiKey = process.env.GEMINI_API_KEY;
-      if (geminiKey) {
-        console.log('[Puppeteer] Tentando resolver Captcha com Gemini...');
+      // === PASSO: Resolve Captcha com OpenAI Vision ===
+      const openaiKey = process.env.OPENAI_API_KEY;
+      if (openaiKey) {
+        console.log('[Puppeteer] Tentando resolver Captcha com OpenAI Vision...');
         try {
-          // Tira um print da area do formulario (onde o captcha esta visivel)
-          console.log('[Puppeteer] Capturando area do formulario para o Gemini...');
+          console.log('[Puppeteer] Capturando area do formulario para OpenAI...');
           await new Promise(r => setTimeout(r, 2000)); // Espera carregar bem
-          
+
           const screenshot = await page.screenshot({ encoding: 'base64' });
-          const genAI = new GoogleGenerativeAI(geminiKey);
-          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-          const prompt = "Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.";
-          
-          const result = await model.generateContent([
-            prompt,
-            { inlineData: { data: screenshot as string, mimeType: "image/png" } }
-          ]);
-          
-          const captchaText = result.response.text().trim().replace(/\s/g, '').toUpperCase();
-          console.log(`[Puppeteer] Gemini identificou o Captcha via Visão Total: ${captchaText}`);
+          const openai = new OpenAI({ apiKey: openaiKey });
+          const result = await openai.chat.completions.create({
+            model: 'gpt-4.1-mini',
+            messages: [{ role: 'user', content: [
+              { type: 'text', text: 'Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.' },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
+            ]}],
+            max_tokens: 20,
+          });
+
+          const captchaText = (result.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase();
+          console.log(`[Puppeteer] OpenAI identificou o Captcha: ${captchaText}`);
           
           // Preenche o captcha (geralmente o ultimo input do form)
           await page.evaluate((text) => {

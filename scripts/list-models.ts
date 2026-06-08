@@ -1,25 +1,22 @@
-// Lista modelos disponíveis na API Key configurada
+// Lista modelos disponíveis na API OpenAI configurada
 import dotenv from 'dotenv';
 dotenv.config();
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 
-const apiKey = process.env.GEMINI_API_KEY || '';
+const apiKey = process.env.OPENAI_API_KEY || '';
 if (!apiKey) {
-  console.error('GEMINI_API_KEY não encontrada no .env');
+  console.error('OPENAI_API_KEY não encontrada no .env');
   process.exit(1);
 }
 
-const ai = new GoogleGenAI({ apiKey });
+const openai = new OpenAI({ apiKey });
 
 async function listModels() {
   try {
-    const result = await ai.models.list();
-    console.log('\n=== Modelos disponíveis ===\n');
-    for await (const model of result) {
-      const supported = (model as any).supportedGenerationMethods || [];
-      if (supported.includes('generateContent')) {
-        console.log(`✅ ${model.name}  →  ${model.displayName}`);
-      }
+    const result = await openai.models.list();
+    console.log('\n=== Modelos OpenAI disponíveis ===\n');
+    for (const model of result.data.sort((a, b) => a.id.localeCompare(b.id))) {
+      console.log(`✅ ${model.id}`);
     }
   } catch (e: any) {
     console.error('Erro:', e.message);

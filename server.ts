@@ -11,7 +11,7 @@ dotenv.config();
 import Gerencianet from 'gn-api-sdk-node';
 import pkg from 'pg';
 const { Pool } = pkg;
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 // Puppeteer foi movido pro worker.ts (roda no PC local). server.ts so enfileira jobs agora.
 import { EvolutionService } from './src/services/evolution-api.js';
@@ -344,6 +344,11 @@ app.use(express.json({ limit: '50mb' }));
 // Evita que a Evolution API dispare 2x o mesmo evento e o Lucas responda em duplicata.
 const processedMessageIds = new Map<string, number>();
 
+// Pausa por contato: quando o admin envia mensagem de dentro do WhatsApp do bot (fromMe),
+// a IA fica em silêncio por HUMAN_PAUSE_MS para aquele contato — deixando o admin atender.
+const humanPauseUntil = new Map<string, number>();
+const HUMAN_PAUSE_MS = 10 * 60 * 1000; // 10 minutos (configurável aqui)
+
 // Global Logger — silencia rotas de polling pra reduzir spam
 const QUIET_PATHS = new Set(['/api/panel/queue', '/api/db-status', '/api/health']);
 app.use((req, res, next) => {
@@ -353,11 +358,9 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
-// Modelo do Gemini usado no chat da IA. Configurável via env GEMINI_MODEL.
-// Default: 'gemini-flash-latest' — alias oficial do Google que sempre aponta para
-// o Gemini Flash mais recente e recomendado (atualmente família 3.x), mantendo
-// compatibilidade da API. Para fixar uma versão, defina GEMINI_MODEL no .env/Coolify.
-const GEMINI_CHAT_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// Modelo OpenAI usado no chat da IA. Configurável via env OPENAI_MODEL.
+// Default: 'gpt-4.1' — modelo mais recente e capaz da OpenAI.
+const OPENAI_CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
 
 // --- ADMIN AUTH ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -370,7 +373,7 @@ if (!ADMIN_PASSWORD) {
 }
 
 const PUBLIC_SETTING_KEYS = new Set(['attendant_name', 'attendant_image', 'whatsapp_support']);
-const SENSITIVE_SETTING_KEYS = new Set(['gemini_api_key']);
+const SENSITIVE_SETTING_KEYS = new Set(['openai_api_key']);
 
 function maskSecret(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -772,19 +775,19 @@ if (!EVOLUTION_WEBHOOK_SECRET) {
 }
 
 // Cache da chave Gemini vinda da tabela settings (refresh a cada 60s).
-// O banco tem prioridade; GEMINI_API_KEY do .env serve de fallback.
+// Chave OpenAI: prioridade DB (openai_api_key) → env OPENAI_API_KEY.
 // Invalidado imediatamente quando o admin salva uma nova chave via painel.
-let _geminiKeyCache: { value: string | null; ts: number } = { value: null, ts: 0 };
-async function getGeminiApiKey(): Promise<string | null> {
-  if (Date.now() - _geminiKeyCache.ts < 60_000) return _geminiKeyCache.value;
+let _openaiKeyCache: { value: string | null; ts: number } = { value: null, ts: 0 };
+async function getOpenAIApiKey(): Promise<string | null> {
+  if (Date.now() - _openaiKeyCache.ts < 60_000) return _openaiKeyCache.value;
   try {
-    const r = await pool.query("SELECT value FROM settings WHERE key = 'gemini_api_key'");
+    const r = await pool.query("SELECT value FROM settings WHERE key = 'openai_api_key'");
     const dbKey = r.rows[0]?.value?.trim() || null;
-    _geminiKeyCache = { value: dbKey || process.env.GEMINI_API_KEY || null, ts: Date.now() };
+    _openaiKeyCache = { value: dbKey || process.env.OPENAI_API_KEY || null, ts: Date.now() };
   } catch {
-    _geminiKeyCache = { value: _geminiKeyCache.value ?? process.env.GEMINI_API_KEY ?? null, ts: Date.now() };
+    _openaiKeyCache = { value: _openaiKeyCache.value ?? process.env.OPENAI_API_KEY ?? null, ts: Date.now() };
   }
-  return _geminiKeyCache.value;
+  return _openaiKeyCache.value;
 }
 
 // Cache em memoria do evolution_token (refresh a cada 60s) — usado pra validar webhooks
@@ -880,24 +883,24 @@ async function uploadToR2(prefix: string, base64: string, mimeType: string): Pro
 }
 
 // --- AI USAGE LOGGING ---
-// Preços por 1M tokens (USD). Atualizar conforme tabela oficial do Gemini.
-const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
-  'gemini-2.5-flash':              { input: 0.075,  output: 0.30 },
-  'gemini-2.5-flash-preview-tts':  { input: 0.075,  output: 0.30 },
-  'gemini-2.5-pro':                { input: 1.25,   output: 5.00 },
-  'gemini-2.5-pro-preview-tts':    { input: 1.25,   output: 5.00 },
-  'gemini-flash-latest':           { input: 0.075,  output: 0.30 },
-  'gemini-flash-lite-latest':      { input: 0.05,   output: 0.20 },
-  'gemini-3.5-flash':              { input: 0.075,  output: 0.30 },
-  'gemini-3-flash-preview':        { input: 0.075,  output: 0.30 },
-  'gemini-2.0-flash':              { input: 0.075,  output: 0.30 },
+// Preços por 1M tokens (USD). Atualizar conforme tabela oficial da OpenAI.
+const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
+  'gpt-4.1':         { input: 2.00,  output: 8.00  },
+  'gpt-4.1-mini':    { input: 0.40,  output: 1.60  },
+  'gpt-4.1-nano':    { input: 0.10,  output: 0.40  },
+  'gpt-4o':          { input: 2.50,  output: 10.00 },
+  'gpt-4o-mini':     { input: 0.15,  output: 0.60  },
+  'gpt-4-turbo':     { input: 10.00, output: 30.00 },
+  'tts-1':           { input: 0.015, output: 0.015 }, // por 1k chars, não tokens
+  'tts-1-hd':        { input: 0.030, output: 0.030 },
 };
 
 async function logAiUsage(model: string, type: string, usage: any) {
   try {
-    const promptTokens = Number(usage?.promptTokenCount || 0);
-    const candidatesTokens = Number(usage?.candidatesTokenCount || 0);
-    const pricing = GEMINI_PRICING[model] || { input: 0.075, output: 0.30 };
+    // Suporta tanto campos OpenAI (prompt_tokens/completion_tokens) quanto Gemini legado
+    const promptTokens     = Number(usage?.prompt_tokens     || usage?.promptTokenCount     || 0);
+    const candidatesTokens = Number(usage?.completion_tokens || usage?.candidatesTokenCount || 0);
+    const pricing = OPENAI_PRICING[model] || { input: 2.00, output: 8.00 };
     const cost = (promptTokens * pricing.input + candidatesTokens * pricing.output) / 1_000_000;
     await pool.query(
       'INSERT INTO ai_usage_logs (model, type, prompt_tokens, candidates_tokens, estimated_cost) VALUES ($1, $2, $3, $4, $5)',
@@ -909,11 +912,11 @@ async function logAiUsage(model: string, type: string, usage: any) {
 }
 
 // --- TTS HELPERS ---
-// Gemini 2.5 Flash Preview TTS é mais natural mas pago; EdgeTTS é fallback grátis.
+// OpenAI TTS é mais natural; EdgeTTS é fallback grátis.
 // Para economizar: só vira áudio quando a resposta é curta OU o cliente mandou áudio.
 const TTS_AUDIO_MAX_CHARS = 220;
-const GEMINI_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
-const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Kore';
+const OPENAI_TTS_MODEL = 'tts-1';
+const OPENAI_TTS_VOICE = (process.env.OPENAI_TTS_VOICE || 'nova') as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
 function pcmToWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
   const byteRate = (sampleRate * channels * bitsPerSample) / 8;
@@ -936,34 +939,22 @@ function pcmToWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSamp
   return Buffer.concat([header, pcm]);
 }
 
-async function generateGeminiTTS(text: string): Promise<{ base64: string; mimeType: string } | null> {
+async function generateOpenAITTS(text: string): Promise<{ base64: string; mimeType: string } | null> {
   try {
-    const apiKey = await getGeminiApiKey();
+    const apiKey = await getOpenAIApiKey();
     if (!apiKey || !text?.trim()) return null;
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_TTS_MODEL,
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } },
-        },
-      } as any,
+    const openai = new OpenAI({ apiKey });
+    const response = await openai.audio.speech.create({
+      model: OPENAI_TTS_MODEL,
+      voice: OPENAI_TTS_VOICE,
+      input: text,
+      response_format: 'mp3',
     });
-    const result = await model.generateContent(text);
-    await logAiUsage(GEMINI_TTS_MODEL, 'tts', result.response.usageMetadata);
-    const part: any = result.response.candidates?.[0]?.content?.parts?.[0];
-    const data: string | undefined = part?.inlineData?.data;
-    if (!data) {
-      console.warn('[GeminiTTS] resposta sem inlineData');
-      return null;
-    }
-    // Gemini retorna PCM 16-bit mono 24kHz. Embrulha em WAV pra navegador/Evolution tocarem.
-    const pcm = Buffer.from(data, 'base64');
-    const wav = pcmToWav(pcm, 24000, 1, 16);
-    return { base64: wav.toString('base64'), mimeType: 'audio/wav' };
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await logAiUsage(OPENAI_TTS_MODEL, 'tts', { prompt_tokens: Math.ceil(text.length / 4), completion_tokens: 0 });
+    return { base64: buffer.toString('base64'), mimeType: 'audio/mp3' };
   } catch (e: any) {
-    console.error('[GeminiTTS] erro:', e?.message || e);
+    console.error('[OpenAITTS] erro:', e?.message || e);
     return null;
   }
 }
@@ -1005,12 +996,12 @@ async function fetchR2AsBase64(url: string): Promise<{ base64: string; mimeType:
   }
 }
 
-// Tenta Gemini primeiro (mais natural), cai pra EdgeTTS (gratis) se falhar.
+// Tenta OpenAI TTS primeiro (mais natural), cai pra EdgeTTS (gratis) se falhar.
 // Com cache: se ja gerou esse texto+voz antes, busca no R2 em vez de chamar a API.
 async function generateAudio(text: string): Promise<{ base64: string; mimeType: string } | null> {
   const t = (text || '').trim();
   if (!t) return null;
-  const hash = hashText(t, GEMINI_TTS_VOICE);
+  const hash = hashText(t, OPENAI_TTS_VOICE);
 
   // Cache hit em memoria
   const cachedUrl = ttsUrlCache.get(hash);
@@ -1024,8 +1015,8 @@ async function generateAudio(text: string): Promise<{ base64: string; mimeType: 
     ttsUrlCache.delete(hash);
   }
 
-  // Gera (Gemini -> EdgeTTS fallback)
-  const audio = (await generateGeminiTTS(t)) || (await generateEdgeTTS(t));
+  // Gera (OpenAI TTS -> EdgeTTS fallback)
+  const audio = (await generateOpenAITTS(t)) || (await generateEdgeTTS(t));
   if (!audio) return null;
 
   // Sobe pro R2 (se disponivel) e guarda URL no cache
@@ -1256,12 +1247,17 @@ Responda APENAS com JSON valido neste formato exato:
   }
 }`;
 
-    const apiKey = await getGeminiApiKey();
+    const apiKey = await getOpenAIApiKey();
     if (!apiKey) return;
-    const genAISummary = new GoogleGenerativeAI(apiKey);
-    const summaryModel = genAISummary.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await summaryModel.generateContent(summaryPrompt);
-    const raw = result.response.text()?.trim() || '';
+    const openaiSummary = new OpenAI({ apiKey });
+    const summaryResult = await openaiSummary.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      messages: [{ role: 'user', content: summaryPrompt }],
+      temperature: 0.2,
+      max_tokens: 300,
+    });
+    await logAiUsage('gpt-4.1-mini', 'summary', summaryResult.usage);
+    const raw = summaryResult.choices[0]?.message?.content?.trim() || '';
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return;
 
@@ -1793,11 +1789,10 @@ async function buildAppCatalogContext(): Promise<string> {
 
 async function handleAIChat(remoteJid: string, history: any[], userInfo: any, media?: { data: string, mimeType: string }) {
   try {
-    const apiKey = await getGeminiApiKey();
-    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada — adicione em Admin → ⚙️ Configurações");
-    const GEMINI_MODEL = GEMINI_CHAT_MODEL;
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const apiKey = await getOpenAIApiKey();
+    if (!apiKey) throw new Error("OPENAI_API_KEY não configurada — adicione em Admin → ⚙️ Configurações");
+    const OPENAI_MODEL = OPENAI_CHAT_MODEL;
+    const openai = new OpenAI({ apiKey });
 
     const DEFAULT_PROMPT = `Você é o Lucas, atendente do StartPainel. Atende clientes via WhatsApp.
 
@@ -1826,7 +1821,8 @@ MULTIMODAL
 - Entende texto, áudio e imagens. Quando receber áudio, processa o conteúdo e responde ao que foi dito.
 - O sistema converte sua resposta em áudio automaticamente se for curta (≤220 chars) ou se o cliente mandou áudio. Nunca diga "não posso mandar áudio".
 - Se cliente PEDIR áudio especificamente: responda em uma frase curta.
-- Imagens: lê prints de tela, comprovantes de Pix, fotos de TV/controle. Sempre tente extrair o máximo de informação antes de pedir outra imagem.
+- Imagens: lê prints de tela, comprovantes de Pix, fotos de TV/controle.
+- ⚠️ REGRA PARA FOTOS — CONFIRME ANTES DE AGIR: quando o cliente mandar uma foto, NUNCA adivinhe o app e NUNCA ative ou dispare ferramenta sem confirmar com o cliente. Mesmo que você ache que reconheceu o app na imagem, PERGUNTE PRIMEIRO: "Essa foto é do [nome que você acha que é]? Ou é de outro app?" — aguarde a confirmação do cliente antes de qualquer ação. O cliente pode ter mandado a foto do app errado, de um aparelho diferente, ou você pode ter identificado errado. Confirmar antes evita ativar o aparelho errado.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 USE OS DADOS DO CLIENTE
@@ -1907,7 +1903,7 @@ RECONHEÇA O TIPO DE DISPOSITIVO para recomendar o app certo:
 - Smart TV Samsung → Ultra Player, SEE Play, META Player, Quick Player, XCloud TV, Lótus
 - Smart TV LG → Ultra Player, SEE Play, META Player, Quick Player, XCloud TV, Lótus
 - Smart TV TCL / Philips / AOC / outras → Ultra Player, SEE Play, META Player, Quick Player
-- TV Box Android (qualquer marca) → Fun Play, Lazer Play, Ultra Player
+- TV Box Android (qualquer marca) → 1º Startflix (generate_startflix_access); alternativas: Fun Play, Lazer Play, Ultra Player
 - Roku → Fun Player, Ultra Player, Lazer Player (disponíveis no canal do provedor Start para Roku).
 - Fire TV Stick (Amazon) → Fun Play ou Ultra Player (disponíveis na Amazon Appstore via sideload). Oriente que pode ser necessário instalar via arquivo APK.
 - iPhone/iOS → X-Cloud Mobile (Código de Ativação, não MAC)
@@ -1927,7 +1923,7 @@ Siga esse fluxo naturalmente, sem parecer questionário:
 
 2. IDENTIFIQUE O MODELO EXATO: com base na resposta, classifique:
    - "Samsung" / "LG" / "TCL" / "Smart TV" = Smart TV → apps de SmartTV
-   - "TV Box" / "caixinha" / "Android box" = TV Box → Fun Play, Lazer Play, Ultra Player
+   - "TV Box" / "caixinha" / "Android box" = TV Box Android → Startflix primeiro (generate_startflix_access); se não funcionar na TV Box → Fun Play, Lazer Play, Ultra Player
    - "Fire Stick" / "Fire TV" = Fire TV Stick → Fun Play ou Ultra Player (APK)
    - "Roku" = Roku → Fun Player, Ultra Player ou Lazer Player (canal do provedor Start)
    - "celular" / "Android" = celular Android → Startflix primeiro
@@ -2129,6 +2125,16 @@ APÓS QUALQUER AÇÃO JÁ CONCLUÍDA — REGRA CRÍTICA:
 - Novo teste só se cliente pedir explicitamente com novo MAC ou novo app.
 - Novo tutorial só se cliente disser que perdeu ou pediu de novo explicitamente.
 
+⛔ REGRA ABSOLUTA — AGRADECIMENTO / SATISFAÇÃO:
+Se o cliente mandar qualquer frase de agradecimento ou satisfação — como:
+"show", "showw", "shooww", "show de bola", "obrigado", "obg", "vlw", "valeu", "muito obrigado", "obrigada", "tmj", "top", "ótimo", "perfeito", "👍", "🙏", "😊", "✅", "ficou bom", "tá ótimo", "deu certo", "funcionou", "que rápido", "incrível", "maravilhoso", "arrasou"
+— após o atendimento já ter sido concluído (teste criado, app configurado, problema resolvido) —
+VOCÊ DEVE:
+✅ Responder APENAS com uma mensagem curta e calorosa (ex: "Fico feliz! Qualquer coisa é só chamar 😊", "De nada! Tô por aqui se precisar 🙌", "Disponha! Se precisar de algo é só me chamar.")
+❌ NUNCA criar novo teste, enviar novo app, gerar Pix, chamar qualquer ferramenta.
+❌ NUNCA perguntar "posso ajudar em mais alguma coisa?" de forma que induza o cliente a pedir algo (a resposta curta já deixa em aberto naturalmente).
+A intenção do cliente é encerrar. Respeite isso.
+
 PRINCÍPIOS INEGOCIÁVEIS:
 - Nunca invente dados (preço, vencimento, MAC). Se não está no contexto, pergunte.
 - Nunca mande detalhes técnicos de erro pro cliente (stack trace, HTTP 500, timeout, nome de ferramenta). Se falhar, diga: "Tive um probleminha aqui, já avisei o suporte — tenta de novo daqui a pouco."
@@ -2196,9 +2202,11 @@ Como configurar XC IPTV ou IPTV Smarters:
 
 EPG (guia de programação): http://u.startpainel.cc/epg
 
-APPS PARA CELULAR ANDROID — PRIORIDADE:
-1º) *Startflix* — nosso app próprio. Use generate_startflix_access para gerar um código de acesso. O cliente baixa o Startflix e entra com o código. SEM usuário/senha, SEM MAC. Sempre ofereça esse primeiro.
-2º) *Master Player Pro* (Play Store) — só sugerir se o cliente não encontrar o Startflix ou preferir outro app.
+APPS PARA QUALQUER DISPOSITIVO ANDROID (celular ou TV Box) — PRIORIDADE:
+⭐ REGRA GERAL ANDROID: SEMPRE sugira o *Startflix* primeiro, independente do aparelho Android.
+1º) *Startflix* — nosso app próprio. Use generate_startflix_access para gerar um código de acesso. O cliente baixa o Startflix e entra com o código. SEM usuário/senha, SEM MAC. Sempre ofereça esse primeiro para qualquer Android.
+2º) *Master Player Pro* (Play Store) — só sugerir para celular Android se o cliente não encontrar o Startflix ou preferir outro app.
+2º) *Fun Play / Lazer Play / Ultra Player* — só sugerir para TV Box Android se o cliente não conseguir usar o Startflix na TV Box.
 https://play.google.com/store/apps/details?id=masterP.pro.com&hl=pt_BR
 → Login por *usuário e senha* (NÃO usa MAC).
 → Quando criar TESTE GRÁTIS (create_test_account): o sistema JÁ envia automaticamente ao cliente o usuário+senha junto com o link da Play Store. Você NÃO precisa repetir esses dados na conversa.
@@ -2209,8 +2217,15 @@ https://apps.apple.com/br/app/xcloud-mobile/id6471106231
 → O cliente informa o código de ativação que aparece no final da tela do app (ex: JXK45).
 → Você ativa automaticamente via painel assim que receber o código.
 
-⚠️ MAC OU CÓDIGO NÃO IDENTIFICÁVEL:
-Se não conseguir ler com clareza o MAC ou o código de ativação que o cliente enviou, SEMPRE peça uma foto melhor antes de tentar ativar. Melhor pedir a foto do que ativar o aparelho errado.
+⚠️ FOTOS ENVIADAS PELO CLIENTE — PROTOCOLO OBRIGATÓRIO:
+1. O cliente mandou uma foto → PRIMEIRO identifique o que aparece na tela (app, MAC, erro, comprovante).
+2. Se for app/MAC para ativar: CONFIRME com o cliente antes de qualquer ação.
+   - Se reconheceu o app: "Essa foto é do [Ultra Player / Fun Play / etc.]? É esse o app que você instalou?"
+   - Se não reconheceu: "Me confirma: qual app é esse que aparece na foto?"
+   - Só age (ativa, cria teste, chama ferramenta) APÓS o cliente confirmar o app.
+3. Se o MAC ou código estiver ilegível na foto: peça outra foto mais nítida antes de tentar ativar.
+4. Exceção — comprovante de Pix: reconhecível visualmente (logo do banco, valor, chave). Pode registrar direto com register_pix_receipt sem precisar confirmar o app.
+Melhor perguntar do que ativar o aparelho errado.
 
 PREÇOS — LEIA COM ATENÇÃO (e EXPLIQUE pro cliente quando ele se confundir):
 
@@ -2362,86 +2377,109 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
       },
     ] : [];
 
-    const contents: any[] = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Entendido! Pronto para ajudar. 😊' }] },
-      ...history
-    ];
+    // Converte histórico do formato Gemini {role,parts} → OpenAI {role,content}
+    const oaiHistory: any[] = history.map(m => ({
+      role: m.role === 'model' ? 'assistant' : 'user',
+      content: m.parts?.[0]?.text || '',
+    }));
 
-    if (media) {
-      const last = contents[contents.length - 1];
-      last.parts.push({ inlineData: { data: media.data, mimeType: media.mimeType } });
+    // Última mensagem do usuário pode ter mídia (imagem/áudio)
+    if (media && oaiHistory.length > 0) {
+      const last = oaiHistory[oaiHistory.length - 1];
+      if (last.role === 'user') {
+        const textContent = last.content;
+        last.content = [
+          { type: 'text', text: textContent },
+          { type: 'image_url', image_url: { url: `data:${media.mimeType};base64,${media.data}`, detail: 'low' } },
+        ];
+      }
     }
 
-    const result = await model.generateContent({
-      contents,
-      tools: [{
-        functionDeclarations: [
-          { name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } },
-          { name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } },
-          { name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } },
-          { name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } },
-          { name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } },
-          { name: "set_customer_price", description: "Salva um valor customizado de mensalidade no cadastro do cliente (renewal_price). Use quando voce negociar um desconto com o cliente (ex: 2 telas por R$ 45 em vez de R$ 50). Limites mínimos: 1 tela R$ 25 (NUNCA menos), 2 telas R$ 45, 3 telas R$ 60, +3 telas R$ 25 por tela. Esse valor sera usado nas proximas renovacoes e Pix gerados pra esse cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_price: { type: "NUMBER", description: "Novo valor mensal em reais (ex: 45.00)." }, reason: { type: "STRING", description: "Motivo do desconto (ex: 'fidelidade', 'cliente antigo', 'mae do amigo do dono')." } }, required: ["username", "new_price", "reason"] } },
-          // App catalog — envia info de um app cadastrado pro cliente (imagem + links de download)
-          { name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } },
-          // App catalog — pede print de uma area especifica do app
-          { name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } },
-          // Teste GRATIS de 6h — cria cliente no CMS + ativa player com MAC em uma acao
-          {
-            name: "create_test_account",
-            description: "Cria uma conta de TESTE gratuita de 6 horas pro cliente novo em um player EXTERNO (Fun Play, Ultra Player, Lazer Play, X-Cloud, See Play, SmartOne ou VU Player Pro). Faz 2 coisas: (1) cadastra novo cliente, (2) ativa o player com o MAC do aparelho ou no site oficial (SmartOne/VU Player Pro). Use APENAS quando o cliente JA TEM instalado um desses players E passou o MAC. NAO use para StartFlix — se o cliente pediu StartFlix, use generate_startflix_access. NAO use se o cliente nao mencionou nenhum desses apps especificamente. NUNCA use quando o cliente esta apenas agradecendo ('obrigado', 'valeu', 'top'), saudando ('oi', 'bom dia') ou confirmando que funcionou — nesses casos so responda em texto.",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'FocoX Play', 'X-Cloud', 'See Play', 'Quick Player', 'Quick Player PRO', 'QPlay', 'Big Player', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
-                mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
-                username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: se voce sabe o primeiro nome do cliente (ex: 'João') → use '{nome}appbr' em minúsculas sem acento (ex: 'joaoappbr'). Se nao souber o nome → use 'Testeappbr1', 'Testeappbr2', etc (número sequencial curto). NUNCA use 'Teste123' genérico — sempre siga esse padrão." },
-                device_key: { type: "STRING", description: "Senha / Device Key do app (obrigatório para VU Player Pro, opcional para outros, ex: '687840')." },
-              },
-              required: ["player_name", "mac"],
-            },
+    const messages: any[] = [
+      { role: 'system', content: systemPrompt },
+      ...oaiHistory,
+    ];
+
+    // Converte function declarations do formato Gemini → OpenAI tools
+    const toOAITool = (fn: any) => ({
+      type: 'function' as const,
+      function: {
+        name: fn.name,
+        description: fn.description,
+        parameters: {
+          type: 'object',
+          properties: Object.fromEntries(
+            Object.entries(fn.parameters?.properties || {}).map(([k, v]: [string, any]) => [k, {
+              type: (v.type || 'string').toLowerCase(),
+              description: v.description,
+              ...(v.enum ? { enum: v.enum } : {}),
+            }])
+          ),
+          required: fn.parameters?.required || [],
+        },
+      },
+    });
+
+    const oaiTools: any[] = [
+      toOAITool({ name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
+      toOAITool({ name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } }),
+      toOAITool({ name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } }),
+      toOAITool({ name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }),
+      toOAITool({ name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } }),
+      toOAITool({ name: "set_customer_price", description: "Salva um valor customizado de mensalidade no cadastro do cliente (renewal_price). Use quando voce negociar um desconto com o cliente (ex: 2 telas por R$ 45 em vez de R$ 50). Limites mínimos: 1 tela R$ 25 (NUNCA menos), 2 telas R$ 45, 3 telas R$ 60, +3 telas R$ 25 por tela. Esse valor sera usado nas proximas renovacoes e Pix gerados pra esse cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_price: { type: "NUMBER", description: "Novo valor mensal em reais (ex: 45.00)." }, reason: { type: "STRING", description: "Motivo do desconto (ex: 'fidelidade', 'cliente antigo', 'mae do amigo do dono')." } }, required: ["username", "new_price", "reason"] } }),
+      toOAITool({ name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } }),
+      toOAITool({ name: "request_screenshot", description: "Envia ao cliente a imagem de exemplo + instrucao do que ele deve printar do app. Use quando precisar do MAC/key/configuracao ou pra ajudar com erro.", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo." }, custom_instruction: { type: "STRING", description: "Texto adicional opcional (ex: 'me manda print da tela igual essa')." } }, required: ["app_id"] } }),
+      toOAITool({
+        name: "create_test_account",
+        description: "Cria uma conta de TESTE gratuita de 6 horas pro cliente novo em um player EXTERNO (Fun Play, Ultra Player, Lazer Play, X-Cloud, See Play, SmartOne ou VU Player Pro). Faz 2 coisas: (1) cadastra novo cliente, (2) ativa o player com o MAC do aparelho ou no site oficial (SmartOne/VU Player Pro). Use APENAS quando o cliente JA TEM instalado um desses players E passou o MAC. NAO use para StartFlix — se o cliente pediu StartFlix, use generate_startflix_access. NAO use se o cliente nao mencionou nenhum desses apps especificamente. NUNCA use quando o cliente esta apenas agradecendo ('obrigado', 'valeu', 'top'), saudando ('oi', 'bom dia') ou confirmando que funcionou — nesses casos so responda em texto.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'FocoX Play', 'X-Cloud', 'See Play', 'Quick Player', 'Quick Player PRO', 'QPlay', 'Big Player', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
+            mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
+            username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: se voce sabe o primeiro nome do cliente (ex: 'João') → use '{nome}appbr' em minúsculas sem acento (ex: 'joaoappbr'). Se nao souber o nome → use 'Testeappbr1', 'Testeappbr2', etc (número sequencial curto). NUNCA use 'Teste123' genérico — sempre siga esse padrão." },
+            device_key: { type: "STRING", description: "Senha / Device Key do app (obrigatório para VU Player Pro, opcional para outros, ex: '687840')." },
           },
-          // Cortesia: gera código de acesso ao app proprio StartFlix (SEM expiração)
-          {
-            name: "generate_startflix_access",
-            description: "Gera um CÓDIGO DE ACESSO de cortesia (SEM expiração) pro cliente usar o app proprio *StartFlix*. USE ESTA TOOL SEMPRE QUE o cliente mencionar ou pedir 'StartFlix' pelo nome — ex: 'quero acesso ao StartFlix', 'queria o StartFlix', 'me manda o StartFlix', 'como acesso o StartFlix'. NAO substitua StartFlix por Fun Play nem por outro app. NAO use create_test_account quando o cliente pediu StartFlix. O StartFlix e o NOSSO APP PROPRIO — nao precisa de MAC, nao tem prazo. Apos chamar, o cliente recebe o link pra baixar o StartFlix + o codigo de acesso so pra ele. NUNCA chame de novo se o cliente ja recebeu o codigo e esta so agradecendo ('obrigado', 'valeu', 'oi', 'bom dia') — so responda em texto nesses casos.",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                note: { type: "STRING", description: "Nome ou observacao do cliente pra identificar o codigo (opcional, ex: 'joao')." },
-              },
-              required: [],
-            },
+          required: ["player_name", "mac"],
+        },
+      }),
+      toOAITool({
+        name: "generate_startflix_access",
+        description: "Gera um CÓDIGO DE ACESSO de cortesia (SEM expiração) pro cliente usar o app proprio *StartFlix*. USE ESTA TOOL SEMPRE QUE o cliente mencionar ou pedir 'StartFlix' pelo nome — ex: 'quero acesso ao StartFlix', 'queria o StartFlix', 'me manda o StartFlix', 'como acesso o StartFlix'. NAO substitua StartFlix por Fun Play nem por outro app. NAO use create_test_account quando o cliente pediu StartFlix. O StartFlix e o NOSSO APP PROPRIO — nao precisa de MAC, nao tem prazo. Apos chamar, o cliente recebe o link pra baixar o StartFlix + o codigo de acesso so pra ele. NUNCA chame de novo se o cliente ja recebeu o codigo e esta so agradecendo ('obrigado', 'valeu', 'oi', 'bom dia') — so responda em texto nesses casos.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            note: { type: "STRING", description: "Nome ou observacao do cliente pra identificar o codigo (opcional, ex: 'joao')." },
           },
-          // Cadastro de NOVO CLIENTE — chama no fim do fluxo de prospeccao
-          {
-            name: "register_new_customer",
-            description: "Cadastra um cliente NOVO (que nao estava no sistema) com os dados que voce coletou. Use APENAS apos ter: (1) nome completo, (2) app escolhido com app_id do catalogo, (3) MAC e/ou Device Key. Apos cadastrar, gere o Pix com generate_pix.",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                full_name: { type: "STRING", description: "Nome completo do cliente (ex: 'Joao Silva')" },
-                desired_username: { type: "STRING", description: "Username sugerido pro cadastro (ex: 'joao24h'). Letras/numeros, sem espacos." },
-                app_id: { type: "NUMBER", description: "ID do app do catalogo que o cliente vai usar (pega da lista do system prompt)" },
-                mac_address: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
-                device_key: { type: "STRING", description: "Device Key do app. Opcional." },
-                app_username: { type: "STRING", description: "Username do app (se for login user/pass). Opcional." },
-                app_password: { type: "STRING", description: "Senha do app (se for login user/pass). Opcional." },
-                device_type: { type: "STRING", description: "tv | celular | pc" },
-              },
-              required: ["full_name", "desired_username", "app_id"],
-            },
+          required: [],
+        },
+      }),
+      toOAITool({
+        name: "register_new_customer",
+        description: "Cadastra um cliente NOVO (que nao estava no sistema) com os dados que voce coletou. Use APENAS apos ter: (1) nome completo, (2) app escolhido com app_id do catalogo, (3) MAC e/ou Device Key. Apos cadastrar, gere o Pix com generate_pix.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            full_name: { type: "STRING", description: "Nome completo do cliente (ex: 'Joao Silva')" },
+            desired_username: { type: "STRING", description: "Username sugerido pro cadastro (ex: 'joao24h'). Letras/numeros, sem espacos." },
+            app_id: { type: "NUMBER", description: "ID do app do catalogo que o cliente vai usar (pega da lista do system prompt)" },
+            mac_address: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
+            device_key: { type: "STRING", description: "Device Key do app. Opcional." },
+            app_username: { type: "STRING", description: "Username do app (se for login user/pass). Opcional." },
+            app_password: { type: "STRING", description: "Senha do app (se for login user/pass). Opcional." },
+            device_type: { type: "STRING", description: "tv | celular | pc" },
           },
-          // Reparo da lista do IBO Pro — quando cliente reclama "lista nao funciona"
-          {
-            name: "repair_ibo_pro_playlist",
-            description: "Reativa automaticamente o sinal do cliente no app IBO PRO (iboproapp.com). \n\nUSE QUANDO: cliente RECLAMA ativamente — 'sem sinal', 'nao abre canais', 'desativou', 'app vazio', 'da erro pra abrir', 'fica carregando' — E o app dele e IBO PRO.\n\nNAO USE NUNCA QUANDO: (a) cliente esta AGRADECENDO ('obrigado', 'deu certo', 'funcionou', 'valeu', 'top', 'show'); (b) cliente esta confirmando que esta funcionando ('agora foi', 'voltou', 'esta ok', 'consegui'); (c) conversa social ('oi', 'bom dia', 'tudo bem'); (d) voce ja chamou essa tool nesta conversa nos ultimos minutos. Nesses casos so responda com TEXTO de boas-vindas/agradecimento, NUNCA chame a tool de novo.",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
-              },
+          required: ["full_name", "desired_username", "app_id"],
+        },
+      }),
+      toOAITool({
+        name: "repair_ibo_pro_playlist",
+        description: "Reativa automaticamente o sinal do cliente no app IBO PRO (iboproapp.com). \n\nUSE QUANDO: cliente RECLAMA ativamente — 'sem sinal', 'nao abre canais', 'desativou', 'app vazio', 'da erro pra abrir', 'fica carregando' — E o app dele e IBO PRO.\n\nNAO USE NUNCA QUANDO: (a) cliente esta AGRADECENDO ('obrigado', 'deu certo', 'funcionou', 'valeu', 'top', 'show'); (b) cliente esta confirmando que esta funcionando ('agora foi', 'voltou', 'esta ok', 'consegui'); (c) conversa social ('oi', 'bom dia', 'tudo bem'); (d) voce ja chamou essa tool nesta conversa nos ultimos minutos. Nesses casos so responda com TEXTO de boas-vindas/agradecimento, NUNCA chame a tool de novo.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            username: { type: "STRING", description: "Username do cliente (do CONTEXTO DO CLIENTE)." },
+          },
               required: ["username"],
             },
           },
@@ -2572,47 +2610,45 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
               required: ["username", "app_name", "mac"],
             },
           },
-          ...adminFunctionDeclarations,
-        ]
-      }] as any
+      ...adminFunctionDeclarations.map(toOAITool),
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages,
+      tools: oaiTools,
+      tool_choice: 'auto',
+      temperature: 0.4,
     });
 
-    const response = result.response;
-    await logAiUsage(GEMINI_MODEL, 'chat', response.usageMetadata);
-    let text = '';
-    try { text = response.text() || ''; } catch (e: any) {
-      // .text() throw quando finishReason e SAFETY/RECITATION/MAX_TOKENS sem texto
-      console.warn('[AI] response.text() lançou:', e?.message);
-    }
-    const functionCalls = response.functionCalls() || [];
+    await logAiUsage(OPENAI_MODEL, 'chat', completion.usage);
 
-    // Diagnostico — quando a IA retorna nada (texto vazio E sem function call) o handler
-    // do webhook nao envia nada e o cliente fica sem resposta. Loga o motivo (finishReason).
+    const choice = completion.choices[0];
+    let text = choice?.message?.content || '';
+
+    // Converte tool_calls do formato OpenAI → formato Gemini que o restante do código espera
+    const functionCalls = (choice?.message?.tool_calls || []).map((tc: any) => ({
+      name: tc.function.name,
+      args: (() => { try { return JSON.parse(tc.function.arguments || '{}'); } catch { return {}; } })(),
+    }));
+
+    // Diagnóstico — quando a IA retorna nada (texto vazio E sem function call)
     if (!text && functionCalls.length === 0) {
-      const candidate = response.candidates?.[0];
-      const finishReason = candidate?.finishReason || 'UNKNOWN';
-      const safetyRatings = candidate?.safetyRatings;
-      const promptFeedback = (response as any).promptFeedback;
-      console.warn(`[AI] resposta vazia! finishReason=${finishReason}`, {
-        safetyRatings: safetyRatings?.filter((r: any) => r.blocked || r.probability !== 'NEGLIGIBLE'),
-        promptFeedback: promptFeedback?.blockReason ? promptFeedback : undefined,
-        candidatesCount: response.candidates?.length,
-      });
-      // Fallback amigavel — o cliente recebe ALGO em vez de silencio
+      console.warn(`[AI] resposta vazia! finish_reason=${choice?.finish_reason}`);
       text = '😕 Desculpa, tive um probleminha pra processar isso. Pode mandar de novo ou de outra forma?';
     }
 
-    return { text, functionCalls, usage: response.usageMetadata, model: GEMINI_MODEL };
+    return { text, functionCalls, usage: completion.usage, model: OPENAI_MODEL };
   } catch (error: any) {
     // Distingue erros comuns (quota/rate limit) pra debug rapido
     const msg = error?.message || String(error);
     const status = error?.status || error?.response?.status;
     console.error(`[AI Error] status=${status} msg=${msg}`);
-    if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
-      return { text: '⏳ Estou um pouco sobrecarregado agora. Tenta de novo em uns segundos?', functionCalls: [], model: GEMINI_CHAT_MODEL };
+    if (msg.includes('429') || msg.includes('rate_limit') || msg.includes('quota')) {
+      return { text: '⏳ Estou um pouco sobrecarregado agora. Tenta de novo em uns segundos?', functionCalls: [], model: OPENAI_CHAT_MODEL };
     }
     // NUNCA expor o erro tecnico ao cliente — so uma mensagem amigavel generica.
-    return { text: '😕 Tive um probleminha aqui pra processar isso agora. Pode mandar de novo daqui a pouquinho?', functionCalls: [], model: GEMINI_CHAT_MODEL };
+    return { text: '😕 Tive um probleminha aqui pra processar isso agora. Pode mandar de novo daqui a pouquinho?', functionCalls: [], model: OPENAI_CHAT_MODEL };
   }
 }
 
@@ -3567,7 +3603,7 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
   const { key, value } = req.body;
   await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()', [key, value]);
   // Invalida caches que dependem de settings para que o novo valor seja lido imediatamente.
-  if (key === 'gemini_api_key') _geminiKeyCache = { value: null, ts: 0 };
+  if (key === 'openai_api_key') _openaiKeyCache = { value: null, ts: 0 };
   if (['plan_price_1','plan_price_2','plan_price_3','app_fee_ibo','app_fee_ibo_pro','app_fee_vu_player','app_fee_bob_player'].includes(key)) _salePricesCache = { ..._salePricesCache, ts: 0 };
   if (key === 'xciptv_server_url') _xciptvUrlCache = { ..._xciptvUrlCache, ts: 0 };
   if (key === 'greeting_reset_seconds') _greetingResetCache = { ..._greetingResetCache, ts: 0 };
@@ -4554,7 +4590,15 @@ app.post('/api/webhooks/evolution/:event?',
     // WhatsApp moderno: quando JID e @lid (identidade mascarada), o numero real vai em
     // key.remoteJidAlt (@s.whatsapp.net). Capturamos pra fazer lookup do cliente certo.
     const altJid: string | null = data.data.key.remoteJidAlt || null;
-    if (data.data.key.fromMe) return;
+    if (data.data.key.fromMe) {
+      // Admin entrou na conversa — pausa a IA para esse contato por HUMAN_PAUSE_MS
+      if (remoteJid) {
+        humanPauseUntil.set(remoteJid, Date.now() + HUMAN_PAUSE_MS);
+        const min = Math.round(HUMAN_PAUSE_MS / 60_000);
+        console.log(`[Webhook] Admin enviou mensagem para ${remoteJid} — IA pausada por ${min}min.`);
+      }
+      return;
+    }
 
     // ── Deduplicação por messageId ─────────────────────────────────────────
     // A Evolution API pode disparar o mesmo webhook 2x para a mesma mensagem,
@@ -4686,6 +4730,17 @@ app.post('/api/webhooks/evolution/:event?',
         }
       } catch (e) { console.error('[Lead] upsertLead background error:', e); }
     })();
+
+    // Verifica se a IA está pausada porque o admin entrou na conversa
+    const pausedUntil = humanPauseUntil.get(remoteJid);
+    if (pausedUntil) {
+      if (Date.now() < pausedUntil) {
+        const remaining = Math.ceil((pausedUntil - Date.now()) / 60_000);
+        console.log(`[Webhook] IA pausada para ${remoteJid} — ${remaining}min restante(s). Admin em atendimento.`);
+        return;
+      }
+      humanPauseUntil.delete(remoteJid); // pausa expirou, remove e segue normal
+    }
 
     const isAdmin = await isAdminSender(remoteJid, altJid);
     console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'}, admin: ${isAdmin})...`);
@@ -5441,15 +5496,38 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
     // tudo por minutos. Quando terminar, callback notifica o cliente.
     (async () => {
       try {
-        const finalUsername = sanitizeTestUsername(username);
         const deviceKey: string = (args.device_key || args.deviceKey || '').trim();
-        const jobId = await enqueueJob('create_test', { username: finalUsername, mac, playerName, deviceKey });
-        // waitForJob bloqueia ate 5min — esta dentro de IIFE async, nao trava o handler principal
-        const result: any = await waitForJob(jobId);
+
+        // Tenta criar o teste. Se o username já existe no painel, faz retry com sufixo.
+        const tryCreate = async (usernameAttempt: string) => {
+          const jobId = await enqueueJob('create_test', { username: usernameAttempt, mac, playerName, deviceKey });
+          return { result: await waitForJob(jobId) as any, usedUsername: usernameAttempt };
+        };
+
+        let finalUsername = sanitizeTestUsername(username);
+        let { result, usedUsername } = await tryCreate(finalUsername);
+
+        // USERNAME_ALREADY_EXISTS: tenta com sufixo numérico (até 3 tentativas)
+        if (!result?.success && typeof result?.message === 'string' && result.message.startsWith('USERNAME_ALREADY_EXISTS')) {
+          console.log(`[Tool create_test_account] Username "${finalUsername}" já existe — tentando com sufixo...`);
+          const evo2 = await getEvolutionService();
+          await evo2.sendMessage(remoteJid, '⏳ O nome de usuário já existia no sistema — estou criando um novo acesso, aguarde mais alguns segundos...');
+
+          for (const suffix of ['2', '3', Date.now().toString().slice(-4)]) {
+            const altUsername = sanitizeTestUsername(username.replace('app2026', '') + suffix);
+            const attempt = await tryCreate(altUsername);
+            if (attempt.result?.success || !attempt.result?.message?.startsWith('USERNAME_ALREADY_EXISTS')) {
+              result = attempt.result;
+              usedUsername = attempt.usedUsername;
+              break;
+            }
+          }
+        }
+
         const evo2 = await getEvolutionService();
 
         if (result?.success) {
-          const finalUser = result.username || finalUsername || 'cliente';
+          const finalUser = result.username || usedUsername || 'cliente';
           const finalPass = result.password || '';
           const passLine = finalPass ? `Senha: *${finalPass}*\n` : '';
           const androidBlock = finalPass
