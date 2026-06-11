@@ -1047,17 +1047,20 @@ function normalizePhone(jid: string): string {
 }
 
 /**
- * Sanitiza o username de teste: remove espaços, tudo junto e adiciona sufixo app2026.
+ * Gera o username de teste: nome do cliente (minúsculo, sem espaços/acentos)
+ * + sufixo 'appbr' + número aleatório (ex: mariaappbr847).
+ * O número muda a cada chamada, então gerar um novo teste pro MESMO cliente
+ * nunca repete o username anterior (mariaappbr847, mariaappbr12, ...).
  */
 function sanitizeTestUsername(username: string): string {
-  let sanitized = (username || '').trim().replace(/\s+/g, '').toLowerCase();
-  if (!sanitized) {
-    sanitized = 'teste' + Math.floor(Math.random() * 100000);
-  }
-  if (!sanitized.endsWith('app2026')) {
-    sanitized += 'app2026';
-  }
-  return sanitized;
+  let base = (username || '')
+    .normalize('NFD') // separa os acentos das letras (ã -> a + ˜)...
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ''); // ...e remove tudo que nao for letra/numero (acentos, espacos)
+  // Remove sufixos de gerações anteriores pra não acumular (mariaappbr12 -> maria)
+  base = base.replace(/app2026$/, '').replace(/appbr\d*$/, '').replace(/\d+$/, '');
+  if (!base) base = 'teste';
+  return base + 'appbr' + Math.floor(1 + Math.random() * 999);
 }
 
 // Procura cliente pelo numero do WhatsApp. Compara so os digitos (ignora formatacao).
@@ -2484,7 +2487,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
           properties: {
             player_name: { type: "STRING", description: "Nome do player que o cliente instalou e CONFIRMOU. Valores aceitos: 'Ultra Player', 'Fun Play', 'Lazer Play', 'FocoX Play', 'X-Cloud', 'See Play', 'Quick Player', 'Quick Player PRO', 'QPlay', 'Big Player', 'SmartOne', 'VU Player Pro'. Use exatamente o nome do app que o cliente disse que abriu — nao invente." },
             mac: { type: "STRING", description: "MAC do aparelho ou Código de Ativação (X-Cloud). Formato MAC XX:XX... ou Código ex: 1J616K" },
-            username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: se voce sabe o primeiro nome do cliente (ex: 'João') → use '{nome}appbr' em minúsculas sem acento (ex: 'joaoappbr'). Se nao souber o nome → use 'Testeappbr1', 'Testeappbr2', etc (número sequencial curto). NUNCA use 'Teste123' genérico — sempre siga esse padrão." },
+            username: { type: "STRING", description: "Username da conta de teste. REGRA OBRIGATÓRIA: envie APENAS o primeiro nome do cliente em minúsculas, sem acento e sem espaços (ex: 'maria', 'joao'). O sistema adiciona automaticamente o sufixo 'appbr' + um número aleatório (ex: mariaappbr847), garantindo username ÚNICO mesmo quando o mesmo cliente faz vários testes. Se nao souber o nome do cliente, envie 'teste'. NUNCA invente sufixos ou números você mesmo." },
             device_key: { type: "STRING", description: "Senha / Device Key do app (obrigatório para VU Player Pro, opcional para outros, ex: '687840')." },
           },
           required: ["player_name", "mac"],
@@ -5555,14 +5558,15 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
         let finalUsername = sanitizeTestUsername(username);
         let { result, usedUsername } = await tryCreate(finalUsername);
 
-        // USERNAME_ALREADY_EXISTS: tenta com sufixo numérico (até 3 tentativas)
+        // USERNAME_ALREADY_EXISTS: regenera com novo número aleatório (até 3 tentativas)
         if (!result?.success && typeof result?.message === 'string' && result.message.startsWith('USERNAME_ALREADY_EXISTS')) {
-          console.log(`[Tool create_test_account] Username "${finalUsername}" já existe — tentando com sufixo...`);
+          console.log(`[Tool create_test_account] Username "${finalUsername}" já existe — gerando outro número aleatório...`);
           const evo2 = await getEvolutionService();
           await evo2.sendMessage(remoteJid, '⏳ O nome de usuário já existia no sistema — estou criando um novo acesso, aguarde mais alguns segundos...');
 
-          for (const suffix of ['2', '3', Date.now().toString().slice(-4)]) {
-            const altUsername = sanitizeTestUsername(username.replace('app2026', '') + suffix);
+          for (let i = 0; i < 3; i++) {
+            const altUsername = sanitizeTestUsername(username);
+            if (altUsername === usedUsername) continue; // mesmo número sorteado, tenta de novo
             const attempt = await tryCreate(altUsername);
             if (attempt.result?.success || !attempt.result?.message?.startsWith('USERNAME_ALREADY_EXISTS')) {
               result = attempt.result;
