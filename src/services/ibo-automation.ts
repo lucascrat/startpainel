@@ -15,6 +15,51 @@ const DEFAULT_CHROME_PATH = isWindows
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 
 async function launchBrowser(headless = false): Promise<Browser> {
+  const remotePort = process.env.PUPPETEER_REMOTE_PORT || process.env.CHROME_REMOTE_PORT;
+  if (remotePort) {
+    const port = parseInt(remotePort, 10);
+    const host = process.env.PUPPETEER_REMOTE_HOST || '127.0.0.1';
+    console.log(`[Puppeteer Remote] Conectando ao Chrome existente em http://${host}:${port}...`);
+    try {
+      const browser = await puppeteer.connect({
+        browserURL: `http://${host}:${port}`,
+        defaultViewport: null
+      }) as unknown as Browser;
+
+      // Intercepta e rastreia novas páginas para podermos fechá-las e desconectar sem fechar o Chrome inteiro
+      const originalNewPage = browser.newPage.bind(browser);
+      const pagesOpened: Page[] = [];
+
+      browser.newPage = async function() {
+        const p = await originalNewPage();
+        pagesOpened.push(p);
+        return p;
+      };
+
+      Object.defineProperty(browser, 'close', {
+        value: async function() {
+          console.log('[Puppeteer Remote] Fechando abas abertas nesta sessão...');
+          for (const p of pagesOpened) {
+            try {
+              if (!p.isClosed()) {
+                await p.close().catch(() => {});
+              }
+            } catch (e) {}
+          }
+          console.log('[Puppeteer Remote] Desconectando do Chrome...');
+          await browser.disconnect().catch(() => {});
+        },
+        writable: true,
+        configurable: true
+      });
+
+      return browser;
+    } catch (err: any) {
+      console.error(`[Puppeteer Remote] Erro ao conectar ao Chrome na porta ${port}:`, err.message);
+      throw new Error(`Não foi possível conectar ao seu navegador Chrome na porta ${port}. Certifique-se de que o Chrome está aberto e foi iniciado executando o script iniciar-chrome-debug.bat`);
+    }
+  }
+
   const userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'AutomationProfile');
   return puppeteer.launch({
     executablePath: CHROME_PATH,

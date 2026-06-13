@@ -39,6 +39,51 @@ export interface RenewalResult {
 }
 
 export async function launchBrowser(headless = true, profileNum = 0): Promise<Browser> {
+  const remotePort = process.env.PUPPETEER_REMOTE_PORT || process.env.CHROME_REMOTE_PORT;
+  if (remotePort) {
+    const port = parseInt(remotePort, 10);
+    const host = process.env.PUPPETEER_REMOTE_HOST || '127.0.0.1';
+    console.log(`[Puppeteer Remote] Conectando ao Chrome existente em http://${host}:${port}...`);
+    try {
+      const browser = await puppeteer.connect({
+        browserURL: `http://${host}:${port}`,
+        defaultViewport: null
+      }) as unknown as Browser;
+
+      // Intercepta e rastreia novas páginas para podermos fechá-las e desconectar sem fechar o Chrome inteiro
+      const originalNewPage = browser.newPage.bind(browser);
+      const pagesOpened: Page[] = [];
+
+      browser.newPage = async function() {
+        const p = await originalNewPage();
+        pagesOpened.push(p);
+        return p;
+      };
+
+      Object.defineProperty(browser, 'close', {
+        value: async function() {
+          console.log('[Puppeteer Remote] Fechando abas abertas nesta sessão...');
+          for (const p of pagesOpened) {
+            try {
+              if (!p.isClosed()) {
+                await p.close().catch(() => {});
+              }
+            } catch (e) {}
+          }
+          console.log('[Puppeteer Remote] Desconectando do Chrome...');
+          await browser.disconnect().catch(() => {});
+        },
+        writable: true,
+        configurable: true
+      });
+
+      return browser;
+    } catch (err: any) {
+      console.error(`[Puppeteer Remote] Erro ao conectar ao Chrome na porta ${port}:`, err.message);
+      throw new Error(`Não foi possível conectar ao seu navegador Chrome na porta ${port}. Certifique-se de que o Chrome está aberto e foi iniciado executando o script iniciar-chrome-debug.bat`);
+    }
+  }
+
   const suffix = profileNum > 0 ? `-${profileNum}` : '';
   console.log(`[Puppeteer Stealth] Launching profile${suffix} with: ${CHROME_PATH}`);
 
@@ -1061,9 +1106,9 @@ export async function createTestClientAndActivatePlayer(
 
     // Preenche nome de usuario (primeiro input de texto visivel)
     console.log(`[Puppeteer] Preenchendo username: ${finalUsername}`);
-    await page.waitForSelector('input[type="text"]', { timeout: 10000 });
+    await page.waitForSelector('input[name="username"], input[type="text"]', { timeout: 60000 });
     await page.evaluate((val) => {
-      const inputs = Array.from(document.querySelectorAll('input[type="text"]')) as HTMLInputElement[];
+      const inputs = Array.from(document.querySelectorAll('input[name="username"], input[type="text"]')) as HTMLInputElement[];
       // pega o primeiro visivel
       const visible = inputs.find(i => i.offsetParent !== null && !i.placeholder?.toLowerCase().includes('search'));
       if (visible) {
@@ -1071,7 +1116,7 @@ export async function createTestClientAndActivatePlayer(
         visible.focus();
       }
     }, finalUsername);
-    const userInputs = await page.$$('input[type="text"]');
+    const userInputs = await page.$$('input[name="username"], input[type="text"]');
     if (userInputs[0]) {
       await userInputs[0].click({ clickCount: 3 });
       await userInputs[0].type(finalUsername, { delay: 80 });
@@ -1178,11 +1223,18 @@ export async function createTestClientAndActivatePlayer(
     // Se ainda estiver na tela de criacao, tenta um ultimo clique forçado
     if (currentUrl.includes('/clients/new')) {
        console.log('[Puppeteer] Tentativa de clique forçado final...');
-       await page.evaluate(() => {
-         const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-         const createBtn = btns.find(b => b.textContent?.toLowerCase().includes('criar') || (b as any).value?.toLowerCase().includes('criar')) as HTMLElement;
-         if (createBtn) createBtn.click();
-       });
+       try {
+         await page.evaluate(() => {
+           const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+           const createBtn = btns.find(b => b.textContent?.toLowerCase().includes('criar') || (b as any).value?.toLowerCase().includes('criar')) as HTMLElement;
+           if (createBtn) createBtn.click();
+         });
+       } catch (err: any) {
+         if (!err.message.includes('Execution context was destroyed')) {
+           throw err;
+         }
+         console.log('[Puppeteer] Navegação detectada durante o clique forçado.');
+       }
        await new Promise(r => setTimeout(r, 3000));
        currentUrl = page.url();
     }
@@ -1767,11 +1819,15 @@ export async function supportIBOPlayer(mac: string, deviceKey: string, playlistU
             
             // Repete a lógica de visão (uma vez)
             const secondScreenshot = await page.screenshot({ encoding: 'base64' });
-            const secondResult = await model.generateContent([
-              prompt,
-              { inlineData: { data: secondScreenshot as string, mimeType: "image/png" } }
-            ]);
-            const secondCaptchaText = secondResult.response.text().trim().replace(/\s/g, '').toUpperCase();
+            const secondResult = await openai.chat.completions.create({
+              model: 'gpt-4.1-mini',
+              messages: [{ role: 'user', content: [
+                { type: 'text', text: 'Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.' },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${secondScreenshot}`, detail: 'low' } },
+              ]}],
+              max_tokens: 20,
+            });
+            const secondCaptchaText = (secondResult.choices[0]?.message?.content || '').trim().replace(/\s/g, '').toUpperCase();
             console.log(`[Puppeteer] Segunda tentativa de Captcha: ${secondCaptchaText}`);
 
             await page.evaluate((text) => {
