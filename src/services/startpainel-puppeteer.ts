@@ -48,17 +48,18 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   return puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
-    userDataDir, // Usa um perfil dedicado para o robô não interferir no seu uso diário
+    userDataDir, // Usa um perfil dedicado com historico persistente
+    ignoreDefaultArgs: ['--enable-automation'], // Esconde o aviso de automacao do Chrome
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
       '--window-size=1280,900',
       '--disable-infobars',
       '--disable-features=PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
       '--password-store=basic',
+      '--start-maximized'
     ],
-    defaultViewport: { width: 1280, height: 900 },
+    defaultViewport: null, // Deixa viewport real para despistar Cloudflare
   }) as unknown as Browser;
 }
 
@@ -97,7 +98,7 @@ export async function loginToPanel(page: Page): Promise<boolean> {
       // 3. Preenche credenciais (seletores tolerantes a mudanca de id/name)
       const userSelector = 'input#username, input[name="username"], input[type="text"]:not([type="search"])';
       const passSelector = 'input#password, input[name="password"], input[type="password"]';
-      await page.waitForSelector(passSelector, { timeout: 15000 });
+      await page.waitForSelector(passSelector, { timeout: 60000 });
 
       await page.click(userSelector, { clickCount: 3 }).catch(() => {});
       await page.type(userSelector, ADMIN_USER, { delay: 60 });

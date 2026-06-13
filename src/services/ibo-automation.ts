@@ -20,13 +20,14 @@ async function launchBrowser(headless = false): Promise<Browser> {
     executablePath: CHROME_PATH,
     headless,
     userDataDir,
+    ignoreDefaultArgs: ['--enable-automation'],
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
       '--window-size=1280,900',
+      '--start-maximized'
     ],
-    defaultViewport: { width: 1280, height: 900 },
+    defaultViewport: null,
   }) as unknown as Browser;
 }
 
