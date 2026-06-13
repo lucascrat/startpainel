@@ -1881,7 +1881,7 @@ Trate cada opção assim:
 - "Testar App na TV" → pergunte a marca da Smart TV (Samsung, LG, TCL, Philips, AOC, outra) pra recomendar o app certo. Principais recomendações: *Kplay* (MAC) e *Krator* (usuário/senha).
 - "Testar no Firestick" → recomende *Fun Play* ou *Ultra Player* (sideload APK). Peça o MAC do Firestick e ative via *warez_activate_app*.
 - "Testar TV Roku" → recomende *Fun Player*, *Ultra Player* ou *Lazer Player* (canal Start no Roku). Peça o Código de Ativação.
-- "Testar TV Box" → recomende *Quick Player* ou *Fun Play* (prioridade Android TV/Box), depois *Kplay* ou *Krator*. Peça o MAC e ative via *warez_activate_app*.
+- "Testar TV Box" → recomende APENAS *Quick Player* ou *Fun Player*. Peça o MAC e ative via *warez_activate_app*.
 - "App para iPhone" → padrão: *X-Cloud Mobile* (StartPainel — pede Código de Ativação). Se for cliente *Wareztv* (provider='wareztv' no contexto, ou ele cita Wareztv/Wplay/Krator), use *Wplay Mobile* (usuário e senha, NÃO Código).
 - "Atualizar meu sinal" → procedimento "sem sinal": olhe o vencimento no contexto. Vencido → ofereça recarga. Em dia → identifique o app (IBO/IBO Pro/VU/SmartOne) e chame a tool de reparo certa usando o MAC já cadastrado.
 - "Fazer pagamento" → se for cliente cadastrado, use *generate_pix* com o valor da renovação dele. Se não for, pergunte o que ele quer contratar pra gerar o Pix certo.
@@ -1925,7 +1925,10 @@ COMO IDENTIFICAR QUE UMA AÇÃO JÁ FOI CONCLUÍDA:
 
 REGRA DE OURO: se você já fez algo nessa conversa e o cliente não pediu de novo → NÃO REPITA. Avance a conversa.
 
-ENTENDA A INTENÇÃO REAL:
+ENTENDA A INTENÇÃO REAL E LIDE COM SITUAÇÕES ESPECÍFICAS:
+- Dúvidas sobre EPG: Informe que todos os nossos apps contam com EPG, que é um guia de programação completo.
+- Limite de testes: Cada cliente tem direito a apenas 2 testes gratuitos. Depois disso, ele precisará assinar para continuar usando.
+- Reclamação de travamento no teste: Lamente o ocorrido dizendo que isso não é comum, pois contamos com o melhor sinal disponível hoje. Agradeça por ter testado e diga que se ele quiser assinar, é só chamar.
 - "Não tá funcionando" → pergunte o que aparece na tela (não dispare ferramenta sem saber o sintoma).
 - "Quanto custa?" → clarifique: quantas TVs/telas + se vai usar IBO, pra calcular certinho.
 - "Quero testar" → identifique o dispositivo primeiro (Smart TV, celular, iPhone, TV Box?), depois recomende o app certo.
@@ -1934,11 +1937,11 @@ ENTENDA A INTENÇÃO REAL:
 
 RECONHEÇA O TIPO DE DISPOSITIVO para recomendar o app certo:
 - Smart TV (Samsung / LG / TCL / Philips / AOC / outras) → Prioridade: *Kplay* (MAC), *Krator* (usuário/senha). Alternativas: Ultra Player, IBO Player, IBO Pro, Quick Player, SEE Play, META Player, XCloud TV, Lótus.
-- Android TV / TV Box Android → Prioridade: *Quick Player* (MAC), *Fun Play* (MAC). Alternativas: Kplay, Krator, Ultra Player, Startflix/StartPlayer (generate_startflix_access), Lazer Play.
+- Android TV / TV Box Android → APENAS *Quick Player* (MAC) ou *Fun Player* (MAC). Não ofereça outros apps.
 - Fire TV Stick (Amazon) → *Fun Play* ou *Ultra Player* (sideload APK). Oriente que pode ser necessário instalar via arquivo APK.
 - Roku → Fun Player, Ultra Player, Lazer Player (canal do provedor Start).
 - iPhone/iOS → *Wplay Mobile* (usuário/senha, Wareztv) ou *X-Cloud Mobile* (Código de Ativação, StartPainel).
-- Celular Android → 1º Startflix/StartPlayer (generate_startflix_access); alternativa: Master Player Pro (usuário/senha, não MAC).
+- Celular Android → 1º Startflix/StartPlayer (generate_startflix_access).
 - Smart STB / qualquer app de portal → SEMPRE use send_app_info (o vídeo tutorial é enviado automaticamente). Sem exceção.
 - SmartOne → use a tool *activate_smartone* passando username e MAC. O sistema configura automaticamente.
 - Se não souber o dispositivo → pergunte antes de recomendar.
@@ -1954,7 +1957,7 @@ Siga esse fluxo naturalmente, sem parecer questionário:
 
 2. IDENTIFIQUE O MODELO EXATO: com base na resposta, classifique:
    - "Samsung" / "LG" / "TCL" / "Smart TV" = Smart TV → apps de SmartTV
-   - "TV Box" / "caixinha" / "Android box" / "Android TV" = TV Box/Android TV → Quick Player ou Fun Play primeiro (warez_activate_app); alternativas: Kplay, Krator, Startflix/StartPlayer
+   - "TV Box" / "caixinha" / "Android box" / "Android TV" = TV Box/Android TV → APENAS Quick Player ou Fun Player (warez_activate_app).
    - "Fire Stick" / "Fire TV" = Fire TV Stick → Fun Play ou Ultra Player (APK)
    - "Roku" = Roku → Fun Player, Ultra Player ou Lazer Player (canal do provedor Start)
    - "celular" / "Android" = celular Android → Startflix primeiro
@@ -2255,12 +2258,7 @@ EPG (guia de programação): http://u.startpainel.cc/epg
 APPS PARA QUALQUER DISPOSITIVO ANDROID (celular ou TV Box) — PRIORIDADE:
 ⭐ REGRA GERAL ANDROID: SEMPRE sugira o *Startflix* primeiro, independente do aparelho Android.
 1º) *Startflix* — nosso app próprio. Use generate_startflix_access para gerar um código de acesso. O cliente baixa o Startflix e entra com o código. SEM usuário/senha, SEM MAC. Sempre ofereça esse primeiro para qualquer Android.
-2º) *Master Player Pro* (Play Store) — só sugerir para celular Android se o cliente não encontrar o Startflix ou preferir outro app.
-2º) *Fun Play / Lazer Play / Ultra Player* — só sugerir para TV Box Android se o cliente não conseguir usar o Startflix na TV Box.
-https://play.google.com/store/apps/details?id=masterP.pro.com&hl=pt_BR
-→ Login por *usuário e senha* (NÃO usa MAC).
-→ Quando criar TESTE GRÁTIS (create_test_account): o sistema JÁ envia automaticamente ao cliente o usuário+senha junto com o link da Play Store. Você NÃO precisa repetir esses dados na conversa.
-→ Quando um CLIENTE ATIVO pedir pra usar no celular Android: ofereça o Startflix primeiro. Se ele preferir o Master Player Pro, mande o link + lembre que ele entra com o MESMO usuário/senha da lista dele. Se ele não souber a senha, consulte os dados do cliente (estão injetados no contexto) e envie.
+2º) *Fun Player / Quick Player* — únicos apps recomendados para TV Box Android.
 
 APP iOS/iPhone (App Store — XCloud Mobile):
 https://apps.apple.com/br/app/xcloud-mobile/id6471106231
@@ -5582,9 +5580,7 @@ async function handleCreateTestAccount(remoteJid: string, args: any): Promise<bo
           const finalUser = result.username || usedUsername || 'cliente';
           const finalPass = result.password || '';
           const passLine = finalPass ? `Senha: *${finalPass}*\n` : '';
-          const androidBlock = finalPass
-            ? `\n\n📱 *No celular Android* tambem da pra usar — baixa o app *Master Player Pro* na Play Store e entra com esse mesmo usuario e senha:\nhttps://play.google.com/store/apps/details?id=masterP.pro.com`
-            : '';
+          const androidBlock = '';
           await evo2.sendMessage(
             remoteJid,
             `✅ *Seu teste esta ativo!*\n\nUsuario: *${finalUser}*\n${passLine}App ativado: ${playerName} (MAC ${mac})\n\n⏰ Voce tem *6 horas* pra testar tudo. Abre o ${playerName} ai na tua TV e ja vai estar funcionando!${androidBlock}\n\nGostou? Me chama aqui que ativo seu plano definitivo. 🎬`
