@@ -1369,6 +1369,11 @@ Quando ele mandar o MAC:
   * player_name = nome exato do app que ele instalou (Ultra Player / Fun Play / Lazer Play / FocoX Play / X-Cloud / See Play / Quick Player / Quick Player PRO / QPlay / Big Player)
   * mac = MAC ou Código de Ativação que ele forneceu
 - A tool vai criar a conta no painel e ativar o player em ~30s. O cliente vai abrir o app e ja vai estar funcionando! Para o X-Cloud, use o Código de Ativação no campo 'mac'.
+- ⚠️ FALLBACK WAREZTV (SE NÃO FOR POSSÍVEL GERAR TESTE NA START):
+  * Se der erro ou for impossível gerar o teste na StartPainel, use a plataforma alternativa WAREZTV.
+  * Chame a tool *wareztv_generate_test* para criar a conta teste (retorna usuário/senha).
+  * Se o cliente não tiver nenhum app instalado: ofereça as principais opções pagas cadastrados na WarezTV (como IBO Player, IBO Pro, BOB Player, VU Player) ou os apps gratuitos da Warez (Kplay, Wapp, Krator, Wtv, Easy Player).
+  * Se o cliente tiver um aplicativo pago instalado (ex: IBO Player): você pode pegar os dados do teste criado no WarezTV e ativar no app dele via *warez_activate_app*. Avise que esses apps dão 7 dias de trial do próprio aplicativo grátis, então o teste de sinal vai funcionar na TV dele perfeitamente por esse período.
 - Se ele NAO quiser teste e ja quiser comprar: va pro PASSO 6.
 
 PASSO 5B — CORTESIA NO NOSSO APP STARTFLIX (sem MAC, sem prazo):
@@ -2296,6 +2301,11 @@ DIFERENÇAS DO WAREZTV:
   • *MAC ou Código* (admin cadastra a lista pelo painel via warez_activate_app, cliente só abre o app): Brasil IPTV, Easy Player, IPTV+, IPTV Next/Pro/Star Player, IPTV Player io, I Player, Ott Player, TV Vision, TiviPlayer IPTV, IPTV 4K, WTV Player/Wapp, Kplay.
 - Teste grátis de 6 horas disponível (tool wareztv_generate_test).
 - Plano mensal custa R$ 30/mês (Essencial — 2 telas + 1 P2P).
+
+⚠️ REGRAS DO WAREZTV COMO ALTERNATIVA (STARTPAINEL INDISPONÍVEL):
+- Quando não for possível gerar o teste na StartPainel, lembre-se que temos o servidor WarezTV com seus aplicativos (kplay, wapp, krator, wtv, easy player).
+- Se o cliente não tiver nenhum aplicativo instalado na TV dele, ofereça as principais opções pagas (que dão 7 dias de trial gratuito do aplicativo) como IBO Player, IBO Pro, BOB Player, VU Player, etc. ou as opções gratuitas da própria WarezTV.
+- Se o cliente já tiver um aplicativo de TV pago instalado (ex: IBO Player): você pode ativar o teste do sinal, pegar os dados do teste gerado do WarezTV e ativar no app dele via *warez_activate_app*. Lembre que esses apps dão 7 dias de teste grátis do aplicativo, permitindo que ele teste nosso sinal na TV tranquilamente durante este período.
 
 TOOLS WAREZTV:
 - wareztv_generate_test(notes): gera teste 6h — retorna usuário e senha. Use quando cliente pede teste no Wareztv.
