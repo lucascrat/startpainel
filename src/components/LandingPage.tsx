@@ -647,20 +647,35 @@ function AppCard({ app, index, badge, badgeColor, onCTA, ctaLabel, ctaColor, sho
   app: LandingApp; index: number; badge: string; badgeColor: string;
   onCTA: () => void; ctaLabel: string; ctaColor: string; showPrice?: boolean;
 }) {
+  const isHighlighted = ['KRATOR+', 'KRATOR', 'KPLAY', 'XCLOUD', 'WTV', 'EASY PLAYER'].includes(app.name.toUpperCase().trim());
+  const finalBadge = isHighlighted && badge === 'GRÁTIS' ? '🔥 RECOMENDADO' : badge;
+  const finalBadgeColor = isHighlighted && badge === 'GRÁTIS' ? '#7C3AED' : badgeColor;
+
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: index * 0.05 }}
-      style={{ width: 155, flexShrink: 0, borderRadius: 10, overflow: 'hidden', background: '#111', border: '1px solid rgba(255,255,255,0.07)', cursor: 'pointer' }}
+      style={{ 
+        width: 155, 
+        flexShrink: 0, 
+        borderRadius: 10, 
+        overflow: 'hidden', 
+        background: '#111', 
+        border: isHighlighted ? '1.5px solid #A855F7' : '1px solid rgba(255,255,255,0.07)', 
+        boxShadow: isHighlighted ? '0 0 12px rgba(168,85,247,0.2)' : 'none',
+        cursor: 'pointer' 
+      }}
       onClick={onCTA} whileHover={{ scale: 1.04, y: -4 } as any}>
       <div style={{ position: 'relative', height: 115 }}>
         {app.app_image_url ? <img src={app.app_image_url} alt={app.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg,#1a0a2a,#0a0018)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 900, color: '#A855F7' }}>{app.name[0]}</div>}
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top,rgba(0,0,0,0.7) 0%,transparent 60%)' }} />
-        <span style={{ position: 'absolute', top: 7, left: 7, fontSize: 7, fontWeight: 900, background: badgeColor, color: '#fff', borderRadius: 4, padding: '2px 6px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{badge}</span>
+        <span style={{ position: 'absolute', top: 7, left: 7, fontSize: 7, fontWeight: 900, background: finalBadgeColor, color: '#fff', borderRadius: 4, padding: '2px 6px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{finalBadge}</span>
       </div>
       <div style={{ padding: '10px 10px 12px' }}>
-        <p style={{ fontSize: 10, fontWeight: 900, color: '#fff', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>{app.name}</p>
-        {showPrice && app.landing_price && <p style={{ fontSize: 13, fontWeight: 900, color: badgeColor, marginBottom: 6 }}>{app.landing_price}</p>}
+        <p style={{ fontSize: 10, fontWeight: 900, color: '#fff', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
+          {isHighlighted ? '⭐ ' : ''}{app.name}
+        </p>
+        {showPrice && app.landing_price && <p style={{ fontSize: 13, fontWeight: 900, color: finalBadgeColor, marginBottom: 6 }}>{app.landing_price}</p>}
         {app.description && <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.32)', lineHeight: 1.4, marginBottom: 8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>{app.description}</p>}
-        <button onClick={e => { e.stopPropagation(); onCTA(); }} style={{ width: '100%', padding: '7px 0', borderRadius: 5, border: 'none', background: ctaColor, color: '#fff', fontSize: 9, fontWeight: 900, letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer' }}>
+        <button onClick={e => { e.stopPropagation(); onCTA(); }} style={{ width: '100%', padding: '7px 0', borderRadius: 5, border: 'none', background: isHighlighted ? '#7C3AED' : ctaColor, color: '#fff', fontSize: 9, fontWeight: 900, letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer' }}>
           {ctaLabel} →
         </button>
       </div>

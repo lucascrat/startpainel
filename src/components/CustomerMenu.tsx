@@ -1140,6 +1140,7 @@ export default function CustomerMenu() {
                       <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
                         {catalogApps.filter(a => a.is_active).map(app => {
                           const sel = newCustAppId === app.id;
+                          const isHighlighted = ['KRATOR+', 'KRATOR', 'KPLAY', 'XCLOUD', 'WTV', 'EASY PLAYER'].includes(app.name.toUpperCase().trim());
                           return (
                             <button
                               key={app.id}
@@ -1148,7 +1149,9 @@ export default function CustomerMenu() {
                               className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[72px] ${
                                 sel
                                   ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                                  : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                                  : isHighlighted
+                                    ? 'border-purple-300 bg-purple-50/40 hover:border-purple-400 hover:bg-purple-50'
+                                    : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
                               }`}
                             >
                               <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
@@ -1158,7 +1161,9 @@ export default function CustomerMenu() {
                                   <Tv size={16} className="text-slate-300" />
                                 )}
                               </div>
-                              <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                              <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">
+                                {isHighlighted ? '⭐ ' : ''}{app.name}
+                              </span>
                               {sel && <span className="text-[7px] font-black text-indigo-600 uppercase">✓</span>}
                             </button>
                           );
@@ -1393,6 +1398,7 @@ export default function CustomerMenu() {
                           <div className="flex gap-2 overflow-x-auto pb-1 snap-x">
                             {catalogApps.filter(a => a.is_active).map(app => {
                               const sel = selectedModalAppId === app.id;
+                              const isHighlighted = ['KRATOR+', 'KRATOR', 'KPLAY', 'XCLOUD', 'WTV', 'EASY PLAYER'].includes(app.name.toUpperCase().trim());
                               return (
                                 <button
                                   key={app.id}
@@ -1417,7 +1423,9 @@ export default function CustomerMenu() {
                                   className={`flex-shrink-0 snap-start flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all w-[72px] ${
                                     sel
                                       ? 'border-emerald-500 bg-emerald-50 shadow-sm'
-                                      : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                                      : isHighlighted
+                                        ? 'border-purple-300 bg-purple-50/40 hover:border-purple-400 hover:bg-purple-50'
+                                        : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
                                   }`}
                                 >
                                   <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
@@ -1427,7 +1435,9 @@ export default function CustomerMenu() {
                                       <Tv size={16} className="text-slate-300" />
                                     )}
                                   </div>
-                                  <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">{app.name}</span>
+                                  <span className="text-[8px] font-black text-center text-slate-700 leading-tight line-clamp-2 w-full">
+                                    {isHighlighted ? '⭐ ' : ''}{app.name}
+                                  </span>
                                   {sel && <span className="text-[7px] font-black text-emerald-600 uppercase">✓</span>}
                                 </button>
                               );
