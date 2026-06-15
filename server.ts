@@ -62,8 +62,8 @@ const pool = new Pool({
   max: 20
 });
 
-// Start internal worker loop
-startInternalWorker(pool);
+// Start internal worker loop (disabled so external PC worker can pick jobs)
+// startInternalWorker(pool);
 
 pool.on('error', (err) => {
   console.error('PG: Unexpected database error:', err.message);
