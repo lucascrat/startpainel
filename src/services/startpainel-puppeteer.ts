@@ -42,10 +42,16 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   const suffix = profileNum > 0 ? `-${profileNum}` : '';
   console.log(`[Puppeteer Stealth] Launching profile${suffix} with: ${CHROME_PATH}`);
 
-  // Agora armazenamos no diretório atual (que será persistido no Coolify)
   const baseDir = path.join(process.cwd(), 'puppeteer_data');
   const userDataDir = profileNum > 0 ? `${baseDir}${suffix}` : baseDir;
   
+  // Real notebook resolutions
+  const notebookWidths = [1366, 1440, 1536, 1920];
+  const notebookHeights = [768, 900, 864, 1080];
+  const randIdx = Math.floor(Math.random() * notebookWidths.length);
+  const width = notebookWidths[randIdx];
+  const height = notebookHeights[randIdx];
+
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
@@ -54,17 +60,18 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--window-size=1280,900',
+      `--window-size=${width},${height}`,
       '--disable-infobars',
       '--disable-features=PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
       '--password-store=basic',
       '--start-maximized',
-      '--proxy-server=http://200.234.150.125:50100' // Proxy adicionado
+      '--proxy-server=http://200.234.150.125:50100', // Proxy adicionado
+      '--disable-blink-features=AutomationControlled',
+      '--lang=pt-BR,pt,en-US,en'
     ],
     defaultViewport: null, // Deixa viewport real para despistar Cloudflare
   }) as unknown as Browser;
 
-  // Intercepta e rastreia novas páginas para podermos fechá-las
   const originalNewPage = browser.newPage.bind(browser);
   const pagesOpened: Page[] = [];
 
@@ -74,6 +81,45 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     
     // Autenticação automática do proxy em cada nova página
     await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
+    
+    // Dados de aparelho de um Notebook Real Windows
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    await p.setUserAgent(userAgent, {
+      architecture: 'x86',
+      bitness: '64',
+      brands: [
+        { brand: 'Chromium', version: '124' },
+        { brand: 'Google Chrome', version: '124' },
+        { brand: 'Not-A.Brand', version: '99' }
+      ],
+      fullVersionList: [
+        { brand: 'Chromium', version: '124.0.6367.118' },
+        { brand: 'Google Chrome', version: '124.0.6367.118' },
+        { brand: 'Not-A.Brand', version: '99.0.0.0' }
+      ],
+      mobile: false,
+      model: '',
+      platform: 'Windows',
+      platformVersion: '10.0.0',
+    });
+    
+    await p.setExtraHTTPHeaders({
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Sec-Ch-Ua-Mobile': '?0',
+    });
+
+    await p.evaluateOnNewDocument(() => {
+      // Mock navigator hardware concurrency & memory to look like a laptop
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+      // Mock languages
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+      // Add fake plugins to look like normal desktop
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+    });
     
     return p;
   };
@@ -89,7 +135,7 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
         } catch (e) {}
       }
       console.log('[Puppeteer] Fechando navegador...');
-      await browser.disconnect().catch(() => {}); // Pode usar process kill ou browser.close() original
+      await browser.disconnect().catch(() => {});
     },
     writable: true,
     configurable: true
@@ -153,6 +199,34 @@ export async function sendInteractiveType(text: string) {
 }
 
 
+export async function generateBrowserHistory(page: Page) {
+  try {
+    console.log('[Puppeteer] Gerando histórico de navegação para simular uso humano...');
+    // Acessa o Google e faz uma pesquisa rápida
+    await page.goto('https://www.google.com.br', { waitUntil: 'networkidle2', timeout: 30000 });
+    
+    // Lista de pesquisas normais de um notebook
+    const terms = ['notícias de hoje', 'previsão do tempo', 'youtube', 'tradutor', 'resultados futebol', 'calculadora', 'receita de bolo'];
+    const search = terms[Math.floor(Math.random() * terms.length)];
+    
+    const searchBox = await page.$('textarea[name="q"], input[name="q"]');
+    if (searchBox) {
+      await searchBox.type(search, { delay: 100 });
+      await page.keyboard.press('Enter');
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
+    }
+
+    // Rolar a página um pouco
+    await page.evaluate(() => {
+      window.scrollBy({ top: 500, behavior: 'smooth' });
+    });
+    await new Promise(r => setTimeout(r, 1500));
+    console.log(`[Puppeteer] Pesquisou por "${search}" no Google.`);
+  } catch (e: any) {
+    console.log('[Puppeteer] Erro ao gerar histórico (ignorado):', e.message);
+  }
+}
+
 export async function loginToPanel(page: Page): Promise<boolean> {
   const loginUrl = `${BASE_URL}/login`;
 
@@ -162,6 +236,11 @@ export async function loginToPanel(page: Page): Promise<boolean> {
 
   // Estamos logados se a URL NAO contem /login
   const isLoggedIn = () => !page.url().includes('/login');
+
+  // Com 20% de chance, fazemos um aquecimento de histórico antes do login
+  if (Math.random() < 0.20) {
+    await generateBrowserHistory(page);
+  }
 
   // Ate 2 tentativas — login pode falhar transitoriamente (rede, render lento)
   for (let attempt = 1; attempt <= 2; attempt++) {
