@@ -114,29 +114,10 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 
     await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
 
-    // User-Agent do Chrome real no Windows
-    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.118 Safari/537.36';
-    await p.setUserAgent(ua, {
-      architecture: 'x86', bitness: '64', mobile: false,
-      model: '', platform: 'Windows', platformVersion: '10.0.0',
-      brands: [
-        { brand: 'Chromium', version: '124' },
-        { brand: 'Google Chrome', version: '124' },
-        { brand: 'Not-A.Brand', version: '99' },
-      ],
-      fullVersionList: [
-        { brand: 'Chromium', version: '124.0.6367.118' },
-        { brand: 'Google Chrome', version: '124.0.6367.118' },
-        { brand: 'Not-A.Brand', version: '99.0.0.0' },
-      ],
-    });
-
-    await p.setExtraHTTPHeaders({
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-      'Sec-Ch-Ua-Mobile': '?0',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-    });
+    // Removemos os overrides estáticos de User-Agent e Headers.
+    // O Stealth Plugin vai automaticamente remover o "Headless" do User-Agent real do navegador.
+    // Mudar o User-Agent para uma versão diferente da engine real (ex: dizer que é Chrome 124 no Windows quando é Chromium 114 no Linux)
+    // é um dos principais motivos que faz o Google BotGuard bloquear o login.
 
     // Ocultamos a flag webdriver que o puppeteer expõe mesmo em headful mode (o stealth plugin cuida do resto)
     await p.evaluateOnNewDocument(() => {
