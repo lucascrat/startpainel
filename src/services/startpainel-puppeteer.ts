@@ -48,6 +48,21 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   const baseDir = path.join(process.cwd(), 'puppeteer_data');
   const userDataDir = profileNum > 0 ? `${baseDir}${suffix}` : baseDir;
 
+  // ── Limpa arquivos de bloqueio do Chrome (deixados por restarts do container) ──
+  const lockFiles = [
+    path.join(userDataDir, 'SingletonLock'),
+    path.join(userDataDir, 'SingletonCookie'),
+    path.join(userDataDir, 'SingletonSocket'),
+  ];
+  for (const lf of lockFiles) {
+    try {
+      if (fs.existsSync(lf)) {
+        fs.unlinkSync(lf);
+        console.log(`[Puppeteer] Lock removido: ${lf}`);
+      }
+    } catch (e) {}
+  }
+
   // Resoluções reais de notebooks
   const screens = [
     { w: 1366, h: 768 }, { w: 1440, h: 900 }, { w: 1536, h: 864 },
