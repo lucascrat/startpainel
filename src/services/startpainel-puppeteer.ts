@@ -148,17 +148,17 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 export let interactiveBrowser: Browser | null = null;
 export let interactivePage: Page | null = null;
 
-export async function startInteractiveBrowser() {
-  if (interactiveBrowser) return true;
+export async function startInteractiveBrowser(): Promise<{success: boolean, error?: string}> {
+  if (interactiveBrowser) return { success: true };
   try {
     interactiveBrowser = await launchBrowser(true, 0); // Headless = true, mas será visível pelo screenshot
     interactivePage = await interactiveBrowser.newPage();
     await interactivePage.setViewport({ width: 1280, height: 900 });
     await interactivePage.goto(BASE_URL, { waitUntil: 'networkidle2' });
-    return true;
+    return { success: true };
   } catch (e: any) {
     console.error('Erro ao iniciar interactive browser:', e.message);
-    return false;
+    return { success: false, error: e.message || String(e) };
   }
 }
 

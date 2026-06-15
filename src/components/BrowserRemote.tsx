@@ -5,17 +5,26 @@ import { authFetch } from '../lib/auth';
 export default function BrowserRemote() {
   const [isRunning, setIsRunning] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startBrowser = async () => {
     setLoading(true);
+    setStartupError(null);
     try {
-      await authFetch('/api/admin/browser/start', { method: 'POST' });
-      setIsRunning(true);
-    } catch (e) {
+      const res = await authFetch('/api/admin/browser/start', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setStartupError(data.error || 'Erro desconhecido ao iniciar navegador');
+        setIsRunning(false);
+      } else {
+        setIsRunning(true);
+      }
+    } catch (e: any) {
       console.error(e);
+      setStartupError(e.message || 'Erro de rede');
     }
     setLoading(false);
   };
@@ -138,11 +147,17 @@ export default function BrowserRemote() {
                 <p className="font-medium">Iniciando ambiente remoto...</p>
               </>
             ) : (
-              <>
-                <MousePointerClick size={48} className="mb-4 opacity-50" />
+              <div className="text-center text-slate-500 mt-20">
+                <MousePointerClick size={48} className="mx-auto mb-4 opacity-50" />
                 <p className="font-medium">O navegador está desligado.</p>
                 <p className="text-sm mt-1">Clique em Iniciar Navegador acima.</p>
-              </>
+                {startupError && (
+                  <div className="mt-4 p-3 bg-red-900/40 text-red-400 border border-red-800 rounded max-w-lg mx-auto">
+                    <p className="font-bold">Erro ao iniciar:</p>
+                    <p className="text-sm whitespace-pre-wrap">{startupError}</p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

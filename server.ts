@@ -6921,8 +6921,11 @@ import {
 
 // --- INTERACTIVE BROWSER (VNC) ADMIN ROUTES ---
 app.post('/api/admin/browser/start', requireAdmin, async (req, res) => {
-  const success = await startInteractiveBrowser();
-  res.json({ success });
+  const result = await startInteractiveBrowser();
+  if (!result.success) {
+    return res.status(500).json({ success: false, error: result.error });
+  }
+  res.json({ success: true });
 });
 
 app.post('/api/admin/browser/stop', requireAdmin, async (req, res) => {
