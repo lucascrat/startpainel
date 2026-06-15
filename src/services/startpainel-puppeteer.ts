@@ -39,58 +39,14 @@ export interface RenewalResult {
 }
 
 export async function launchBrowser(headless = true, profileNum = 0): Promise<Browser> {
-  const remotePort = process.env.PUPPETEER_REMOTE_PORT || process.env.CHROME_REMOTE_PORT;
-  if (remotePort) {
-    const port = parseInt(remotePort, 10);
-    const host = process.env.PUPPETEER_REMOTE_HOST || '127.0.0.1';
-    console.log(`[Puppeteer Remote] Conectando ao Chrome existente em http://${host}:${port}...`);
-    try {
-      const browser = await puppeteer.connect({
-        browserURL: `http://${host}:${port}`,
-        defaultViewport: null
-      }) as unknown as Browser;
-
-      // Intercepta e rastreia novas páginas para podermos fechá-las e desconectar sem fechar o Chrome inteiro
-      const originalNewPage = browser.newPage.bind(browser);
-      const pagesOpened: Page[] = [];
-
-      browser.newPage = async function() {
-        const p = await originalNewPage();
-        pagesOpened.push(p);
-        return p;
-      };
-
-      Object.defineProperty(browser, 'close', {
-        value: async function() {
-          console.log('[Puppeteer Remote] Fechando abas abertas nesta sessão...');
-          for (const p of pagesOpened) {
-            try {
-              if (!p.isClosed()) {
-                await p.close().catch(() => {});
-              }
-            } catch (e) {}
-          }
-          console.log('[Puppeteer Remote] Desconectando do Chrome...');
-          await browser.disconnect().catch(() => {});
-        },
-        writable: true,
-        configurable: true
-      });
-
-      return browser;
-    } catch (err: any) {
-      console.error(`[Puppeteer Remote] Erro ao conectar ao Chrome na porta ${port}:`, err.message);
-      throw new Error(`Não foi possível conectar ao seu navegador Chrome na porta ${port}. Certifique-se de que o Chrome está aberto e foi iniciado executando o script iniciar-chrome-debug.bat`);
-    }
-  }
-
   const suffix = profileNum > 0 ? `-${profileNum}` : '';
   console.log(`[Puppeteer Stealth] Launching profile${suffix} with: ${CHROME_PATH}`);
 
-  const baseDir = process.env.PUPPETEER_USER_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'PuppeteerProfile');
-  const userDataDir = profileNum > 0 ? `${baseDir.replace(/(-\d+)?$/, '')}${suffix}` : baseDir;
+  // Agora armazenamos no diretório atual (que será persistido no Coolify)
+  const baseDir = path.join(process.cwd(), 'puppeteer_data');
+  const userDataDir = profileNum > 0 ? `${baseDir}${suffix}` : baseDir;
   
-  return puppeteer.launch({
+  const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
     userDataDir, // Usa um perfil dedicado com historico persistente
@@ -102,11 +58,100 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--disable-infobars',
       '--disable-features=PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
       '--password-store=basic',
-      '--start-maximized'
+      '--start-maximized',
+      '--proxy-server=http://200.234.150.125:50100' // Proxy adicionado
     ],
     defaultViewport: null, // Deixa viewport real para despistar Cloudflare
   }) as unknown as Browser;
+
+  // Intercepta e rastreia novas páginas para podermos fechá-las
+  const originalNewPage = browser.newPage.bind(browser);
+  const pagesOpened: Page[] = [];
+
+  browser.newPage = async function() {
+    const p = await originalNewPage();
+    pagesOpened.push(p);
+    
+    // Autenticação automática do proxy em cada nova página
+    await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
+    
+    return p;
+  };
+
+  Object.defineProperty(browser, 'close', {
+    value: async function() {
+      console.log('[Puppeteer] Fechando abas abertas nesta sessão...');
+      for (const p of pagesOpened) {
+        try {
+          if (!p.isClosed()) {
+            await p.close().catch(() => {});
+          }
+        } catch (e) {}
+      }
+      console.log('[Puppeteer] Fechando navegador...');
+      await browser.disconnect().catch(() => {}); // Pode usar process kill ou browser.close() original
+    },
+    writable: true,
+    configurable: true
+  });
+
+  return browser;
 }
+
+// ---- INTERACTIVE BROWSER (VNC) ----
+export let interactiveBrowser: Browser | null = null;
+export let interactivePage: Page | null = null;
+
+export async function startInteractiveBrowser() {
+  if (interactiveBrowser) return true;
+  try {
+    interactiveBrowser = await launchBrowser(true, 0); // Headless = true, mas será visível pelo screenshot
+    interactivePage = await interactiveBrowser.newPage();
+    await interactivePage.setViewport({ width: 1280, height: 900 });
+    await interactivePage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+    return true;
+  } catch (e: any) {
+    console.error('Erro ao iniciar interactive browser:', e.message);
+    return false;
+  }
+}
+
+export async function stopInteractiveBrowser() {
+  if (interactiveBrowser) {
+    await interactiveBrowser.close().catch(() => {});
+    interactiveBrowser = null;
+    interactivePage = null;
+  }
+}
+
+export async function getInteractiveScreenshot(): Promise<Buffer | null> {
+  if (!interactivePage) return null;
+  try {
+    return await interactivePage.screenshot({ type: 'jpeg', quality: 50 }) as Buffer;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function sendInteractiveClick(x: number, y: number) {
+  if (!interactivePage) return;
+  try {
+    await interactivePage.mouse.click(x, y);
+  } catch (e) {}
+}
+
+export async function sendInteractiveType(text: string) {
+  if (!interactivePage) return;
+  try {
+    // Se for string especial, podemos tratar. Ex: "Enter"
+    if (text === 'Enter') {
+      await interactivePage.keyboard.press('Enter');
+    } else {
+      await interactivePage.keyboard.type(text);
+    }
+  } catch (e) {}
+}
+
 
 export async function loginToPanel(page: Page): Promise<boolean> {
   const loginUrl = `${BASE_URL}/login`;

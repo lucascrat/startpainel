@@ -8,6 +8,7 @@ import PaymentReceipts from './components/PaymentReceipts';
 import AppCatalog from './components/AppCatalog';
 import AtiveAppCatalog from './components/AtiveAppCatalog';
 import ContactsAgenda from './components/ContactsAgenda';
+import BrowserRemote from './components/BrowserRemote';
 import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users, X, Receipt, AppWindow, BookUser, Zap } from 'lucide-react';
 import { login, getToken, logout } from './lib/auth';
 import { Toaster } from 'sonner';
@@ -207,6 +208,15 @@ export default function App() {
             Teste
           </button>
           <button
+            onClick={() => setActiveTab('browser')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
+              activeTab === 'browser' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <AppWindow size={12} className="sm:w-3.5 sm:h-3.5" />
+            Navegador Remoto
+          </button>
+          <button
             onClick={handleLogout}
             title="Sair do admin"
             className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-red-600 transition whitespace-nowrap"
@@ -260,6 +270,11 @@ export default function App() {
         {activeTab === 'tester' && (
           <div className="flex-1 overflow-y-auto bg-slate-50">
             <ActivationTester />
+          </div>
+        )}
+        {activeTab === 'browser' && (
+          <div className="flex-1 overflow-hidden">
+            <BrowserRemote />
           </div>
         )}
       </main>

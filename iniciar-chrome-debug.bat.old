@@ -17,13 +17,23 @@ if "%CHROME_PATH%" == "" (
 )
 
 echo [OK] Google Chrome encontrado em: "%CHROME_PATH%"
+echo.
+echo =====================================================================
+echo [ATENCAO] FECHE TODAS AS JANELAS DO CHROME ANTES DE CONTINUAR!
+echo =====================================================================
+echo O Chrome precisa estar TOTALMENTE FECHADO antes de rodar este script.
+echo Vamos forcar o fechamento de qualquer Chrome escondido agora...
+taskkill /F /IM chrome.exe /T >nul 2>&1
+taskkill /F /IM chrome-native-host.exe /T >nul 2>&1
+echo.
+pause
+
 echo [INFO] Iniciando Google Chrome em modo de Depuracao Remota (porta 9222)...
-echo [INFO] Usando perfil de dados dedicado em: "%LOCALAPPDATA%\Google\Chrome\User Data\RemoteDebugProfile"
-echo [INFO] IMPORTANTE: Faca login no painel nesta janela aberta para salvar seu login e burlar o captcha.
-echo [INFO] Nao feche essa janela do prompt de comando enquanto estiver usando o worker.
+echo [INFO] Usando seu PERFIL NORMAL DO CHROME para passar direto no Captcha!
+echo [INFO] IMPORTANTE: Deixe esta janela preta aberta, e deixe o Chrome rodando livremente.
 echo.
 
-start "" "%CHROME_PATH%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data\RemoteDebugProfile" --no-first-run --no-default-browser-check
+start "" "%CHROME_PATH%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data"
 
 echo Chrome iniciado com sucesso!
 pause

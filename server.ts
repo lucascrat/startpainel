@@ -14,11 +14,23 @@ const { Pool } = pkg;
 import OpenAI from "openai";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 // Puppeteer foi movido pro worker.ts (roda no PC local). server.ts so enfileira jobs agora.
+import { registerEvolutionWebhooksIfMissing } from './src/services/evolution-service.js';
+import { startInternalWorker } from './src/services/internal-worker.js';
 import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
 import jwt from 'jsonwebtoken';
 import { supabaseStartflix, supabaseAuthAdmin } from './src/lib/supabaseStartflix.js';
 import * as warezApi from './src/services/wareztv-api.js';
+
+// ---- ENV INIT ----
+dotenv.config();
+
+const BASE_URL = process.env.STARTPAINEL_URL || 'http://localhost:3000';
+const isProduction = process.env.NODE_ENV === 'production';
+const CHUNK_SIZE = 50;
+
+// Start internal worker loop
+startInternalWorker();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -6896,6 +6908,44 @@ function getCachedDns(username: string): string | null {
 }
 
 // ---- DNS Config Admin Routes ----
+
+import { 
+  startInteractiveBrowser, 
+  stopInteractiveBrowser, 
+  getInteractiveScreenshot, 
+  sendInteractiveClick, 
+  sendInteractiveType 
+} from './src/services/startpainel-puppeteer.js';
+
+// --- INTERACTIVE BROWSER (VNC) ADMIN ROUTES ---
+app.post('/api/admin/browser/start', requireAdmin, async (req, res) => {
+  const success = await startInteractiveBrowser();
+  res.json({ success });
+});
+
+app.post('/api/admin/browser/stop', requireAdmin, async (req, res) => {
+  await stopInteractiveBrowser();
+  res.json({ success: true });
+});
+
+app.get('/api/admin/browser/screenshot', requireAdmin, async (req, res) => {
+  const buf = await getInteractiveScreenshot();
+  if (!buf) return res.status(404).send('Not running or page closed');
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.send(buf);
+});
+
+app.post('/api/admin/browser/click', requireAdmin, async (req, res) => {
+  const { x, y } = req.body;
+  await sendInteractiveClick(x, y);
+  res.json({ success: true });
+});
+
+app.post('/api/admin/browser/type', requireAdmin, async (req, res) => {
+  const { text } = req.body;
+  await sendInteractiveType(text);
+  res.json({ success: true });
+});
 
 app.get('/api/app/dns', requireAdmin, async (req, res) => {
   try {

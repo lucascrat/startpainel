@@ -8,8 +8,14 @@ WORKDIR /app
 
 # Tini = PID 1 com SIGTERM correto. ca-certificates pra TLS sair.
 # curl = necessário pro health check do Coolify (que roda curl dentro do container).
-RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates curl \
+# chromium e dependências = necessário para o Puppeteer rodar internamente.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini ca-certificates curl chromium \
+    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Retries do npm pra tolerar ECONNRESET do Coolify.
 RUN npm config set fetch-retries 5 \
