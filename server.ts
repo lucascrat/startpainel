@@ -29,8 +29,7 @@ const BASE_URL = process.env.STARTPAINEL_URL || 'http://localhost:3000';
 const isProduction = process.env.NODE_ENV === 'production';
 const CHUNK_SIZE = 50;
 
-// Start internal worker loop
-startInternalWorker();
+// Start internal worker loop will be called after pool creation
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,6 +61,9 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
   max: 20
 });
+
+// Start internal worker loop
+startInternalWorker(pool);
 
 pool.on('error', (err) => {
   console.error('PG: Unexpected database error:', err.message);

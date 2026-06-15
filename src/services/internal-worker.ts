@@ -1,4 +1,3 @@
-import { pool } from '../../db/index.js';
 import {
   renewClientPuppeteer,
   createClientAndGetPlaylist,
@@ -107,7 +106,7 @@ const handlers: Record<string, JobHandler> = {
 
 async function completeJob(id: number, ok: boolean, result: any, error: string | null) {
   try {
-    await pool.query(
+    await globalPool.query(
       `UPDATE automation_jobs 
        SET status = $1, result = $2::jsonb, error = $3, completed_at = NOW() 
        WHERE id = $4`,
@@ -150,7 +149,7 @@ async function runJob(job: any, profileNum: number): Promise<void> {
 async function pollJobs() {
   try {
     // Busca 1 job pendente e bloqueia (SKIP LOCKED) para concorrência
-    const res = await pool.query(`
+    const res = await globalPool.query(`
       UPDATE automation_jobs 
       SET status = 'processing', attempts = attempts + 1, updated_at = NOW()
       WHERE id = (
@@ -172,9 +171,12 @@ async function pollJobs() {
 }
 
 let running = false;
-export function startInternalWorker() {
+let globalPool: any = null;
+
+export function startInternalWorker(poolInstance: any) {
   if (running) return;
   running = true;
+  globalPool = poolInstance;
   console.log(`[InternalWorker] Iniciando background worker com ${CONCURRENCY} perfis paralelos.`);
   
   async function loop() {
