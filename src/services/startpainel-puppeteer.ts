@@ -119,10 +119,9 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     // Mudar o User-Agent para uma versão diferente da engine real (ex: dizer que é Chrome 124 no Windows quando é Chromium 114 no Linux)
     // é um dos principais motivos que faz o Google BotGuard bloquear o login.
 
-    // Ocultamos a flag webdriver que o puppeteer expõe mesmo em headful mode (o stealth plugin cuida do resto)
-    await p.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
+    // Deixa o Stealth Plugin agir sozinho sem nenhuma interferência nossa.
+    // Qualquer tentativa manual de esconder flags via evaluateOnNewDocument
+    // cria inconsistências que os sistemas avançados (como o do Google) detectam.
 
     return p;
   };
