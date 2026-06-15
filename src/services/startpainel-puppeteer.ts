@@ -105,158 +105,6 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     defaultViewport: null,
   }) as unknown as Browser;
 
-  // ── Script de anti-detecção completo ──
-  const ANTI_DETECT_SCRIPT = `
-    // 1. Remove webdriver flag completamente
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    delete navigator.__proto__.webdriver;
-
-    // 2. Objeto window.chrome realista (Cloudflare verifica isso)
-    if (!window.chrome) {
-      window.chrome = {
-        app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
-        csi: () => {},
-        loadTimes: () => ({
-          commitLoadTime: Date.now() / 1000 - Math.random() * 2,
-          connectionInfo: 'h2',
-          finishDocumentLoadTime: Date.now() / 1000 - Math.random(),
-          finishLoadTime: Date.now() / 1000 - Math.random() * 0.5,
-          firstPaintAfterLoadTime: 0,
-          firstPaintTime: Date.now() / 1000 - Math.random() * 3,
-          navigationType: 'Other',
-          npnNegotiatedProtocol: 'h2',
-          requestTime: Date.now() / 1000 - Math.random() * 3,
-          startLoadTime: Date.now() / 1000 - Math.random() * 2,
-          wasAlternateProtocolAvailable: false,
-          wasFetchedViaSpdy: true,
-          wasNpnNegotiated: true,
-        }),
-        runtime: { PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' } },
-      };
-    }
-
-    // 3. Plugins realistas do Chrome (PDF Viewer, Chrome PDF Viewer, etc)
-    const pluginArray = [
-      { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', suffixes: 'pdf', type: 'application/pdf' },
-      { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
-      { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
-      { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
-      { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
-    ];
-    const makePlugin = (p) => {
-      const plugin = Object.create(Plugin.prototype);
-      Object.defineProperty(plugin, 'name', { get: () => p.name });
-      Object.defineProperty(plugin, 'filename', { get: () => p.filename });
-      Object.defineProperty(plugin, 'description', { get: () => p.description });
-      Object.defineProperty(plugin, 'length', { get: () => 1 });
-      const mimeType = Object.create(MimeType.prototype);
-      Object.defineProperty(mimeType, 'type', { get: () => p.type });
-      Object.defineProperty(mimeType, 'suffixes', { get: () => p.suffixes });
-      Object.defineProperty(mimeType, 'description', { get: () => '' });
-      Object.defineProperty(mimeType, 'enabledPlugin', { get: () => plugin });
-      plugin[0] = mimeType;
-      return plugin;
-    };
-    try {
-      const pArr = pluginArray.map(makePlugin);
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => { const a = Object.create(PluginArray.prototype); pArr.forEach((p,i) => a[i]=p); Object.defineProperty(a,'length',{get:()=>pArr.length}); return a; }
-      });
-      const mArr = pluginArray.map(p => p.type);
-      Object.defineProperty(navigator, 'mimeTypes', {
-        get: () => { const a = Object.create(MimeTypeArray.prototype); mArr.forEach((m,i) => a[i]=m); Object.defineProperty(a,'length',{get:()=>mArr.length}); return a; }
-      });
-    } catch(e) {}
-
-    // 4. Hardware — notebook realista
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-    Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
-    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-
-    // 5. Screen dimensions — match window size
-    Object.defineProperty(screen, 'width', { get: () => window.outerWidth || ${scr.w} });
-    Object.defineProperty(screen, 'height', { get: () => window.outerHeight || ${scr.h} });
-    Object.defineProperty(screen, 'availWidth', { get: () => window.outerWidth || ${scr.w} });
-    Object.defineProperty(screen, 'availHeight', { get: () => (window.outerHeight || ${scr.h}) - 40 });
-    Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-    Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
-
-    // 6. Canvas fingerprint — adiciona ruído sutil para não ser idêntico
-    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
-      const ctx = this.getContext('2d');
-      if (ctx) {
-        const imageData = ctx.getImageData(0, 0, this.width, this.height);
-        for (let i = 0; i < imageData.data.length; i += 4) {
-          imageData.data[i]   += Math.floor(Math.random() * 3) - 1;
-          imageData.data[i+1] += Math.floor(Math.random() * 3) - 1;
-          imageData.data[i+2] += Math.floor(Math.random() * 3) - 1;
-        }
-        ctx.putImageData(imageData, 0, 0);
-      }
-      return originalToDataURL.apply(this, [type, quality]);
-    };
-
-    // 7. WebGL fingerprint — spoof renderer & vendor
-    const getParam = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-      if (param === 37445) return 'Intel Inc.';  // UNMASKED_VENDOR_WEBGL
-      if (param === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
-      return getParam.call(this, param);
-    };
-    try {
-      const getParam2 = WebGL2RenderingContext.prototype.getParameter;
-      WebGL2RenderingContext.prototype.getParameter = function(param) {
-        if (param === 37445) return 'Intel Inc.';
-        if (param === 37446) return 'Intel Iris OpenGL Engine';
-        return getParam2.call(this, param);
-      };
-    } catch(e) {}
-
-    // 8. Audio fingerprint — adiciona pequeno ruído
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContext) {
-        const orig = AudioContext.prototype.createOscillator;
-        AudioContext.prototype.createOscillator = function() {
-          const osc = orig.apply(this, arguments);
-          const origStart = osc.start.bind(osc);
-          osc.start = function(when?: number) { return origStart(when ? when + Math.random() * 0.00001 : when); };
-          return osc;
-        };
-      }
-    } catch(e) {}
-
-    // 9. Notification permission — deve ser 'default' não 'denied'
-    try {
-      Object.defineProperty(Notification, 'permission', { get: () => 'default' });
-    } catch(e) {}
-
-    // 10. Connection info realista
-    try {
-      Object.defineProperty(navigator, 'connection', {
-        get: () => ({ downlink: 10, effectiveType: '4g', rtt: 50, saveData: false })
-      });
-    } catch(e) {}
-
-    // 11. Remove sinais de headless
-    Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true });
-
-    // 12. Permissions API — retorna 'granted' para notificações
-    const origQuery = navigator.permissions?.query?.bind(navigator.permissions);
-    if (origQuery) {
-      navigator.permissions.query = (parameters) => {
-        if (parameters.name === 'notifications') {
-          return Promise.resolve({ state: Notification.permission, onchange: null } as PermissionStatus);
-        }
-        return origQuery(parameters);
-      };
-    }
-  `;
-
   const originalNewPage = browser.newPage.bind(browser);
   const pagesOpened: Page[] = [];
 
@@ -290,8 +138,10 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       'Sec-Ch-Ua-Platform': '"Windows"',
     });
 
-    // Injeta o script de anti-detecção em TODA página antes do JS do site carregar
-    await p.evaluateOnNewDocument(ANTI_DETECT_SCRIPT);
+    // Ocultamos a flag webdriver que o puppeteer expõe mesmo em headful mode (o stealth plugin cuida do resto)
+    await p.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
 
     return p;
   };
