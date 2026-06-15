@@ -398,9 +398,25 @@ export async function startInteractiveBrowser(): Promise<{success: boolean, erro
     interactiveBrowser = await launchBrowser(true, 0);
     interactivePage = await interactiveBrowser.newPage();
     await interactivePage.setViewport({ width: 1280, height: 900 });
+
+    // ── Intercepta TODAS as navegações para o domínio do painel → localhost ──
+    const panelHostname = new URL(BASE_URL).hostname; // cms.startpainel.cc
+    interactivePage.on('framenavigated', async (frame) => {
+      if (frame !== interactivePage!.mainFrame()) return;
+      try {
+        const currentUrl = frame.url();
+        if (currentUrl.includes(panelHostname)) {
+          const parsed = new URL(currentUrl);
+          const localUrl = INTERNAL_URL + parsed.pathname + parsed.search + parsed.hash;
+          console.log(`[InteractiveBrowser] Redirecionando ${currentUrl} → ${localUrl}`);
+          await interactivePage!.goto(localUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+        }
+      } catch {}
+    });
     
-    // Abre o Google como página inicial — o usuário navega de lá
-    await interactivePage.goto('https://www.google.com.br', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Abre o painel direto via localhost (sem Cloudflare)
+    console.log(`[InteractiveBrowser] Abrindo painel via ${INTERNAL_URL}`);
+    await interactivePage.goto(INTERNAL_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await new Promise(r => setTimeout(r, 1000));
 
     return { success: true };
@@ -462,16 +478,24 @@ export async function sendInteractiveType(text: string) {
 export async function navigateInteractiveBrowser(url: string): Promise<{success: boolean, error?: string}> {
   if (!interactivePage) return { success: false, error: 'Navegador não iniciado' };
   try {
-    // Garante protocolo
     let finalUrl = url.trim();
     if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
       finalUrl = 'https://' + finalUrl;
     }
+
+    // ── Auto-redireciona o domínio do painel para localhost (bypassa Cloudflare) ──
+    try {
+      const parsed = new URL(finalUrl);
+      const panelDomain = new URL(BASE_URL).hostname; // cms.startpainel.cc
+      if (parsed.hostname === panelDomain) {
+        const localPath = parsed.pathname + parsed.search + parsed.hash;
+        finalUrl = INTERNAL_URL + localPath;
+        console.log(`[InteractiveBrowser] Redirecionando ${url} → ${finalUrl} (bypass Cloudflare)`);
+      }
+    } catch {}
+
     console.log(`[InteractiveBrowser] Navegando para: ${finalUrl}`);
     await interactivePage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    // Tenta resolver Turnstile se aparecer
-    await new Promise(r => setTimeout(r, 1500));
-    await solveTurnstileWithVision(interactivePage);
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };
