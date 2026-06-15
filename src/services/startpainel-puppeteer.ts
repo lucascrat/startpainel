@@ -467,6 +467,18 @@ export async function navigateInteractiveBrowser(url: string): Promise<{success:
     if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
       finalUrl = 'https://' + finalUrl;
     }
+
+    // ── Auto-redireciona o domínio do painel para localhost (bypassa Cloudflare) ──
+    try {
+      const parsed = new URL(finalUrl);
+      const panelDomain = new URL(BASE_URL).hostname; // cms.startpainel.cc
+      if (parsed.hostname === panelDomain) {
+        const localPath = parsed.pathname + parsed.search + parsed.hash;
+        finalUrl = INTERNAL_URL + localPath;
+        console.log(`[InteractiveBrowser] Redirecionando ${url} → ${finalUrl} (bypass Cloudflare)`);
+      }
+    } catch {}
+
     console.log(`[InteractiveBrowser] Navegando para: ${finalUrl}`);
     await interactivePage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return { success: true };
