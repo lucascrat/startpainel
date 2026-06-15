@@ -3,9 +3,12 @@ import dotenv from 'dotenv';
 import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import os from 'os';
 import path from 'path';
 import OpenAI from "openai";
+import fs from 'fs';
+import os from 'os';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Força o carregamento do .env do diretório atual
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -144,6 +147,86 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   return browser;
 }
 
+// ---- HUMAN MOUSE HELPER ----
+async function humanMouseClick(page: Page, x: number, y: number) {
+  // Move o mouse de forma curva/humana e depois clica
+  const steps = 15 + Math.floor(Math.random() * 10);
+  await page.mouse.move(x + Math.random() * 10 - 5, y + Math.random() * 10 - 5, { steps });
+  await new Promise(r => setTimeout(r, 80 + Math.floor(Math.random() * 120)));
+  await page.mouse.down();
+  await new Promise(r => setTimeout(r, 60 + Math.floor(Math.random() * 80)));
+  await page.mouse.up();
+}
+
+// ---- CLOUDFLARE TURNSTILE AUTO-SOLVER ----
+async function solveTurnstileWithVision(page: Page): Promise<boolean> {
+  try {
+    // Verifica se há um Turnstile/challenge na página
+    const hasTurnstile = await page.evaluate(() => {
+      return !!(document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                document.querySelector('[id*="turnstile"]') ||
+                document.body?.innerText?.includes('Confirme que é humano') ||
+                document.body?.innerText?.includes('Executando verificação'));
+    });
+
+    if (!hasTurnstile) return false;
+
+    console.log('[Puppeteer] Turnstile detectado! Usando visão computacional para resolver...');
+
+    // Aguarda o iframe carregar
+    await new Promise(r => setTimeout(r, 2500));
+
+    // Pega screenshot da página completa
+    const screenshotBuf = await page.screenshot({ type: 'png' }) as Buffer;
+    const base64 = screenshotBuf.toString('base64');
+
+    // Pede ao OpenAI para identificar as coordenadas do checkbox
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Esta é uma captura de tela de um navegador mostrando um desafio Cloudflare com um checkbox "Confirme que é humano" ou "I am human". Identifique as coordenadas exatas do CENTRO do checkbox (a caixinha quadrada clicável). Responda APENAS com um JSON no formato: {"x": número, "y": número}. Se não houver checkbox visível, responda: {"x": null, "y": null}.',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/png;base64,${base64}`, detail: 'high' },
+            },
+          ],
+        },
+      ],
+      max_tokens: 100,
+    });
+
+    const text = response.choices[0]?.message?.content?.trim() || '';
+    console.log('[Puppeteer] Visão computacional respondeu:', text);
+
+    // Extrai JSON da resposta
+    const jsonMatch = text.match(/\{[^}]+\}/);
+    if (!jsonMatch) {
+      console.log('[Puppeteer] Sem JSON válido. Tentando clique cego...');
+      return false;
+    }
+
+    const coords = JSON.parse(jsonMatch[0]);
+    if (!coords.x || !coords.y) {
+      console.log('[Puppeteer] Checkbox não localizado pela IA.');
+      return false;
+    }
+
+    console.log(`[Puppeteer] Checkbox identificado em (${coords.x}, ${coords.y}). Clicando...`);
+    await humanMouseClick(page, coords.x, coords.y);
+    await new Promise(r => setTimeout(r, 5000));
+    return true;
+  } catch (e: any) {
+    console.log('[Puppeteer] Erro no solver de Turnstile:', e.message);
+    return false;
+  }
+}
+
 // ---- INTERACTIVE BROWSER (VNC) ----
 export let interactiveBrowser: Browser | null = null;
 export let interactivePage: Page | null = null;
@@ -151,10 +234,29 @@ export let interactivePage: Page | null = null;
 export async function startInteractiveBrowser(): Promise<{success: boolean, error?: string}> {
   if (interactiveBrowser) return { success: true };
   try {
-    interactiveBrowser = await launchBrowser(true, 0); // Headless = true, mas será visível pelo screenshot
+    interactiveBrowser = await launchBrowser(true, 0);
     interactivePage = await interactiveBrowser.newPage();
     await interactivePage.setViewport({ width: 1280, height: 900 });
-    await interactivePage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+    
+    // Navega para a URL principal e tenta resolver captcha automaticamente
+    await interactivePage.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
+    
+    // Tenta resolver Turnstile por até 3 vezes
+    for (let i = 0; i < 3; i++) {
+      const resolved = await solveTurnstileWithVision(interactivePage);
+      if (!resolved) break; // Sem turnstile ou erro, para
+      const stillHas = await interactivePage.evaluate(() =>
+        !!(document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+           document.body?.innerText?.includes('Confirme que é humano'))
+      );
+      if (!stillHas) {
+        console.log('[Puppeteer] Turnstile resolvido com sucesso!');
+        break;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
     return { success: true };
   } catch (e: any) {
     console.error('Erro ao iniciar interactive browser:', e.message);
@@ -173,7 +275,7 @@ export async function stopInteractiveBrowser() {
 export async function getInteractiveScreenshot(): Promise<Buffer | null> {
   if (!interactivePage) return null;
   try {
-    return await interactivePage.screenshot({ type: 'jpeg', quality: 50 }) as Buffer;
+    return await interactivePage.screenshot({ type: 'jpeg', quality: 65 }) as Buffer;
   } catch (e) {
     return null;
   }
@@ -182,18 +284,25 @@ export async function getInteractiveScreenshot(): Promise<Buffer | null> {
 export async function sendInteractiveClick(x: number, y: number) {
   if (!interactivePage) return;
   try {
-    await interactivePage.mouse.click(x, y);
+    await humanMouseClick(interactivePage, x, y);
+    // Após clique, tenta auto-resolver turnstile caso apareça
+    setTimeout(async () => {
+      if (interactivePage) await solveTurnstileWithVision(interactivePage).catch(() => {});
+    }, 1500);
   } catch (e) {}
 }
 
 export async function sendInteractiveType(text: string) {
   if (!interactivePage) return;
   try {
-    // Se for string especial, podemos tratar. Ex: "Enter"
     if (text === 'Enter') {
       await interactivePage.keyboard.press('Enter');
+    } else if (text === 'Backspace') {
+      await interactivePage.keyboard.press('Backspace');
+    } else if (text === 'Tab') {
+      await interactivePage.keyboard.press('Tab');
     } else {
-      await interactivePage.keyboard.type(text);
+      await interactivePage.keyboard.type(text, { delay: 40 + Math.random() * 60 });
     }
   } catch (e) {}
 }
@@ -248,67 +357,19 @@ export async function loginToPanel(page: Page): Promise<boolean> {
       console.log(`[Puppeteer] Login tentativa ${attempt}/2...`);
 
       // 1. Vai pra home — se ja tem sessao ativa, nao cai no /login
-      await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
-      
-      // Auto-click Cloudflare Turnstile se aparecer
-      try {
-        const frames = page.frames();
-        const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com'));
-        if (turnstileFrame) {
-          console.log('[Puppeteer] Cloudflare Turnstile detectado. Tentando resolver...');
-          await new Promise(r => setTimeout(r, 3000));
-          // Procura o iframe no DOM para pegar as coordenadas
-          const iframeHandle = await page.$('iframe[src*="challenges.cloudflare.com"]');
-          if (iframeHandle) {
-            const box = await iframeHandle.boundingBox();
-            if (box) {
-              // Clica no centro do iframe (onde costuma ficar o checkbox)
-              const x = box.x + 30; // Checkbox geralmente fica a 30px da borda esquerda
-              const y = box.y + box.height / 2;
-              await page.mouse.move(x, y, { steps: 10 });
-              await page.mouse.click(x, y);
-              console.log('[Puppeteer] Clique simulado no Turnstile.');
-              await new Promise(r => setTimeout(r, 4000));
-            }
-          }
-        }
-      } catch (e) {
-        console.log('[Puppeteer] Erro ao tentar bypass no Turnstile:', e);
-      }
+      await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Resolver Turnstile com IA visual
+      await solveTurnstileWithVision(page);
 
       if (isLoggedIn()) {
         console.log('[Puppeteer] Sessao ativa encontrada! Pulando login.');
         return true;
       }
 
-      // 2. Garante que estamos na pagina de login
-      if (!page.url().includes('/login')) {
-        await page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      }
-
-      // Auto-click Cloudflare Turnstile se aparecer na tela de login
-      try {
-        const frames = page.frames();
-        const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com'));
-        if (turnstileFrame) {
-          console.log('[Puppeteer] Cloudflare Turnstile detectado no Login. Tentando resolver...');
-          await new Promise(r => setTimeout(r, 3000));
-          const iframeHandle = await page.$('iframe[src*="challenges.cloudflare.com"]');
-          if (iframeHandle) {
-            const box = await iframeHandle.boundingBox();
-            if (box) {
-              const x = box.x + 30; 
-              const y = box.y + box.height / 2;
-              await page.mouse.move(x, y, { steps: 10 });
-              await page.mouse.click(x, y);
-              console.log('[Puppeteer] Clique simulado no Turnstile.');
-              await new Promise(r => setTimeout(r, 4000));
-            }
-          }
-        }
-      } catch (e) {
-        console.log('[Puppeteer] Erro ao tentar bypass no Turnstile:', e);
-      }
+      // Resolver Turnstile na página de login com IA visual
+      await solveTurnstileWithVision(page);
 
       if (!ADMIN_USER || !ADMIN_PASS) {
         console.error('[Puppeteer] STARTPAINEL_ADMIN_USER/PASS vazios no .env do worker! Configure e reinicie.');
