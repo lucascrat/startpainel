@@ -89,6 +89,7 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--disable-features=IsolateOrigins,site-per-process,PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
       '--password-store=basic',
       '--proxy-server=http://200.234.150.125:50100',
+      '--proxy-bypass-list=localhost,127.0.0.1,<local>',
       '--lang=pt-BR,pt,en-US,en',
       '--accept-lang=pt-BR',
       '--disable-background-timer-throttling',
