@@ -249,6 +249,33 @@ export async function loginToPanel(page: Page): Promise<boolean> {
 
       // 1. Vai pra home — se ja tem sessao ativa, nao cai no /login
       await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+      
+      // Auto-click Cloudflare Turnstile se aparecer
+      try {
+        const frames = page.frames();
+        const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com'));
+        if (turnstileFrame) {
+          console.log('[Puppeteer] Cloudflare Turnstile detectado. Tentando resolver...');
+          await new Promise(r => setTimeout(r, 3000));
+          // Procura o iframe no DOM para pegar as coordenadas
+          const iframeHandle = await page.$('iframe[src*="challenges.cloudflare.com"]');
+          if (iframeHandle) {
+            const box = await iframeHandle.boundingBox();
+            if (box) {
+              // Clica no centro do iframe (onde costuma ficar o checkbox)
+              const x = box.x + 30; // Checkbox geralmente fica a 30px da borda esquerda
+              const y = box.y + box.height / 2;
+              await page.mouse.move(x, y, { steps: 10 });
+              await page.mouse.click(x, y);
+              console.log('[Puppeteer] Clique simulado no Turnstile.');
+              await new Promise(r => setTimeout(r, 4000));
+            }
+          }
+        }
+      } catch (e) {
+        console.log('[Puppeteer] Erro ao tentar bypass no Turnstile:', e);
+      }
+
       if (isLoggedIn()) {
         console.log('[Puppeteer] Sessao ativa encontrada! Pulando login.');
         return true;
@@ -257,6 +284,30 @@ export async function loginToPanel(page: Page): Promise<boolean> {
       // 2. Garante que estamos na pagina de login
       if (!page.url().includes('/login')) {
         await page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      }
+
+      // Auto-click Cloudflare Turnstile se aparecer na tela de login
+      try {
+        const frames = page.frames();
+        const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com'));
+        if (turnstileFrame) {
+          console.log('[Puppeteer] Cloudflare Turnstile detectado no Login. Tentando resolver...');
+          await new Promise(r => setTimeout(r, 3000));
+          const iframeHandle = await page.$('iframe[src*="challenges.cloudflare.com"]');
+          if (iframeHandle) {
+            const box = await iframeHandle.boundingBox();
+            if (box) {
+              const x = box.x + 30; 
+              const y = box.y + box.height / 2;
+              await page.mouse.move(x, y, { steps: 10 });
+              await page.mouse.click(x, y);
+              console.log('[Puppeteer] Clique simulado no Turnstile.');
+              await new Promise(r => setTimeout(r, 4000));
+            }
+          }
+        }
+      } catch (e) {
+        console.log('[Puppeteer] Erro ao tentar bypass no Turnstile:', e);
       }
 
       if (!ADMIN_USER || !ADMIN_PASS) {
