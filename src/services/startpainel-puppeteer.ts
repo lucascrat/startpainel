@@ -72,7 +72,7 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
-    headless: headless ? 'shell' : false,  // 'shell' = novo modo headless, menos detectável
+    headless: false,  // Agora rodamos 100% headful com Xvfb!
     userDataDir,
     ignoreDefaultArgs: [
       '--enable-automation',

@@ -1,9 +1,9 @@
 FROM node:20-slim
 WORKDIR /app
 
-# Dependencias base
+# Dependencias base (agora com xvfb)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tini ca-certificates curl wget gnupg \
+    tini ca-certificates curl wget gnupg xvfb \
     fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei \
     fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
     libxss1 libx11-xcb1 libxcomposite1 libxcursor1 \
@@ -40,10 +40,14 @@ RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
 
+# Display port for xvfb
+ENV DISPLAY=:99
+
 # Healthcheck — Docker/Coolify só consideram o container "saudável" quando o
 # /api/health responde. start-period generoso (60s) cobre o boot + Chrome.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["npm", "start"]
+# Inicia Xvfb em background e depois o node (modo headful = 100% real)
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & npm start"]
