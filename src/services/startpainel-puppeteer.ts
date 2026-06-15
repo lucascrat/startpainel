@@ -24,10 +24,13 @@ const DEFAULT_CHROME_PATH = isWindows
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').replace(/\/$/, '');
+// URL interna — o Puppeteer roda no mesmo container, então acessa direto sem Cloudflare!
+const INTERNAL_URL = (process.env.STARTPAINEL_INTERNAL_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ADMIN_USER = (process.env.STARTPAINEL_ADMIN_USER || '').trim();
 const ADMIN_PASS = (process.env.STARTPAINEL_ADMIN_PASS || '').trim();
 
 console.log(`[Config] Carregando credenciais para: ${ADMIN_USER ? 'OK (' + ADMIN_USER + ')' : 'VAZIO'}`);
+console.log(`[Config] URL externa: ${BASE_URL} | URL interna (sem Cloudflare): ${INTERNAL_URL}`);
 
 export interface RenewalResult {
   success: boolean;
@@ -396,24 +399,9 @@ export async function startInteractiveBrowser(): Promise<{success: boolean, erro
     interactivePage = await interactiveBrowser.newPage();
     await interactivePage.setViewport({ width: 1280, height: 900 });
     
-    // Navega para a URL principal e tenta resolver captcha automaticamente
-    await interactivePage.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000));
-    
-    // Tenta resolver Turnstile por até 3 vezes
-    for (let i = 0; i < 3; i++) {
-      const resolved = await solveTurnstileWithVision(interactivePage);
-      if (!resolved) break; // Sem turnstile ou erro, para
-      const stillHas = await interactivePage.evaluate(() =>
-        !!(document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
-           document.body?.innerText?.includes('Confirme que é humano'))
-      );
-      if (!stillHas) {
-        console.log('[Puppeteer] Turnstile resolvido com sucesso!');
-        break;
-      }
-      await new Promise(r => setTimeout(r, 2000));
-    }
+    // Abre o Google como página inicial — o usuário navega de lá
+    await interactivePage.goto('https://www.google.com.br', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 1000));
 
     return { success: true };
   } catch (e: any) {
@@ -577,7 +565,7 @@ export async function generateBrowserHistory(page: Page) {
 }
 
 export async function loginToPanel(page: Page): Promise<boolean> {
-  const loginUrl = `${BASE_URL}/login`;
+  const loginUrl = `${INTERNAL_URL}/login`;
 
   await page.setExtraHTTPHeaders({
     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -597,7 +585,7 @@ export async function loginToPanel(page: Page): Promise<boolean> {
       console.log(`[Puppeteer] Login tentativa ${attempt}/2...`);
 
       // 1. Vai pra home — se ja tem sessao ativa, nao cai no /login
-      await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.goto(INTERNAL_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await new Promise(r => setTimeout(r, 2000));
 
       // Resolver Turnstile com IA visual
@@ -686,7 +674,7 @@ async function performRenewalFlow(page: Page, clientUsername: string): Promise<R
   try {
     // 1. Ir para a página de clientes
     console.log(`[Puppeteer] Indo para Meus Clientes...`);
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
 
     // 2. Pesquisar o cliente
     console.log(`[Puppeteer] Pesquisando: ${clientUsername}`);
@@ -775,7 +763,7 @@ export async function setCustomExpirationPuppeteer(
     if (!loggedIn) return { success: false, message: 'Login falhou no painel' };
 
     // 1. Busca o cliente
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('input[type="search"]', { timeout: 15000 });
     await page.click('input[type="search"]', { clickCount: 3 });
     await page.type('input[type="search"]', username, { delay: 80 });
@@ -869,7 +857,7 @@ export async function createClientAndGetPlaylist(username: string, profileNum = 
 
     // 1. Navigate to New Client
     console.log(`[Puppeteer] Indo para Novo Cliente...`);
-    await page.goto(`${BASE_URL}/clients/new`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients/new`, { waitUntil: 'networkidle2' });
 
     // 2. Step 1: Login Info
     console.log(`[Puppeteer] Preenchendo nome de usuário...`);
@@ -967,7 +955,7 @@ export async function createClientAndGetPlaylist(username: string, profileNum = 
 
     // 5. Navigate to Clients List to find the new client and view details
     console.log(`[Puppeteer] Indo para a lista de clientes para extrair a M3U...`);
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
 
     // Search the client
     const searchSelector = 'input[type="search"]';
@@ -1077,7 +1065,7 @@ export async function activatePlayer(username: string, mac: string, playerName: 
 
     // 1. Go to clients list
     console.log(`[Puppeteer] Indo para a lista de clientes...`);
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
 
     // 2. Search the client
     console.log(`[Puppeteer] Pesquisando: ${username}`);
@@ -1313,7 +1301,7 @@ export async function syncAllPanelClients(
     if (!loggedIn) return { success: false, message: 'Login no painel falhou.' };
 
     // Vai pra lista e expande pra 50/página
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
     await new Promise(r => setTimeout(r, 1500));
     await page.evaluate(() => {
       const sel = document.querySelector('select') as HTMLSelectElement | null;
@@ -1464,7 +1452,7 @@ export async function deleteExpiredTrials(
     if (!loggedIn) return { success: false, message: 'Login no painel falhou.' };
 
     // Vai para a lista de clientes
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
     await new Promise(r => setTimeout(r, 1500));
 
     // Clica em "Deletar Expirados"
@@ -1569,7 +1557,7 @@ export async function createTestClientAndActivatePlayer(
 
     // === STEP 1: novo cliente ===
     console.log('[Puppeteer] Indo para /clients/new...');
-    await page.goto(`${BASE_URL}/clients/new`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients/new`, { waitUntil: 'networkidle2' });
     await new Promise(r => setTimeout(r, 1500));
 
     // Tipo IPTV (default — geralmente ja vem selecionado, garantimos)
@@ -1731,7 +1719,7 @@ export async function createTestClientAndActivatePlayer(
     if (!/\/clients\/\d+/.test(currentUrl)) {
       // Fallback: ir pra lista e procurar o cliente
       console.log('[Puppeteer] Sem redirect direto, buscando o cliente na lista...');
-      await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+      await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
       await new Promise(r => setTimeout(r, 1500));
       await page.waitForSelector('input[type="search"]', { timeout: 10000 });
       await page.click('input[type="search"]', { clickCount: 3 });
@@ -2057,7 +2045,7 @@ export async function getClientPlaylistUrl(username: string): Promise<string | n
     }
 
     console.log(`[Puppeteer] Buscando URL da lista para: ${username}`);
-    await page.goto(`${BASE_URL}/clients`, { waitUntil: 'networkidle2' });
+    await page.goto(`${INTERNAL_URL}/clients`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('input[type="search"]');
     await page.type('input[type="search"]', username);
     await new Promise(r => setTimeout(r, 2000));
