@@ -47,33 +47,199 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 
   const baseDir = path.join(process.cwd(), 'puppeteer_data');
   const userDataDir = profileNum > 0 ? `${baseDir}${suffix}` : baseDir;
-  
-  // Real notebook resolutions
-  const notebookWidths = [1366, 1440, 1536, 1920];
-  const notebookHeights = [768, 900, 864, 1080];
-  const randIdx = Math.floor(Math.random() * notebookWidths.length);
-  const width = notebookWidths[randIdx];
-  const height = notebookHeights[randIdx];
+
+  // Resoluções reais de notebooks
+  const screens = [
+    { w: 1366, h: 768 }, { w: 1440, h: 900 }, { w: 1536, h: 864 },
+    { w: 1920, h: 1080 }, { w: 1280, h: 800 }, { w: 1600, h: 900 }
+  ];
+  const scr = screens[Math.floor(Math.random() * screens.length)];
 
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless,
-    userDataDir, // Usa um perfil dedicado com historico persistente
-    ignoreDefaultArgs: ['--enable-automation'], // Esconde o aviso de automacao do Chrome
+    userDataDir,
+    ignoreDefaultArgs: [
+      '--enable-automation',
+      '--enable-blink-features=IdleDetection',
+    ],
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      `--window-size=${width},${height}`,
+      `--window-size=${scr.w},${scr.h}`,
       '--disable-infobars',
-      '--disable-features=PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
-      '--password-store=basic',
-      '--start-maximized',
-      '--proxy-server=http://200.234.150.125:50100', // Proxy adicionado
       '--disable-blink-features=AutomationControlled',
-      '--lang=pt-BR,pt,en-US,en'
+      '--disable-features=IsolateOrigins,site-per-process,PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
+      '--disable-web-security',
+      '--allow-running-insecure-content',
+      '--password-store=basic',
+      '--proxy-server=http://200.234.150.125:50100',
+      '--lang=pt-BR,pt,en-US,en',
+      '--accept-lang=pt-BR',
+      '--flag-switches-begin',
+      '--flag-switches-end',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--metrics-recording-only',
+      '--no-first-run',
+      '--use-fake-ui-for-media-stream',
+      '--no-default-browser-check',
     ],
-    defaultViewport: null, // Deixa viewport real para despistar Cloudflare
+    defaultViewport: null,
   }) as unknown as Browser;
+
+  // ── Script de anti-detecção completo ──
+  const ANTI_DETECT_SCRIPT = `
+    // 1. Remove webdriver flag completamente
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    delete navigator.__proto__.webdriver;
+
+    // 2. Objeto window.chrome realista (Cloudflare verifica isso)
+    if (!window.chrome) {
+      window.chrome = {
+        app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+        csi: () => {},
+        loadTimes: () => ({
+          commitLoadTime: Date.now() / 1000 - Math.random() * 2,
+          connectionInfo: 'h2',
+          finishDocumentLoadTime: Date.now() / 1000 - Math.random(),
+          finishLoadTime: Date.now() / 1000 - Math.random() * 0.5,
+          firstPaintAfterLoadTime: 0,
+          firstPaintTime: Date.now() / 1000 - Math.random() * 3,
+          navigationType: 'Other',
+          npnNegotiatedProtocol: 'h2',
+          requestTime: Date.now() / 1000 - Math.random() * 3,
+          startLoadTime: Date.now() / 1000 - Math.random() * 2,
+          wasAlternateProtocolAvailable: false,
+          wasFetchedViaSpdy: true,
+          wasNpnNegotiated: true,
+        }),
+        runtime: { PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' } },
+      };
+    }
+
+    // 3. Plugins realistas do Chrome (PDF Viewer, Chrome PDF Viewer, etc)
+    const pluginArray = [
+      { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', suffixes: 'pdf', type: 'application/pdf' },
+      { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
+      { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
+      { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
+      { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: '', suffixes: 'pdf', type: 'application/pdf' },
+    ];
+    const makePlugin = (p) => {
+      const plugin = Object.create(Plugin.prototype);
+      Object.defineProperty(plugin, 'name', { get: () => p.name });
+      Object.defineProperty(plugin, 'filename', { get: () => p.filename });
+      Object.defineProperty(plugin, 'description', { get: () => p.description });
+      Object.defineProperty(plugin, 'length', { get: () => 1 });
+      const mimeType = Object.create(MimeType.prototype);
+      Object.defineProperty(mimeType, 'type', { get: () => p.type });
+      Object.defineProperty(mimeType, 'suffixes', { get: () => p.suffixes });
+      Object.defineProperty(mimeType, 'description', { get: () => '' });
+      Object.defineProperty(mimeType, 'enabledPlugin', { get: () => plugin });
+      plugin[0] = mimeType;
+      return plugin;
+    };
+    try {
+      const pArr = pluginArray.map(makePlugin);
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => { const a = Object.create(PluginArray.prototype); pArr.forEach((p,i) => a[i]=p); Object.defineProperty(a,'length',{get:()=>pArr.length}); return a; }
+      });
+      const mArr = pluginArray.map(p => p.type);
+      Object.defineProperty(navigator, 'mimeTypes', {
+        get: () => { const a = Object.create(MimeTypeArray.prototype); mArr.forEach((m,i) => a[i]=m); Object.defineProperty(a,'length',{get:()=>mArr.length}); return a; }
+      });
+    } catch(e) {}
+
+    // 4. Hardware — notebook realista
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+
+    // 5. Screen dimensions — match window size
+    Object.defineProperty(screen, 'width', { get: () => window.outerWidth || ${scr.w} });
+    Object.defineProperty(screen, 'height', { get: () => window.outerHeight || ${scr.h} });
+    Object.defineProperty(screen, 'availWidth', { get: () => window.outerWidth || ${scr.w} });
+    Object.defineProperty(screen, 'availHeight', { get: () => (window.outerHeight || ${scr.h}) - 40 });
+    Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+    Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+    // 6. Canvas fingerprint — adiciona ruído sutil para não ser idêntico
+    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+      const ctx = this.getContext('2d');
+      if (ctx) {
+        const imageData = ctx.getImageData(0, 0, this.width, this.height);
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          imageData.data[i]   += Math.floor(Math.random() * 3) - 1;
+          imageData.data[i+1] += Math.floor(Math.random() * 3) - 1;
+          imageData.data[i+2] += Math.floor(Math.random() * 3) - 1;
+        }
+        ctx.putImageData(imageData, 0, 0);
+      }
+      return originalToDataURL.apply(this, [type, quality]);
+    };
+
+    // 7. WebGL fingerprint — spoof renderer & vendor
+    const getParam = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+      if (param === 37445) return 'Intel Inc.';  // UNMASKED_VENDOR_WEBGL
+      if (param === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
+      return getParam.call(this, param);
+    };
+    try {
+      const getParam2 = WebGL2RenderingContext.prototype.getParameter;
+      WebGL2RenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';
+        if (param === 37446) return 'Intel Iris OpenGL Engine';
+        return getParam2.call(this, param);
+      };
+    } catch(e) {}
+
+    // 8. Audio fingerprint — adiciona pequeno ruído
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContext) {
+        const orig = AudioContext.prototype.createOscillator;
+        AudioContext.prototype.createOscillator = function() {
+          const osc = orig.apply(this, arguments);
+          const origStart = osc.start.bind(osc);
+          osc.start = function(when?: number) { return origStart(when ? when + Math.random() * 0.00001 : when); };
+          return osc;
+        };
+      }
+    } catch(e) {}
+
+    // 9. Notification permission — deve ser 'default' não 'denied'
+    try {
+      Object.defineProperty(Notification, 'permission', { get: () => 'default' });
+    } catch(e) {}
+
+    // 10. Connection info realista
+    try {
+      Object.defineProperty(navigator, 'connection', {
+        get: () => ({ downlink: 10, effectiveType: '4g', rtt: 50, saveData: false })
+      });
+    } catch(e) {}
+
+    // 11. Remove sinais de headless
+    Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true });
+
+    // 12. Permissions API — retorna 'granted' para notificações
+    const origQuery = navigator.permissions?.query?.bind(navigator.permissions);
+    if (origQuery) {
+      navigator.permissions.query = (parameters) => {
+        if (parameters.name === 'notifications') {
+          return Promise.resolve({ state: Notification.permission, onchange: null } as PermissionStatus);
+        }
+        return origQuery(parameters);
+      };
+    }
+  `;
 
   const originalNewPage = browser.newPage.bind(browser);
   const pagesOpened: Page[] = [];
@@ -81,67 +247,47 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   browser.newPage = async function() {
     const p = await originalNewPage();
     pagesOpened.push(p);
-    
-    // Autenticação automática do proxy em cada nova página
+
     await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
-    
-    // Dados de aparelho de um Notebook Real Windows
-    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-    await p.setUserAgent(userAgent, {
-      architecture: 'x86',
-      bitness: '64',
+
+    // User-Agent do Chrome real no Windows
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.118 Safari/537.36';
+    await p.setUserAgent(ua, {
+      architecture: 'x86', bitness: '64', mobile: false,
+      model: '', platform: 'Windows', platformVersion: '10.0.0',
       brands: [
         { brand: 'Chromium', version: '124' },
         { brand: 'Google Chrome', version: '124' },
-        { brand: 'Not-A.Brand', version: '99' }
+        { brand: 'Not-A.Brand', version: '99' },
       ],
       fullVersionList: [
         { brand: 'Chromium', version: '124.0.6367.118' },
         { brand: 'Google Chrome', version: '124.0.6367.118' },
-        { brand: 'Not-A.Brand', version: '99.0.0.0' }
+        { brand: 'Not-A.Brand', version: '99.0.0.0' },
       ],
-      mobile: false,
-      model: '',
-      platform: 'Windows',
-      platformVersion: '10.0.0',
-    });
-    
-    await p.setExtraHTTPHeaders({
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-      'Sec-Ch-Ua-Mobile': '?0',
     });
 
-    await p.evaluateOnNewDocument(() => {
-      // Mock navigator hardware concurrency & memory to look like a laptop
-      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-      // Mock languages
-      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
-      // Add fake plugins to look like normal desktop
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
+    await p.setExtraHTTPHeaders({
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
     });
-    
+
+    // Injeta o script de anti-detecção em TODA página antes do JS do site carregar
+    await p.evaluateOnNewDocument(ANTI_DETECT_SCRIPT);
+
     return p;
   };
 
   Object.defineProperty(browser, 'close', {
     value: async function() {
-      console.log('[Puppeteer] Fechando abas abertas nesta sessão...');
       for (const p of pagesOpened) {
-        try {
-          if (!p.isClosed()) {
-            await p.close().catch(() => {});
-          }
-        } catch (e) {}
+        try { if (!p.isClosed()) await p.close().catch(() => {}); } catch {}
       }
-      console.log('[Puppeteer] Fechando navegador...');
       await browser.disconnect().catch(() => {});
     },
-    writable: true,
-    configurable: true
+    writable: true, configurable: true
   });
 
   return browser;
