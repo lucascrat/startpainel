@@ -18,6 +18,7 @@ export default function BrowserRemote() {
   const [clickIndicator, setClickIndicator] = useState<{ pctX: number; pctY: number } | null>(null);
   const [navigating, setNavigating] = useState(false);
   const [solvingCaptcha, setSolvingCaptcha] = useState(false);
+  const [warmingUp, setWarmingUp] = useState(false);
 
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,7 +128,6 @@ export default function BrowserRemote() {
     setNavigating(false);
   };
 
-  /* ── Solver de Captcha pela API ── */
   const solveCaptcha = async () => {
     setSolvingCaptcha(true);
     try {
@@ -136,6 +136,16 @@ export default function BrowserRemote() {
       setTimeout(fetchScreenshot, 5000);
     } catch {}
     setSolvingCaptcha(false);
+  };
+
+  const warmupBrowser = async () => {
+    setWarmingUp(true);
+    try {
+      await authFetch('/api/admin/browser/warmup', { method: 'POST' });
+      setTimeout(fetchScreenshot, 2000);
+      setTimeout(fetchUrl, 2500);
+    } catch {}
+    setWarmingUp(false);
   };
 
   const goHome = () => navigate('https://www.google.com.br');
@@ -216,15 +226,26 @@ export default function BrowserRemote() {
         </div>
         <div className="flex items-center gap-2">
           {isRunning && (
-            <button
-              onClick={solveCaptcha}
-              disabled={solvingCaptcha}
-              title="Usar IA para resolver o captcha automaticamente"
-              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
-            >
-              {solvingCaptcha ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              Resolver Captcha
-            </button>
+            <>
+              <button
+                onClick={warmupBrowser}
+                disabled={warmingUp || solvingCaptcha}
+                title="Criar histórico falso visitando sites"
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+              >
+                {warmingUp ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                Aquecer Perfil
+              </button>
+              <button
+                onClick={solveCaptcha}
+                disabled={solvingCaptcha || warmingUp}
+                title="Usar IA para resolver o captcha automaticamente"
+                className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+              >
+                {solvingCaptcha ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                Resolver Captcha
+              </button>
+            </>
           )}
           {!isRunning ? (
             <button

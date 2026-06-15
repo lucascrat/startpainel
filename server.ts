@@ -6920,7 +6920,8 @@ import {
   navigateInteractiveBrowser,
   scrollInteractiveBrowser,
   getInteractiveBrowserUrl,
-  solveInteractiveCaptcha
+  solveInteractiveCaptcha,
+  warmupInteractiveBrowser
 } from './src/services/startpainel-puppeteer.js';
 
 // --- INTERACTIVE BROWSER (VNC) ADMIN ROUTES ---
@@ -6976,6 +6977,11 @@ app.get('/api/admin/browser/url', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/browser/solve-captcha', requireAdmin, async (req, res) => {
   const result = await solveInteractiveCaptcha();
+  res.json(result);
+});
+
+app.post('/api/admin/browser/warmup', requireAdmin, async (req, res) => {
+  const result = await warmupInteractiveBrowser();
   res.json(result);
 });
 

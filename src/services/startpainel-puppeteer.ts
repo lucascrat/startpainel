@@ -514,30 +514,63 @@ export async function solveInteractiveCaptcha(): Promise<{success: boolean}> {
   return { success: res };
 }
 
+export async function warmupInteractiveBrowser(): Promise<{success: boolean}> {
+  if (!interactivePage) return { success: false };
+  await generateBrowserHistory(interactivePage);
+  return { success: true };
+}
+
 
 export async function generateBrowserHistory(page: Page) {
   try {
-    console.log('[Puppeteer] Gerando histórico de navegação para simular uso humano...');
-    // Acessa o Google e faz uma pesquisa rápida
-    await page.goto('https://www.google.com.br', { waitUntil: 'networkidle2', timeout: 30000 });
+    console.log('[Puppeteer] Gerando histórico de navegação robusto (cookies + history) para simular uso humano...');
     
-    // Lista de pesquisas normais de um notebook
-    const terms = ['notícias de hoje', 'previsão do tempo', 'youtube', 'tradutor', 'resultados futebol', 'calculadora', 'receita de bolo'];
+    // Lista de sites muito comuns que dão credibilidade ao perfil (Google, YouTube, Wikipedia, Globo, MercadoLivre)
+    const topSites = [
+      'https://www.google.com.br',
+      'https://www.wikipedia.org',
+      'https://www.globo.com',
+      'https://www.mercadolivre.com.br',
+      'https://www.uol.com.br'
+    ];
+
+    // Embaralha e pega 3 sites aleatórios para visitar
+    const sitesToVisit = topSites.sort(() => 0.5 - Math.random()).slice(0, 3);
+
+    for (const site of sitesToVisit) {
+      console.log(`[Puppeteer] Visitando histórico: ${site}`);
+      await page.goto(site, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+      
+      // Simula tempo de leitura e scroll
+      await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+      await page.evaluate(() => window.scrollBy({ top: 300 + Math.random() * 400, behavior: 'smooth' })).catch(() => {});
+      await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+      await page.evaluate(() => window.scrollBy({ top: 300 + Math.random() * 400, behavior: 'smooth' })).catch(() => {});
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // Por fim, faz uma pesquisa no Google para registrar atividade de busca real
+    console.log('[Puppeteer] Fazendo pesquisa no Google...');
+    await page.goto('https://www.google.com.br', { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+    
+    const terms = [
+      'notícias de hoje', 'previsão do tempo', 'youtube', 'tradutor', 
+      'resultados do brasileirão', 'calculadora', 'como fazer bolo de cenoura',
+      'cotação do dólar', 'horário de brasília', 'filmes em cartaz'
+    ];
     const search = terms[Math.floor(Math.random() * terms.length)];
     
     const searchBox = await page.$('textarea[name="q"], input[name="q"]');
     if (searchBox) {
-      await searchBox.type(search, { delay: 100 });
+      await searchBox.type(search, { delay: 60 + Math.random() * 60 });
       await page.keyboard.press('Enter');
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
     }
 
-    // Rolar a página um pouco
-    await page.evaluate(() => {
-      window.scrollBy({ top: 500, behavior: 'smooth' });
-    });
-    await new Promise(r => setTimeout(r, 1500));
-    console.log(`[Puppeteer] Pesquisou por "${search}" no Google.`);
+    await page.evaluate(() => window.scrollBy({ top: 500, behavior: 'smooth' })).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
+    
+    console.log(`[Puppeteer] Histórico enriquecido com sucesso (pesquisa: "${search}").`);
   } catch (e: any) {
     console.log('[Puppeteer] Erro ao gerar histórico (ignorado):', e.message);
   }
