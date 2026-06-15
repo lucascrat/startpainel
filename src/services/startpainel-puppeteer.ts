@@ -301,10 +301,53 @@ export async function sendInteractiveType(text: string) {
       await interactivePage.keyboard.press('Backspace');
     } else if (text === 'Tab') {
       await interactivePage.keyboard.press('Tab');
-    } else {
+    } else if (text === 'ArrowLeft') {
+      await interactivePage.keyboard.press('ArrowLeft');
+    } else if (text === 'ArrowRight') {
+      await interactivePage.keyboard.press('ArrowRight');
+    } else if (text === 'Escape') {
+      await interactivePage.keyboard.press('Escape');
+    } else if (text.length === 1) {
       await interactivePage.keyboard.type(text, { delay: 40 + Math.random() * 60 });
     }
   } catch (e) {}
+}
+
+export async function navigateInteractiveBrowser(url: string): Promise<{success: boolean, error?: string}> {
+  if (!interactivePage) return { success: false, error: 'Navegador não iniciado' };
+  try {
+    // Garante protocolo
+    let finalUrl = url.trim();
+    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+      finalUrl = 'https://' + finalUrl;
+    }
+    console.log(`[InteractiveBrowser] Navegando para: ${finalUrl}`);
+    await interactivePage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Tenta resolver Turnstile se aparecer
+    await new Promise(r => setTimeout(r, 1500));
+    await solveTurnstileWithVision(interactivePage);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+export async function scrollInteractiveBrowser(deltaY: number) {
+  if (!interactivePage) return;
+  try {
+    await interactivePage.evaluate((dy) => {
+      window.scrollBy({ top: dy, behavior: 'smooth' });
+    }, deltaY);
+  } catch (e) {}
+}
+
+export async function getInteractiveBrowserUrl(): Promise<string | null> {
+  if (!interactivePage) return null;
+  try {
+    return interactivePage.url();
+  } catch (e) {
+    return null;
+  }
 }
 
 

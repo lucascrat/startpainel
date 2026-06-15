@@ -6916,7 +6916,10 @@ import {
   stopInteractiveBrowser, 
   getInteractiveScreenshot, 
   sendInteractiveClick, 
-  sendInteractiveType 
+  sendInteractiveType,
+  navigateInteractiveBrowser,
+  scrollInteractiveBrowser,
+  getInteractiveBrowserUrl
 } from './src/services/startpainel-puppeteer.js';
 
 // --- INTERACTIVE BROWSER (VNC) ADMIN ROUTES ---
@@ -6950,6 +6953,24 @@ app.post('/api/admin/browser/type', requireAdmin, async (req, res) => {
   const { text } = req.body;
   await sendInteractiveType(text);
   res.json({ success: true });
+});
+
+app.post('/api/admin/browser/navigate', requireAdmin, async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url obrigatória' });
+  const result = await navigateInteractiveBrowser(url);
+  res.json(result);
+});
+
+app.post('/api/admin/browser/scroll', requireAdmin, async (req, res) => {
+  const { deltaY } = req.body;
+  await scrollInteractiveBrowser(deltaY || 200);
+  res.json({ success: true });
+});
+
+app.get('/api/admin/browser/url', requireAdmin, async (req, res) => {
+  const url = await getInteractiveBrowserUrl();
+  res.json({ url });
 });
 
 app.get('/api/app/dns', requireAdmin, async (req, res) => {
