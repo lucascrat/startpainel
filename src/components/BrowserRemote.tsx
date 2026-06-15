@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play, Square, MousePointerClick, Loader2,
-  ChevronLeft, ChevronRight, RotateCw, Home, Globe
+  RotateCw, Home, Globe, RefreshCw
 } from 'lucide-react';
 import { authFetch } from '../lib/auth';
 
@@ -17,9 +17,13 @@ export default function BrowserRemote() {
   const [addressBar, setAddressBar] = useState('');
   const [clickIndicator, setClickIndicator] = useState<{ pctX: number; pctY: number } | null>(null);
   const [navigating, setNavigating] = useState(false);
+  const [solvingCaptcha, setSolvingCaptcha] = useState(false);
+
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Rastreia se o input de endereço está em foco para NÃO sobrescrever o que o usuário digita
+  const addressBarFocused = useRef(false);
 
   /* ── Screenshot polling ── */
   const fetchScreenshot = useCallback(async () => {
@@ -36,14 +40,17 @@ export default function BrowserRemote() {
     } catch {}
   }, []);
 
-  /* ── URL polling ── */
+  /* ── URL polling — SÓ atualiza a barra se o usuário NÃO estiver digitando ── */
   const fetchUrl = useCallback(async () => {
     try {
       const res = await authFetch('/api/admin/browser/url');
       const data = await res.json();
       if (data.url) {
         setCurrentUrl(data.url);
-        setAddressBar(data.url);
+        // Só sobrescreve a barra de endereço se o usuário não estiver editando ela
+        if (!addressBarFocused.current) {
+          setAddressBar(data.url);
+        }
       }
     } catch {}
   }, []);
@@ -94,9 +101,19 @@ export default function BrowserRemote() {
 
   /* ── Navigate ── */
   const navigate = async (url?: string) => {
-    const target = (url ?? addressBar).trim();
-    if (!target) return;
+    const raw = (url ?? addressBar).trim();
+    if (!raw) return;
+    // Se parece pesquisa (sem ponto no início), vai para o Google
+    let target = raw;
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      if (raw.includes('.') && !raw.includes(' ')) {
+        target = 'https://' + raw;
+      } else {
+        target = 'https://www.google.com.br/search?q=' + encodeURIComponent(raw);
+      }
+    }
     setNavigating(true);
+    setAddressBar(target);
     try {
       await authFetch('/api/admin/browser/navigate', {
         method: 'POST',
@@ -110,9 +127,21 @@ export default function BrowserRemote() {
     setNavigating(false);
   };
 
-  const goHome = () => navigate('https://www.google.com.br');
+  /* ── Solver de Captcha pela API ── */
+  const solveCaptcha = async () => {
+    setSolvingCaptcha(true);
+    try {
+      await authFetch('/api/admin/browser/solve-captcha', { method: 'POST' });
+      setTimeout(fetchScreenshot, 2000);
+      setTimeout(fetchScreenshot, 5000);
+    } catch {}
+    setSolvingCaptcha(false);
+  };
 
-  /* ── Click ── */
+  const goHome = () => navigate('https://www.google.com.br');
+  const reload = () => navigate(currentUrl || addressBar);
+
+  /* ── Click na tela ── */
   const handleImageClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     if (!imgRef.current) return;
     const rect = imgRef.current.getBoundingClientRect();
@@ -123,6 +152,9 @@ export default function BrowserRemote() {
 
     setClickIndicator({ pctX: (relX / rect.width) * 100, pctY: (relY / rect.height) * 100 });
     setTimeout(() => setClickIndicator(null), 700);
+
+    // Foca no container para o teclado funcionar após o clique
+    containerRef.current?.focus();
 
     try {
       await authFetch('/api/admin/browser/click', {
@@ -137,11 +169,12 @@ export default function BrowserRemote() {
     setTimeout(() => { fetchScreenshot(); fetchUrl(); }, 2500);
   };
 
-  /* ── Keyboard ── */
+  /* ── Teclado — só captura quando o foco NÃO é no input ── */
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!isRunning) return;
-    // Allow normal typing in address bar
-    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const target = e.target as HTMLElement;
+    // Se o foco está em qualquer input/textarea, não intercepta
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
     e.preventDefault();
     try {
       await authFetch('/api/admin/browser/type', {
@@ -156,6 +189,7 @@ export default function BrowserRemote() {
   /* ── Scroll ── */
   const handleWheel = async (e: React.WheelEvent<HTMLDivElement>) => {
     if (!isRunning) return;
+    e.preventDefault();
     try {
       await authFetch('/api/admin/browser/scroll', {
         method: 'POST',
@@ -180,64 +214,67 @@ export default function BrowserRemote() {
           <span className="font-bold text-sm">Navegador Remoto</span>
           <span className="text-slate-500 text-xs hidden sm:inline">| Interaja com o robô na nuvem</span>
         </div>
-        {!isRunning ? (
-          <button
-            onClick={startBrowser}
-            disabled={loading}
-            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            Iniciar Navegador
-          </button>
-        ) : (
-          <button
-            onClick={stopBrowser}
-            disabled={loading}
-            className="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
-            Parar
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isRunning && (
+            <button
+              onClick={solveCaptcha}
+              disabled={solvingCaptcha}
+              title="Usar IA para resolver o captcha automaticamente"
+              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+            >
+              {solvingCaptcha ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+              Resolver Captcha
+            </button>
+          )}
+          {!isRunning ? (
+            <button
+              onClick={startBrowser}
+              disabled={loading}
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              Iniciar Navegador
+            </button>
+          ) : (
+            <button
+              onClick={stopBrowser}
+              disabled={loading}
+              className="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
+              Parar
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Address Bar ── */}
       {isRunning && (
         <div className="flex items-center gap-1 px-3 py-2 bg-slate-800 border-b border-slate-700">
-          {/* Botão Home */}
-          <button
-            onClick={goHome}
-            title="Ir para Google"
-            className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition"
-          >
+          <button onClick={goHome} title="Google" className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition">
             <Home size={15} />
           </button>
-
-          {/* Botão Reload */}
-          <button
-            onClick={() => navigate(currentUrl)}
-            title="Recarregar"
-            className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition"
-          >
+          <button onClick={reload} title="Recarregar" className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition">
             <RotateCw size={15} className={navigating ? 'animate-spin' : ''} />
           </button>
 
-          {/* Barra de URL */}
           <div className="flex-1 flex items-center gap-2 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 focus-within:border-emerald-500 transition">
             <Globe size={13} className="text-slate-500 flex-shrink-0" />
             <input
               type="text"
               value={addressBar}
               onChange={e => setAddressBar(e.target.value)}
+              onFocus={() => { addressBarFocused.current = true; }}
+              onBlur={() => { addressBarFocused.current = false; }}
               onKeyDown={e => {
+                e.stopPropagation(); // ← Impede que teclas vazem para o browser
                 if (e.key === 'Enter') { e.preventDefault(); navigate(); }
               }}
-              placeholder="Digite uma URL ou pesquise no Google..."
+              placeholder="Digite uma URL ou pesquise..."
               className="flex-1 bg-transparent text-sm text-white placeholder-slate-500 outline-none min-w-0"
             />
           </div>
 
-          {/* Botão Ir */}
           <button
             onClick={() => navigate()}
             disabled={navigating}
@@ -266,22 +303,14 @@ export default function BrowserRemote() {
               draggable={false}
               style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 200px)', display: 'block', pointerEvents: 'none' }}
             />
-
-            {/* Badge ao vivo */}
             <div className="absolute top-2 right-2 bg-black/70 px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-widest text-emerald-400 backdrop-blur-sm pointer-events-none flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
               Ao Vivo
             </div>
-
-            {/* Indicador de clique */}
             {clickIndicator && (
               <div
                 className="absolute pointer-events-none z-10"
-                style={{
-                  left: `${clickIndicator.pctX}%`,
-                  top: `${clickIndicator.pctY}%`,
-                  transform: 'translate(-50%, -50%)',
-                }}
+                style={{ left: `${clickIndicator.pctX}%`, top: `${clickIndicator.pctY}%`, transform: 'translate(-50%, -50%)' }}
               >
                 <div className="w-7 h-7 rounded-full border-2 border-yellow-400 bg-yellow-400/20 animate-ping" />
               </div>
@@ -314,9 +343,9 @@ export default function BrowserRemote() {
 
       {/* ── Status Bar ── */}
       {isRunning && (
-        <div className="bg-slate-800 px-3 py-1 text-center border-t border-slate-700 flex items-center justify-between">
+        <div className="bg-slate-800 px-3 py-1 border-t border-slate-700 flex items-center justify-between">
           <span className="text-[10px] text-slate-500">
-            Scroll da página funciona · Teclado digita no navegador (clique na tela primeiro)
+            Clique na tela para focar · Scroll rola a página · Teclado digita no browser
           </span>
           <span className="text-[10px] text-slate-600 font-mono truncate max-w-xs" title={currentUrl}>
             {currentUrl}

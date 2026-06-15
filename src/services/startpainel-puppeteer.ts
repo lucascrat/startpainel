@@ -508,6 +508,12 @@ export async function getInteractiveBrowserUrl(): Promise<string | null> {
   }
 }
 
+export async function solveInteractiveCaptcha(): Promise<{success: boolean}> {
+  if (!interactivePage) return { success: false };
+  const res = await solveTurnstileWithVision(interactivePage);
+  return { success: res };
+}
+
 
 export async function generateBrowserHistory(page: Page) {
   try {
