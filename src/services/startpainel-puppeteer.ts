@@ -18,9 +18,9 @@ puppeteer.use(StealthPlugin());
 
 // Detect OS and set default Chrome path
 const isWindows = os.platform() === 'win32';
-const DEFAULT_CHROME_PATH = isWindows 
+const DEFAULT_CHROME_PATH = isWindows
   ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-  : '/usr/bin/chromium';
+  : (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : '/usr/bin/chromium');
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').replace(/\/$/, '');
@@ -72,7 +72,7 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
 
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
-    headless,
+    headless: headless ? 'shell' : false,  // 'shell' = novo modo headless, menos detectável
     userDataDir,
     ignoreDefaultArgs: [
       '--enable-automation',
@@ -82,24 +82,21 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--no-sandbox',
       '--disable-setuid-sandbox',
       `--window-size=${scr.w},${scr.h}`,
-      '--disable-infobars',
       '--disable-blink-features=AutomationControlled',
       '--disable-features=IsolateOrigins,site-per-process,PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
-      '--disable-web-security',
-      '--allow-running-insecure-content',
       '--password-store=basic',
       '--proxy-server=http://200.234.150.125:50100',
       '--lang=pt-BR,pt,en-US,en',
       '--accept-lang=pt-BR',
-      '--flag-switches-begin',
-      '--flag-switches-end',
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      '--metrics-recording-only',
       '--no-first-run',
-      '--use-fake-ui-for-media-stream',
       '--no-default-browser-check',
+      '--disable-extensions-except',
+      '--use-fake-ui-for-media-stream',
+      '--disable-ipc-flooding-protection',
+      '--metrics-recording-only',
     ],
     defaultViewport: null,
   }) as unknown as Browser;
