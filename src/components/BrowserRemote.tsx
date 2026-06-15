@@ -228,7 +228,7 @@ export default function BrowserRemote() {
           {isRunning && (
             <>
               <button
-                onClick={() => navigate('http://localhost:3000')}
+                onClick={() => navigate('http://localhost:3000/clients')}
                 title="Acessar o painel diretamente pelo servidor local (Bypassa Cloudflare 100%)"
                 className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
               >
