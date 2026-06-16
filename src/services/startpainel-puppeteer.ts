@@ -25,7 +25,7 @@ const DEFAULT_CHROME_PATH = isWindows
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
 const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').trim().replace(/\/$/, '');
 // URL interna — o Puppeteer roda no mesmo container, então acessa direto sem Cloudflare!
-const INTERNAL_URL = (process.env.STARTPAINEL_INTERNAL_URL || 'http://localhost:3000').trim().replace(/\/$/, '');
+const INTERNAL_URL = (process.env.STARTPAINEL_INTERNAL_URL || process.env.STARTPAINEL_URL || 'http://localhost:3000').trim().replace(/\/$/, '');
 const ADMIN_USER = (process.env.STARTPAINEL_ADMIN_USER || '').trim();
 const ADMIN_PASS = (process.env.STARTPAINEL_ADMIN_PASS || '').trim();
 
@@ -428,10 +428,7 @@ export async function loginToPanel(page: Page): Promise<boolean> {
   // Estamos logados se a URL NAO contem /login
   const isLoggedIn = () => !page.url().includes('/login');
 
-  // Com 20% de chance, fazemos um aquecimento de histórico antes do login
-  if (Math.random() < 0.20) {
-    await generateBrowserHistory(page);
-  }
+  // Aquecimento de histórico foi removido para acelerar o processo e evitar navegação indesejada
 
   // Ate 2 tentativas — login pode falhar transitoriamente (rede, render lento)
   for (let attempt = 1; attempt <= 2; attempt++) {
