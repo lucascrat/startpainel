@@ -2007,14 +2007,20 @@ FOLLOW-UP PÓS-TESTE (importante para conversão):
 NUNCA pule etapas: não gere teste sem ter o MAC. Não gere Pix sem saber quantas telas.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CADASTRO E PAGAMENTO (CLIENTE NOVO)
+CADASTRO E PAGAMENTO (CLIENTE NOVO E RENOVAÇÃO)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS IMPORTANTES SOBRE PAGAMENTO VIA PIX:
+1. SEMPRE considere que o cliente quer comprar/renovar apenas 1 tela (R$ 25), a não ser que ele peça mais telas.
+2. Quando o cliente pedir para fazer o pagamento (ou se for o momento de pagar), use a ferramenta *generate_pix*. Ela enviará a nossa chave Pix (pagamentos@gmail.com) para o cliente.
+3. Não precisa perguntar quantas telas ele quer se ele não mencionar nada. Assuma 1 tela.
+4. Assim que ele mandar a foto do comprovante, use a tool *register_pix_receipt* com os dados visíveis no comprovante.
+5. Após chamar *register_pix_receipt*, o sistema automaticamente libera o sinal e envia o pagamento para a conferência do admin no painel. Você DEVE confirmar para o cliente: "Recebi seu comprovante! Já liberei o seu sinal, pode continuar assistindo 😊"
+
 Se um cliente NOVO (não cadastrado no sistema) quiser comprar ou assinar:
 1. Peça o Nome Completo (se ainda não tiver).
 2. OBRIGATÓRIO: Chame a tool *register_new_customer* com os dados dele (full_name, desired_username, app_id, mac_address).
-3. Somente DEPOIS que essa tool retornar sucesso, chame a tool *generate_pix(username, amount)*.
+3. Somente DEPOIS que essa tool retornar sucesso, chame a tool *generate_pix(username, amount)* com amount=25.
 4. ERRO GRAVE: NUNCA diga "vou gerar/mandar o pix" se você NÃO chamou a tool *generate_pix*! O Pix só é gerado para o cliente se você acionar a ferramenta.
-5. CHAVE PIX DE CONTINGÊNCIA: Se caso houver problemas ao gerar o Pix via tool, ou se o cliente pedir a chave direta, envie a chave padrão: email pagamentos@appbr.pro
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 APPS PAGOS VIA ATIVEAPP — TESTE DE 7 DIAS
@@ -2510,7 +2516,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
     });
 
     const oaiTools: any[] = [
-      toOAITool({ name: "generate_pix", description: "Gera um QR Code Pix.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
+      toOAITool({ name: "generate_pix", description: "Envia a chave Pix (pagamentos@gmail.com) para o cliente realizar o pagamento. Não gera mais QR Code, apenas envia a chave de e-mail e o valor.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
       toOAITool({ name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } }),
       toOAITool({ name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } }),
       toOAITool({ name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }),
@@ -5240,15 +5246,11 @@ async function handleRegisterPixReceipt(
 
 async function handlePixGenerationTool(remoteJid: string, pushName: string, username: string, amount: number) {
   try {
-    const gn = getEfibankClient();
-    const pixKey = process.env.EFIBANK_PIX_KEY;
-    const body = { calendario: { expiracao: 3600 }, valor: { original: parseFloat(amount as any).toFixed(2) }, chave: pixKey, solicitacaoPagador: `Renovação - ${username}` };
-    const response = await gn.pixCreateImmediateCharge({}, body);
-    const qrcode = await gn.pixGenerateQRCode({ id: response.loc.id });
     const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
     const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
     const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
-    await evo.sendMedia(remoteJid, qrcode.imagemQrcode, `Copia e Cola: ${qrcode.qrcode}`, 'pix.png');
+    const pixMessage = `*PAGAMENTO PIX*\n\nChave Pix (E-mail):\n*pagamentos@gmail.com*\n\nValor: R$ ${parseFloat(amount as any).toFixed(2)}\n\nAssim que realizar o pagamento, por favor, me envie a foto ou print do comprovante aqui para eu liberar seu sinal imediatamente!`;
+    await evo.sendText(remoteJid, pixMessage);
   } catch (e) {}
 }
 
