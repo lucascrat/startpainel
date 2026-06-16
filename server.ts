@@ -362,6 +362,7 @@ const processedMessageIds = new Map<string, number>();
 // a IA fica em silêncio por HUMAN_PAUSE_MS para aquele contato — deixando o admin atender.
 const humanPauseUntil = new Map<string, number>();
 const HUMAN_PAUSE_MS = 10 * 60 * 1000; // 10 minutos (configurável aqui)
+const botActiveUntil = new Map<string, number>();
 
 // Global Logger — silencia rotas de polling pra reduzir spam
 const QUIET_PATHS = new Set(['/api/panel/queue', '/api/db-status', '/api/health']);
@@ -4686,6 +4687,12 @@ app.post('/api/webhooks/evolution/:event?',
     // key.remoteJidAlt (@s.whatsapp.net). Capturamos pra fazer lookup do cliente certo.
     const altJid: string | null = data.data.key.remoteJidAlt || null;
     if (data.data.key.fromMe) {
+      // Ignora se for o próprio bot enviando mensagem agora mesmo
+      const activeUntil = botActiveUntil.get(remoteJid) || 0;
+      if (Date.now() < activeUntil) {
+        console.log(`[Webhook] Ignorando fromMe para ${remoteJid} (eco do bot)`);
+        return;
+      }
       // Admin entrou na conversa — pausa a IA para esse contato por HUMAN_PAUSE_MS
       if (remoteJid) {
         humanPauseUntil.set(remoteJid, Date.now() + HUMAN_PAUSE_MS);
@@ -4840,6 +4847,7 @@ app.post('/api/webhooks/evolution/:event?',
     const isAdmin = await isAdminSender(remoteJid, altJid);
     console.log(`[Webhook] Chamando IA (history: ${chatHistory.length} msgs, midia: ${mediaData ? 'sim' : 'nao'}, altJid: ${altJid ? 'sim' : 'nao'}, admin: ${isAdmin})...`);
     const aiT0 = Date.now();
+    botActiveUntil.set(remoteJid, Date.now() + 60_000); // Dá 60s pro bot processar e enviar as mensagens
     const aiResult = await handleAIChat(remoteJid, chatHistory, { name: pushName, altJid, isAdmin }, mediaData);
     console.log(`[Webhook] IA respondeu em ${Date.now() - aiT0}ms: text=${aiResult.text?.length || 0}chars, tools=${aiResult.functionCalls?.length || 0}`);
     if (aiResult.text) {
@@ -4968,7 +4976,7 @@ app.post('/api/webhooks/evolution/:event?',
         console.error('[Webhook] sendMessage fallback falhou:', e?.message);
       }
     }
-
+    botActiveUntil.set(remoteJid, Date.now() + 15_000); // Mais 15s pra ignorar eco das tools
     // Recomputa memoria IA em background (cooldown 30 min — nao bloqueia resposta).
     void (async () => {
       try {
