@@ -23,9 +23,9 @@ const DEFAULT_CHROME_PATH = isWindows
   : (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : '/usr/bin/chromium');
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_PATH;
-const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').replace(/\/$/, '');
+const BASE_URL = (process.env.STARTPAINEL_URL || 'https://cms.startpainel.cc').trim().replace(/\/$/, '');
 // URL interna — o Puppeteer roda no mesmo container, então acessa direto sem Cloudflare!
-const INTERNAL_URL = (process.env.STARTPAINEL_INTERNAL_URL || 'http://localhost:3000').replace(/\/$/, '');
+const INTERNAL_URL = (process.env.STARTPAINEL_INTERNAL_URL || 'http://localhost:3000').trim().replace(/\/$/, '');
 const ADMIN_USER = (process.env.STARTPAINEL_ADMIN_USER || '').trim();
 const ADMIN_PASS = (process.env.STARTPAINEL_ADMIN_PASS || '').trim();
 
@@ -45,6 +45,26 @@ export interface RenewalResult {
 }
 
 export async function launchBrowser(headless = true, profileNum = 0): Promise<Browser> {
+  const remoteWs = process.env.PUPPETEER_WS_ENDPOINT;
+  const remoteHost = process.env.PUPPETEER_REMOTE_HOST;
+  const remotePort = process.env.PUPPETEER_REMOTE_PORT || '9222';
+
+  if (remoteWs) {
+    console.log(`[Puppeteer Remote] Conectando ao Chrome via WS Endpoint: ${remoteWs}`);
+    return await puppeteer.connect({ browserWSEndpoint: remoteWs, defaultViewport: null }) as unknown as Browser;
+  } else if (remoteHost && remoteHost !== 'false') {
+    // Conexão via Cloudflare Tunnel (ex: host = meu-tunel.trycloudflare.com)
+    // Se o host já vier com http/https, usa ele; senão monta com o port
+    const isCloudflare = remoteHost.includes('trycloudflare.com') || remoteHost.includes('appbr.pro');
+    const url = remoteHost.startsWith('http') ? remoteHost : (isCloudflare ? `https://${remoteHost}` : `http://${remoteHost}:${remotePort}`);
+    console.log(`[Puppeteer Remote] Conectando ao Chrome remoto em: ${url}`);
+    try {
+      return await puppeteer.connect({ browserURL: url, defaultViewport: null }) as unknown as Browser;
+    } catch (e: any) {
+      console.log(`[Puppeteer Remote] Falha ao conectar em ${url}: ${e.message}. Tentando via launch local...`);
+    }
+  }
+
   const suffix = profileNum > 0 ? `-${profileNum}` : '';
   console.log(`[Puppeteer Stealth] Launching profile${suffix} with: ${CHROME_PATH}`);
 
@@ -85,11 +105,13 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--no-sandbox',
       '--disable-setuid-sandbox',
       `--window-size=${scr.w},${scr.h}`,
-      '--disable-blink-features=AutomationControlled',
       '--disable-features=IsolateOrigins,site-per-process,PasswordLeakDetection,SafeBrowsingChromePasswordProtection',
+      '--disable-site-isolation-trials',
+      '--disable-web-security',
       '--password-store=basic',
-      '--proxy-server=http://200.234.150.125:50100',
-      '--proxy-bypass-list=localhost,127.0.0.1,<local>',
+      // Proxy foi removido/comentado temporariamente pois o Google bloqueia logins através de proxies de datacenter
+      // '--proxy-server=http://200.234.150.125:50100',
+      // '--proxy-bypass-list=localhost,127.0.0.1,<local>',
       '--lang=pt-BR,pt,en-US,en',
       '--accept-lang=pt-BR',
       '--disable-background-timer-throttling',
@@ -112,16 +134,19 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     const p = await originalNewPage();
     pagesOpened.push(p);
 
-    await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
+    // Proxy auth foi comentado junto com o proxy
+    // await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
 
-    // Removemos os overrides estáticos de User-Agent e Headers.
-    // O Stealth Plugin vai automaticamente remover o "Headless" do User-Agent real do navegador.
-    // Mudar o User-Agent para uma versão diferente da engine real (ex: dizer que é Chrome 124 no Windows quando é Chromium 114 no Linux)
-    // é um dos principais motivos que faz o Google BotGuard bloquear o login.
-
-    // Deixa o Stealth Plugin agir sozinho sem nenhuma interferência nossa.
-    // Qualquer tentativa manual de esconder flags via evaluateOnNewDocument
-    // cria inconsistências que os sistemas avançados (como o do Google) detectam.
+    // Patch adicional para garantir que o webdriver seja ocultado perfeitamente no momento 0
+    await p.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+      // Mock básico do objeto chrome que o Google verifica
+      if (!(window as any).chrome) {
+        (window as any).chrome = { runtime: {}, app: {}, csi: () => {}, loadTimes: () => {} };
+      }
+    });
 
     return p;
   };
@@ -2048,7 +2073,7 @@ export async function supportIBOPlayer(mac: string, deviceKey: string, playlistU
           const screenshot = await page.screenshot({ encoding: 'base64' });
           const openai = new OpenAI({ apiKey: openaiKey });
           const result = await openai.chat.completions.create({
-            model: 'gpt-4.1-mini',
+            model: 'gpt-4o-mini',
             messages: [{ role: 'user', content: [
               { type: 'text', text: 'Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.' },
               { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
@@ -2113,7 +2138,7 @@ export async function supportIBOPlayer(mac: string, deviceKey: string, playlistU
             // Repete a lógica de visão (uma vez)
             const secondScreenshot = await page.screenshot({ encoding: 'base64' });
             const secondResult = await openai.chat.completions.create({
-              model: 'gpt-4.1-mini',
+              model: 'gpt-4o-mini',
               messages: [{ role: 'user', content: [
                 { type: 'text', text: 'Olhe para este formulario de login. Existe um campo de Captcha com uma imagem preta e letras coloridas/brancas. Qual é o texto desse captcha? Responda apenas com os caracteres.' },
                 { type: 'image_url', image_url: { url: `data:image/png;base64,${secondScreenshot}`, detail: 'low' } },

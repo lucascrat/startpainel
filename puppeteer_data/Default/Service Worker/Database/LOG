@@ -1,2 +1,3 @@
-2026/06/15-01:13:50.711 23fc Creating DB D:\startpainel\startpainel\puppeteer_data\Default\Service Worker\Database since it was missing.
-2026/06/15-01:13:50.720 23fc Reusing MANIFEST D:\startpainel\startpainel\puppeteer_data\Default\Service Worker\Database/MANIFEST-000001
+2026/06/15-19:12:12.156 578c Reusing MANIFEST D:\startpainel\startpainel\puppeteer_data\Default\Service Worker\Database/MANIFEST-000001
+2026/06/15-19:12:12.159 578c Recovering log #3
+2026/06/15-19:12:12.159 578c Reusing old log D:\startpainel\startpainel\puppeteer_data\Default\Service Worker\Database/000003.log 

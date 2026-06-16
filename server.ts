@@ -374,7 +374,7 @@ const PORT = process.env.PORT || 3000;
 
 // Modelo OpenAI usado no chat da IA. Configurável via env OPENAI_MODEL.
 // Default: 'gpt-4.1' — modelo mais recente e capaz da OpenAI.
-const OPENAI_CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
+const OPENAI_CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
 // --- ADMIN AUTH ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;

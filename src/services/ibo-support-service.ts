@@ -70,7 +70,7 @@ export async function runIBOSupportAutomation(mac: string, deviceKey: string, pl
       const screenshot = await page.screenshot({ encoding: 'base64' });
       const openai = new OpenAI({ apiKey: openaiKey! });
       const result = await openai.chat.completions.create({
-        model: 'gpt-4.1-mini',
+        model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: [
           { type: 'text', text: 'Retorne apenas o texto (letras/numeros) do captcha presente nesta imagem de login.' },
           { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },
@@ -255,7 +255,7 @@ export async function runIBORepairAutomation(mac: string, deviceKey: string, pla
 
       try {
         const result = await openai.chat.completions.create({
-          model: 'gpt-4.1-mini',
+          model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: [
             { type: 'text', text: 'Retorne apenas o texto do captcha desta imagem de login. Retorne apenas o codigo.' },
             { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}`, detail: 'low' } },

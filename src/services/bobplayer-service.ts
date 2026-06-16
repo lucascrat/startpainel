@@ -92,7 +92,7 @@ async function loginBobPlayer(page: any, mac: string, deviceKey: string): Promis
         const shot = await page.screenshot({ encoding: 'base64' });
         const openai = new OpenAI({ apiKey: openaiKey });
         const result = await openai.chat.completions.create({
-          model: 'gpt-4.1-mini',
+          model: 'gpt-4o-mini',
           messages: [{
             role: 'user',
             content: [
@@ -167,7 +167,7 @@ export async function runBobPlayerRepair(
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
 
-    // Login com até 3 tentativas (captcha pode ser lido errado pelo Gemini)
+    // Login com até 3 tentativas (captcha pode ser lido errado pela OpenAI)
     let loggedIn = false;
     for (let tentativa = 1; tentativa <= 3 && !loggedIn; tentativa++) {
       if (tentativa > 1) console.log(`[BobPlayer] Tentativa de login ${tentativa}/3...`);
