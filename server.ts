@@ -1013,6 +1013,9 @@ async function fetchR2AsBase64(url: string): Promise<{ base64: string; mimeType:
 // Tenta OpenAI TTS primeiro (mais natural), cai pra EdgeTTS (gratis) se falhar.
 // Com cache: se ja gerou esse texto+voz antes, busca no R2 em vez de chamar a API.
 async function generateAudio(text: string): Promise<{ base64: string; mimeType: string } | null> {
+  // === DESATIVADO TEMPORARIAMENTE PARA DESENVOLVIMENTO (ECONOMIA DE API) ===
+  return null;
+
   const t = (text || '').trim();
   if (!t) return null;
   const hash = hashText(t, OPENAI_TTS_VOICE);
