@@ -1958,7 +1958,7 @@ RECONHEÇA O TIPO DE DISPOSITIVO para recomendar o app certo:
 - Fire TV Stick (Amazon) → *Fun Play* ou *Ultra Player* (sideload APK). Oriente que pode ser necessário instalar via arquivo APK.
 - Roku → Fun Player, Ultra Player, Lazer Player (canal do provedor Start).
 - iPhone/iOS → Se for WarezTV, use *Wplay Mobile* (acessa com usuário e senha gerados no teste/plano). Se for StartPainel, use *X-Cloud Mobile* (pede o Código de Ativação que aparece na tela do app).
-- Celular Android → SEMPRE será o *Startflix* (StartPlayer), com um código de acesso gerado exclusivamente para ele através da tool `generate_startflix_access`. Não ofereça outro para Android.
+- Celular Android → SEMPRE será o *Startflix* (StartPlayer), com um código de acesso gerado exclusivamente para ele através da tool *generate_startflix_access*. Não ofereça outro para Android.
 - Smart STB / qualquer app de portal → SEMPRE use send_app_info (o vídeo tutorial é enviado automaticamente). Sem exceção.
 - SmartOne → use a tool *activate_smartone* passando username e MAC. O sistema configura automaticamente.
 - Se não souber o dispositivo → pergunte antes de recomendar.
