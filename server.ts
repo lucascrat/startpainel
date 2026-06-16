@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import http from 'http';
 import https from 'https';
 import crypto from 'crypto';
@@ -4810,6 +4811,36 @@ app.post('/api/webhooks/evolution/:event?',
              || (isImage ? 'image/jpeg' : 'audio/ogg');
            mediaData = { data: media.base64.replace(/^data:.*?;base64,/, ""), mimeType };
            console.log(`[Webhook] Midia carregada em ${elapsed}ms (${mimeType}, ${Math.round(mediaData.data.length / 1024)}KB)`);
+           
+           if (isAudio) {
+             console.log(`[Webhook] Transcrevendo audio via Whisper...`);
+             const tmpPath = path.join(os.tmpdir(), `temp-audio-${crypto.randomBytes(4).toString('hex')}.ogg`);
+             fs.writeFileSync(tmpPath, Buffer.from(mediaData.data, 'base64'));
+             try {
+               const openai = new OpenAI({ apiKey: await getOpenAIApiKey() });
+               const transcription = await openai.audio.transcriptions.create({
+                 file: fs.createReadStream(tmpPath),
+                 model: 'whisper-1',
+               });
+               const txt = transcription.text;
+               console.log(`[Webhook] Audio transcrito: "${txt}"`);
+               
+               // Update in-memory history
+               if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user') {
+                 chatHistory[chatHistory.length - 1].parts[0].text = txt;
+               }
+               
+               // Update database
+               await pool.query('UPDATE messages SET text = $1 WHERE remote_jid = $2 AND created_at = (SELECT MAX(created_at) FROM messages WHERE remote_jid = $2 AND sender = $3)', [txt, remoteJid, 'customer']);
+               
+               // Clear mediaData so it doesn't get sent as an image_url
+               mediaData = undefined;
+             } catch (err: any) {
+               console.error('[Webhook] Transcricao falhou:', err?.message || err);
+             } finally {
+               if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+             }
+           }
          } else {
            console.warn(`[Webhook] Evolution loadMedia retornou vazio em ${elapsed}ms — segue sem midia, IA respondera baseado no placeholder`);
          }
