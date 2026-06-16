@@ -59,7 +59,34 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
     const url = remoteHost.startsWith('http') ? remoteHost : (isCloudflare ? `https://${remoteHost}` : `http://${remoteHost}:${remotePort}`);
     console.log(`[Puppeteer Remote] Conectando ao Chrome remoto em: ${url}`);
     try {
-      return await puppeteer.connect({ browserURL: url, defaultViewport: null }) as unknown as Browser;
+      const browser = await puppeteer.connect({ browserURL: url, defaultViewport: null }) as unknown as Browser;
+      
+      const originalNewPage = browser.newPage.bind(browser);
+      const pagesOpened: Page[] = [];
+
+      browser.newPage = async function() {
+        const p = await originalNewPage();
+        pagesOpened.push(p);
+        await p.evaluateOnNewDocument(() => {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          if (!(window as any).chrome) {
+            (window as any).chrome = { runtime: {}, app: {}, csi: () => {}, loadTimes: () => {} };
+          }
+        });
+        return p;
+      };
+
+      Object.defineProperty(browser, 'close', {
+        value: async function() {
+          for (const p of pagesOpened) {
+            try { if (!p.isClosed()) await p.close().catch(() => {}); } catch {}
+          }
+          await browser.disconnect().catch(() => {});
+        },
+        writable: true, configurable: true
+      });
+
+      return browser;
     } catch (e: any) {
       console.log(`[Puppeteer Remote] Falha ao conectar em ${url}: ${e.message}. Tentando via launch local...`);
     }
