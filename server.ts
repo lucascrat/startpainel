@@ -4685,21 +4685,56 @@ app.post('/api/webhooks/evolution/:event?',
   try {
     const data = req.body;
     res.status(200).send('OK');
-    const eventName = (req.params.event || data.event || '').toString().replace(/-/g, '.');
-    if (eventName !== 'messages.upsert') return;
-    const msg = data.data.message;
-    remoteJid = data.data.key.remoteJid;
-    // WhatsApp moderno: quando JID e @lid (identidade mascarada), o numero real vai em
-    // key.remoteJidAlt (@s.whatsapp.net). Capturamos pra fazer lookup do cliente certo.
-    const altJid: string | null = data.data.key.remoteJidAlt || null;
-    if (data.data.key.fromMe) {
-      // Ignora se for o próprio bot enviando mensagem agora mesmo
+    const eventName = (req.params.event || data.event || '').toString().toLowerCase().replace(/-/g, '.');
+    if (eventName !== 'messages.upsert' && eventName !== 'message') return;
+
+    const eventData = data.data || {};
+    const msg = eventData.message || eventData.Message;
+    if (!msg) return;
+
+    let fromMe = false;
+    let messageId = '';
+    let altJid: string | null = null;
+
+    if (eventData.key) {
+      remoteJid = eventData.key.remoteJid || '';
+      fromMe = !!eventData.key.fromMe;
+      messageId = eventData.key.id || '';
+      pushName = eventData.pushName || '';
+      altJid = eventData.key.remoteJidAlt || null;
+    } else if (eventData.Info) {
+      const chatJid = eventData.Info.Chat;
+      if (typeof chatJid === 'string') {
+        remoteJid = chatJid;
+      } else if (chatJid && chatJid.User && chatJid.Server) {
+        remoteJid = `${chatJid.User}@${chatJid.Server}`;
+      } else if (eventData.Info.Sender) {
+        const senderJid = eventData.Info.Sender;
+        if (typeof senderJid === 'string') {
+          remoteJid = senderJid;
+        } else if (senderJid && senderJid.User && senderJid.Server) {
+          remoteJid = `${senderJid.User}@${senderJid.Server}`;
+        }
+      }
+
+      fromMe = !!eventData.Info.IsFromMe || !!eventData.Info.fromMe;
+      messageId = eventData.Info.ID || eventData.Info.id || '';
+      pushName = eventData.Info.PushName || eventData.Info.pushName || '';
+
+      const senderAltJid = eventData.Info.SenderAlt || eventData.Info.senderAlt || eventData.Info.remoteJidAlt;
+      if (typeof senderAltJid === 'string') {
+        altJid = senderAltJid;
+      } else if (senderAltJid && senderAltJid.User && senderAltJid.Server) {
+        altJid = `${senderAltJid.User}@${senderAltJid.Server}`;
+      }
+    }
+
+    if (fromMe) {
       const activeUntil = botActiveUntil.get(remoteJid) || 0;
       if (Date.now() < activeUntil) {
         console.log(`[Webhook] Ignorando fromMe para ${remoteJid} (eco do bot)`);
         return;
       }
-      // Admin entrou na conversa — pausa a IA para esse contato por HUMAN_PAUSE_MS
       if (remoteJid) {
         humanPauseUntil.set(remoteJid, Date.now() + HUMAN_PAUSE_MS);
         const min = Math.round(HUMAN_PAUSE_MS / 60_000);
@@ -4708,26 +4743,19 @@ app.post('/api/webhooks/evolution/:event?',
       return;
     }
 
-    // ── Deduplicação por messageId ─────────────────────────────────────────
-    // A Evolution API pode disparar o mesmo webhook 2x para a mesma mensagem,
-    // o que causaria 2 respostas da IA para o mesmo cliente. Usamos um cache
-    // em memória (TTL 60s) para ignorar IDs já processados.
-    const messageId: string = data.data.key.id || '';
     if (messageId && processedMessageIds.has(messageId)) {
       console.log(`[Webhook] Duplicata ignorada — messageId ${messageId} já processado.`);
       return;
     }
     if (messageId) {
       processedMessageIds.set(messageId, Date.now());
-      // Limpa entradas antigas (> 60s) para não crescer indefinidamente
       const now = Date.now();
       for (const [id, ts] of processedMessageIds.entries()) {
         if (now - ts > 60_000) processedMessageIds.delete(id);
       }
     }
-    // ──────────────────────────────────────────────────────────────────────
 
-    pushName = data.data.pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
+    pushName = pushName || (remoteJid ? remoteJid.split('@')[0] : 'Cliente');
     console.log(`[Webhook] Mensagem recebida de ${pushName} (${remoteJid}${altJid ? ' alt=' + altJid : ''})`);
 
     // Resposta de WhatsApp List Message (cliente clicou numa opção do menu).
