@@ -57,12 +57,11 @@ export class EvolutionService {
 
   async sendMessage(number: string, text: string) {
     try {
-      const url = `${this.config.apiUrl}/message/sendText/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/send/text`;
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
         text: text,
-        delay: 1200,
-        linkPreview: true
+        delay: 1200
       }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
     } catch (error: any) {
@@ -73,14 +72,14 @@ export class EvolutionService {
 
   async sendMedia(number: string, base64: string, caption: string, fileName: string, mediaType: 'image' | 'video' | 'document' | 'audio' = 'image') {
     try {
-      const url = `${this.config.apiUrl}/message/sendMedia/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/send/media`;
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
-        mediatype: mediaType,
+        type: mediaType,
         caption: caption,
-        media: cleanBase64,
-        fileName: fileName,
+        url: cleanBase64,
+        filename: fileName,
       }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
     } catch (error: any) {
@@ -106,7 +105,7 @@ export class EvolutionService {
     }
   ) {
     try {
-      const url = `${this.config.apiUrl}/message/sendList/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/send/list`;
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
         title: payload.title,
@@ -124,11 +123,13 @@ export class EvolutionService {
 
   async sendAudio(number: string, base64: string) {
     try {
-      const url = `${this.config.apiUrl}/message/sendWhatsAppAudio/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/send/media`;
       const cleanBase64 = base64.replace(/^data:[^;]+;base64,/, '');
       const response = await axios.post(url, {
         number: normalizeRecipient(number),
-        audio: cleanBase64,
+        type: 'audio',
+        url: cleanBase64,
+        filename: 'audio.ogg',
         delay: 1000
       }, { headers: this.headers, timeout: TIMEOUT_SEND });
       return response.data;
@@ -138,13 +139,11 @@ export class EvolutionService {
     }
   }
 
-  async loadMedia(messageKey: any) {
-    // Evolution API v2: /chat/getBase64FromMediaMessage/{instance}
+  async loadMedia(message: any) {
     try {
-      const url = `${this.config.apiUrl}/chat/getBase64FromMediaMessage/${this.config.instance}`;
+      const url = `${this.config.apiUrl}/message/downloadimage`;
       const response = await axios.post(url, {
-        message: { key: messageKey },
-        convertToMp4: false
+        message: message
       }, { headers: this.headers, timeout: TIMEOUT_LOAD_MEDIA });
       return response.data;
     } catch (error: any) {

@@ -4809,7 +4809,7 @@ app.post('/api/webhooks/evolution/:event?',
          const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
          const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
          const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
-         const media = await evo.loadMedia(data.data.key);
+         const media = await evo.loadMedia(msg);
          const elapsed = Date.now() - t0;
          if (media?.base64) {
            const mimeType = (isImage ? msg.imageMessage?.mimetype : msg.audioMessage?.mimetype)
