@@ -820,17 +820,22 @@ async function getEvolutionTokenCached(): Promise<string | null> {
 }
 
 async function verifyEvolutionWebhook(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const provided = (req.headers['apikey'] || req.headers['x-webhook-secret']) as string | undefined;
+  const provided = (req.headers['apikey'] || req.headers['x-webhook-secret'] || req.body?.instanceToken) as string | undefined;
   const event = req.params.event || '?';
 
   // Modo 1: secret explicito via env (preferido pra producao com Evolution custom headers)
   if (EVOLUTION_WEBHOOK_SECRET) {
     if (provided && provided === EVOLUTION_WEBHOOK_SECRET) return next();
+    
+    // Fallback: se vier de uma Evolution Go que nao envia headers, valida contra o token do DB
+    const evoToken = await getEvolutionTokenCached();
+    if (evoToken && provided && provided === evoToken) return next();
+
     console.warn(`[Webhook Auth] REJEITADO modo=secret event=${event} provided=${provided?.slice(0, 8)}... expected=${EVOLUTION_WEBHOOK_SECRET.slice(0, 8)}...`);
     return res.status(401).json({ error: 'Webhook nao autorizado (secret invalido)' });
   }
 
-  // Modo 2: valida usando o proprio token do Evolution (que ele ja envia naturalmente no header apikey)
+  // Modo 2: valida usando o proprio token do Evolution
   const evoToken = await getEvolutionTokenCached();
   if (evoToken && provided && provided === evoToken) return next();
 
