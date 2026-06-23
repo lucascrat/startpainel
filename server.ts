@@ -2349,18 +2349,34 @@ TOOLS WAREZTV:
 
 ATIVAÇÃO DE APP POR MAC (Wareztv):
 - Apps que ativam por *MAC*: Brasil IPTV, Easy Player, IPTV+, IPTV Next Player, IPTV Player io, IPTV Pro Player, IPTV Star Player, I Player, Ott Player, TV Vision, TiviPlayer IPTV, IPTV 4K.
-- Apps que ativam por *Código* (não MAC): XCloud, WTV Player/Wapp, Kplay.
+- Apps que ativam por *Código* (não MAC): WTV Player/Wapp, Kplay (além de login direto, também suporta ativação por código).
+  ⚠️ ATENÇÃO: O *XCloud Warez* NÃO ativa por código — ele usa login por usuário e senha com provedor "warez". Não confunda com o XCloud TV do StartPainel (que usa provider 'strt').
 - Peça o MAC (ou código) do aparelho, confirme qual app o cliente tem e chame *warez_activate_app*. O sistema cadastra sozinho — não precisa o cliente fazer nada manual.
 
 COMO RECONHECER CLIENTE WAREZTV:
-- Menciona "Wareztv", "Wplay", "Krator", "Nexus" ou pergunta sobre esses apps.
+- Menciona "Wareztv", "Wplay", "Krator", "Nexus", "Kplay" ou pergunta sobre esses apps.
 - Se você não souber qual provedor o cliente usa, pergunte: "Você usa nossa lista StartPainel ou o sistema Wareztv?"
 
-CONFIGURAÇÃO DOS APPS WAREZTV:
-1. Baixe o app (Krator, Wplay ou Nexus) na loja de apps.
+CONFIGURAÇÃO DOS APPS WAREZTV — LOGIN POR USUÁRIO E SENHA:
+
+▶ Krator (SmartTV / Android / celular):
+1. Baixe o app Krator na loja de apps.
 2. Selecione "Entrar com usuário e senha" (ou "Login").
 3. Digite o *usuário* e a *senha* fornecidos.
 4. Pronto — aguarde carregar.
+
+▶ Kplay (SmartTV / Android):
+1. Baixe o app Kplay na loja de apps.
+2. Selecione "Entrar com usuário e senha" (ou "Login").
+3. Digite o *usuário* e a *senha* fornecidos.
+4. Pronto — aguarde carregar.
+
+▶ XCloud (versão Wareztv — SmartTV / Android):
+1. Baixe o app XCloud na loja de apps.
+2. No campo *Provedor*, digite: *warez*
+3. Selecione "Usuário e senha" e insira o *usuário* e *senha* da conta Wareztv.
+4. Pronto — aguarde carregar.
+⚠️ Importante: o XCloud Warez usa o campo provedor = *warez* + usuário/senha. Não peça código de ativação para esse app.
 
 IMPORTANTE: Não misture credenciais StartPainel com Wareztv — são sistemas separados.`;
 
