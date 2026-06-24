@@ -7865,7 +7865,7 @@ app.post('/api/portal/register', async (req, res) => {
     
     // Se o cliente já escolheu um app para testar
     if (appToTest) {
-      if (appToTest.provider === 'wareztv') {
+      if (appToTest.type === 'warez' || appToTest.type === 'wareztv') {
         const line = await warezApi.generateTest(`Portal Registro - ${username}`);
         await upsertWarezCustomer({ ...line, is_trial: 1 });
         testResult = { username: line.username, password: line.password, exp_date: line.exp_date };
@@ -7876,12 +7876,13 @@ app.post('/api/portal/register', async (req, res) => {
           await evo.sendMessage(`${cleanNumber}@s.whatsapp.net`, `📺 Olá ${firstName}, bem-vindo ao MinhaTV!\nSeu teste do ${appToTest.app} está pronto:\n\n👤 Usuário: *${line.username}*\n🔑 Senha: *${line.password}*\n\nBom teste!`);
         } catch (e) {}
 
-      } else if (appToTest.provider === 'mac' && appToTest.mac) {
-        const isSmartOne = appToTest.app.toLowerCase() === 'smartone';
-        if (isSmartOne) {
-          await enqueueJob('activate_smartone', { username, mac: appToTest.mac });
+      } else if ((appToTest.type === 'start' || appToTest.type === 'ative') && appToTest.mac) {
+        if (appToTest.type === 'start') {
+          // Ex: SmartOne, Ultra Player, etc
+          await enqueueJob('activate_smartone', { username, mac: appToTest.mac }); // Supondo q smartone atende "start" no exemplo antigo
         } else {
-          await enqueueJob('activate_ativeapp_trial', { appName: appToTest.app, mac: appToTest.mac });
+          // AtiveApps que precisam de mac e key
+          await enqueueJob('activate_ativeapp_trial', { appName: appToTest.app, mac: appToTest.mac, key: appToTest.key });
         }
         testResult = { message: 'Processo de ativação iniciado na nuvem!' };
         

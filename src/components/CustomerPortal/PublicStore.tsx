@@ -12,6 +12,7 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
   const [name, setName] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [mac, setMac] = useState('');
+  const [deviceKey, setDeviceKey] = useState('');
   const [registering, setRegistering] = useState(false);
 
   useEffect(() => {
@@ -24,16 +25,22 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
       .catch(() => setLoading(false));
   }, []);
 
-  const handleTestClick = (provider: string, appName: string, requiresMac: boolean) => {
-    setSelectedApp({ provider, app: appName, macRequired: requiresMac });
+  const handleTestClick = (type: string, appName: string) => {
+    setSelectedApp({ type, app: appName });
     setShowModal(true);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !whatsapp) return;
-    if (selectedApp?.macRequired && !mac) {
+    
+    if ((selectedApp?.type === 'start' || selectedApp?.type === 'ative') && !mac) {
       toast.error("Por favor, informe o MAC Address da sua TV.");
+      return;
+    }
+    
+    if (selectedApp?.type === 'ative' && !deviceKey) {
+      toast.error("Por favor, informe o Device Key da sua TV.");
       return;
     }
 
@@ -46,9 +53,10 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
           name,
           whatsapp,
           appToTest: selectedApp ? {
-            provider: selectedApp.provider,
+            type: selectedApp.type,
             app: selectedApp.app,
-            mac: selectedApp.macRequired ? mac : undefined
+            mac: (selectedApp.type === 'start' || selectedApp.type === 'ative') ? mac : undefined,
+            key: selectedApp.type === 'ative' ? deviceKey : undefined
           } : undefined
         })
       });
@@ -113,7 +121,7 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
           </p>
           
           <button
-            onClick={() => handleTestClick(isWarez ? 'wareztv' : 'mac', app.name, !isWarez)}
+            onClick={() => handleTestClick(type, app.name)}
             className={`w-full py-3.5 rounded-xl text-sm font-bold transition-all duration-300 flex justify-center items-center gap-2 group-hover:shadow-lg
               ${isWarez 
                 ? 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/25' 
@@ -241,7 +249,7 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
               
               <div className="mb-8">
                 <div className="w-14 h-14 bg-indigo-500/10 rounded-2xl flex items-center justify-center mb-4 ring-1 ring-indigo-500/20">
-                  {selectedApp?.macRequired ? <Tv className="w-7 h-7 text-indigo-400" /> : <Smartphone className="w-7 h-7 text-indigo-400" />}
+                  {(selectedApp?.type === 'start' || selectedApp?.type === 'ative') ? <Tv className="w-7 h-7 text-indigo-400" /> : <Smartphone className="w-7 h-7 text-indigo-400" />}
                 </div>
                 <h3 className="text-2xl font-bold text-white mb-2">Falta muito pouco!</h3>
                 <p className="text-gray-400 text-sm leading-relaxed">
@@ -274,7 +282,7 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
                   />
                 </div>
 
-                {selectedApp?.macRequired && (
+                {(selectedApp?.type === 'start' || selectedApp?.type === 'ative') && (
                   <div className="space-y-1.5 pt-2">
                     <label className="block text-sm font-semibold text-indigo-300 flex items-center justify-between">
                       MAC Address da TV
@@ -289,6 +297,24 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
                       required
                     />
                     <p className="text-xs text-gray-500 mt-2">Abra o {selectedApp?.app} na sua TV. O código "MAC" vai estar escrito na tela inicial.</p>
+                  </div>
+                )}
+
+                {selectedApp?.type === 'ative' && (
+                  <div className="space-y-1.5 pt-2">
+                    <label className="block text-sm font-semibold text-pink-300 flex items-center justify-between">
+                      Device Key
+                      <span className="text-[10px] uppercase tracking-wider bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded-full">Obrigatório</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={deviceKey}
+                      onChange={(e) => setDeviceKey(e.target.value)}
+                      className="w-full bg-pink-950/20 border border-pink-500/30 text-white rounded-xl px-4 py-3.5 focus:border-pink-500 focus:ring-1 focus:ring-pink-500 outline-none transition-all font-mono tracking-widest placeholder:text-gray-600"
+                      placeholder="Ex: 123456"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-2">A "Device Key" ou "Senha" aparece ao lado do MAC na tela do {selectedApp?.app}.</p>
                   </div>
                 )}
 
