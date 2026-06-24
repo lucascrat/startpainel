@@ -51,9 +51,11 @@ export class EvolutionService {
   private get headers() {
     return {
       'Content-Type': 'application/json',
-      'apikey': this.config.token
+      'apikey': this.config.token,
+      'instance': this.config.instance,  // Evolution Go requires instance in header
     };
   }
+
 
   async sendMessage(number: string, text: string) {
     try {
