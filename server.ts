@@ -7815,6 +7815,125 @@ async function migrateWarezCustomersToUnified() {
   }
 }
 
+// ==========================================
+// PORTAL DO CLIENTE (MINHATV)
+// ==========================================
+function requirePortalAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token Ausente' });
+  try {
+    const payload = jwt.verify(auth.slice(7), ADMIN_JWT_SECRET) as any;
+    if (payload.role !== 'portal_customer') throw new Error('Role inválida');
+    (req as any).customerId = payload.customerId;
+    (req as any).customerUsername = payload.username;
+    next();
+  } catch (e) {
+    res.status(401).json({ error: 'Sessão inválida ou expirada' });
+  }
+}
+
+app.post('/api/portal/login', async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'Usuário é obrigatório' });
+  
+  try {
+    const r = await pool.query('SELECT id, username, whatsapp, status, expiration_date FROM customers WHERE username = $1', [username.toLowerCase().trim()]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Cliente não encontrado. Fale com o suporte.' });
+    
+    const customer = r.rows[0];
+    const token = jwt.sign({ role: 'portal_customer', customerId: customer.id, username: customer.username }, ADMIN_JWT_SECRET, { expiresIn: '7d' });
+    
+    res.json({ token, customer });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/portal/me', requirePortalAuth, async (req, res) => {
+  try {
+    const customerId = (req as any).customerId;
+    const r = await pool.query('SELECT * FROM customers WHERE id = $1', [customerId]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Cliente não encontrado' });
+    
+    const appsRes = await pool.query('SELECT * FROM active_devices WHERE customer_id = $1', [customerId]);
+    const pixRes = await pool.query('SELECT * FROM pix_charges WHERE customer_username = $1 ORDER BY created_at DESC LIMIT 10', [r.rows[0].username]);
+    
+    res.json({
+      customer: r.rows[0],
+      devices: appsRes.rows,
+      pix_charges: pixRes.rows,
+      apps_catalog: (await pool.query('SELECT * FROM app_catalog WHERE is_active = true ORDER BY name')).rows
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/portal/test/warez', requirePortalAuth, async (req, res) => {
+  try {
+    const username = (req as any).customerUsername;
+    const notes = `Teste Portal - ${username}`;
+    const line = await warezApi.generateTest(notes);
+    await upsertWarezCustomer({ ...line, is_trial: 1 });
+    
+    // Opcional: Se quiser que a IA chame o cliente no zap:
+    const custRes = await pool.query('SELECT whatsapp FROM customers WHERE username = $1', [username]);
+    if (custRes.rows[0]?.whatsapp) {
+       try {
+         const evo = await getEvolutionService();
+         const jid = `${custRes.rows[0].whatsapp}@s.whatsapp.net`;
+         await evo.sendMessage(jid, `📺 Olá! Você solicitou um teste no Portal MinhaTV.\n\n👤 *Usuário:* ${line.username}\n🔑 *Senha:* ${line.password}\n\nBom teste!`);
+       } catch (e) { console.error('Erro ao enviar whatsapp do portal:', e); }
+    }
+    
+    res.json({ success: true, credentials: { username: line.username, password: line.password, exp_date: line.exp_date } });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/portal/test/ativeapp', requirePortalAuth, async (req, res) => {
+  try {
+    const username = (req as any).customerUsername;
+    const { mac, appName, isSmartOne } = req.body;
+    if (!mac) return res.status(400).json({ error: 'MAC é obrigatório' });
+    
+    if (isSmartOne) {
+       await enqueueJob('activate_smartone', { username, mac });
+    } else {
+       await enqueueJob('activate_ativeapp_trial', { appName, mac });
+    }
+    
+    const custRes = await pool.query('SELECT whatsapp FROM customers WHERE username = $1', [username]);
+    if (custRes.rows[0]?.whatsapp) {
+       try {
+         const evo = await getEvolutionService();
+         const jid = `${custRes.rows[0].whatsapp}@s.whatsapp.net`;
+         await evo.sendMessage(jid, `📺 Olá! Você ativou um teste para o app ${appName || 'SmartOne'} no MAC ${mac} pelo Portal MinhaTV.\nSua lista está vinculada. Caso não abra, reinicie o app!`);
+       } catch (e) {}
+    }
+    
+    res.json({ success: true, message: 'Processo de ativação iniciado na nuvem! Reinicie seu app em 30 segundos.' });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/portal/pix/generate', requirePortalAuth, async (req, res) => {
+  try {
+    const username = (req as any).customerUsername;
+    // Pega valor da renovação do banco
+    const custRes = await pool.query('SELECT renewal_price FROM customers WHERE username = $1', [username]);
+    const amount = custRes.rows[0]?.renewal_price || 25;
+    
+    const gn = getEfibankClient();
+    const pixKey = process.env.EFIBANK_PIX_KEY;
+    if (!pixKey) return res.status(500).json({ error: 'Chave PIX não configurada no servidor.' });
+    
+    const body = { calendario: { expiracao: 3600 }, valor: { original: parseFloat(amount as any).toFixed(2) }, chave: pixKey, solicitacaoPagador: `Renovacao MinhaTV - ${username}` };
+    const response = await gn.pixCreateImmediateCharge({}, body);
+    const qrcode = await gn.pixGenerateQRCode({ id: response.loc.id });
+    
+    await pool.query('INSERT INTO pix_charges (txid, customer_username, amount) VALUES ($1, $2, $3)', [response.txid, username, amount]);
+    res.json({ qrcode_image: qrcode.imagemQrcode, copy_paste: qrcode.qrcode, txid: response.txid, amount });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: true, host: '0.0.0.0' }, appType: 'spa' });

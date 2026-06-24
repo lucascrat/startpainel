@@ -9,6 +9,7 @@ import AppCatalog from './components/AppCatalog';
 import AtiveAppCatalog from './components/AtiveAppCatalog';
 import ContactsAgenda from './components/ContactsAgenda';
 import BrowserRemote from './components/BrowserRemote';
+import CustomerPortal from './components/CustomerPortal';
 import { MessageSquare, ShieldCheck, Github, Activity, LogOut, Users, X, Receipt, AppWindow, BookUser, Zap } from 'lucide-react';
 import { login, getToken, logout } from './lib/auth';
 import { Toaster } from 'sonner';
@@ -20,6 +21,7 @@ export default function App() {
   const [pwInput, setPwInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+  const isCustomerPortal = window.location.hostname.includes('minhatv') || window.location.search.includes('portal=1');
 
   useEffect(() => {
     const onExpired = () => setIsAuthenticated(false);
@@ -60,7 +62,7 @@ export default function App() {
       setShowLogin(false);
       setPwInput('');
     } else {
-      setLoginError(r.error || 'Falha no login');
+      setLoginError(r.error || 'Senha incorreta');
     }
   };
 
@@ -68,6 +70,10 @@ export default function App() {
     logout();
     setIsAuthenticated(false);
   };
+
+  if (isCustomerPortal) {
+    return <CustomerPortal />;
+  }
 
   const loginModal = showLogin && (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4">
