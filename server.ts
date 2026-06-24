@@ -4688,10 +4688,12 @@ const ATTENDANCE_MENU_ROWS = [
   { rowId: 'opt_outros',            title: 'Outros' },
 ];
 
+
 // Evolution Webhook — accepts both single-URL and "by-events" modes:
-//   POST /api/webhooks/evolution                  (single URL, body has data.event)
-//   POST /api/webhooks/evolution/messages-upsert  (by-events mode, event in URL suffix)
-app.post('/api/webhooks/evolution/:event?',
+//   POST /webhook                                  (alias — Evolution Go may be configured with this shorter URL)
+//   POST /api/webhooks/evolution                   (single URL, body has data.event)
+//   POST /api/webhooks/evolution/messages-upsert   (by-events mode, event in URL suffix)
+app.post(['/webhook', '/api/webhooks/evolution/:event?'],
   // Rate limit por IP — mesmo com secret valido, evita flood acidental.
   rateLimit({ windowMs: 60_000, max: 120, key: clientIp, message: 'Webhook rate limit excedido.' }),
   verifyEvolutionWebhook,
