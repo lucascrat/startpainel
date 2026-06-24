@@ -2541,7 +2541,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
       toOAITool({ name: "generate_pix", description: "Envia a chave Pix (pagamentos@appbr.pro / EfI Bank / Maria F P Pinho) para o cliente realizar o pagamento. Não gera mais QR Code, apenas envia a chave de e-mail e o valor.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
       toOAITool({ name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } }),
       toOAITool({ name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } }),
-      toOAITool({ name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }),
+      toOAITool({ name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." }, e2e_id: { type: "STRING", description: "Obrigatório: ID da Transação / End-to-End ID (código longo começando com E que identifica o Pix)." } }, required: ["payer_name", "amount", "paid_at"] } }),
       toOAITool({ name: "adjust_expiration_date", description: "Altera a data de vencimento do plano do cliente para uma data específica. Use quando o cliente pedir para mudar o dia de vencimento (ex: 'quero vencer dia 13 em vez de 26'). Cada cliente pode usar isso no máximo 2 vezes. Verifique se ainda tem ajustes disponíveis antes de usar.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_date: { type: "STRING", description: "Nova data de vencimento no formato YYYY-MM-DD (ex: 2026-06-13)." }, reason: { type: "STRING", description: "Motivo informado pelo cliente (ex: 'só recebo salário dia 13')." } }, required: ["username", "new_date", "reason"] } }),
       toOAITool({ name: "set_customer_price", description: "Salva um valor customizado de mensalidade no cadastro do cliente (renewal_price). Use quando voce negociar um desconto com o cliente (ex: 2 telas por R$ 45 em vez de R$ 50). Limites mínimos: 1 tela R$ 25 (NUNCA menos), 2 telas R$ 45, 3 telas R$ 60, +3 telas R$ 25 por tela. Esse valor sera usado nas proximas renovacoes e Pix gerados pra esse cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, new_price: { type: "NUMBER", description: "Novo valor mensal em reais (ex: 45.00)." }, reason: { type: "STRING", description: "Motivo do desconto (ex: 'fidelidade', 'cliente antigo', 'mae do amigo do dono')." } }, required: ["username", "new_price", "reason"] } }),
       toOAITool({ name: "send_app_info", description: "Envia ao cliente a imagem e os links de download de um app cadastrado no catalogo. Use quando o cliente precisar instalar um app pra assistir (ex: cliente novo, ou cliente que quer um app diferente).", parameters: { type: "OBJECT", properties: { app_id: { type: "NUMBER", description: "ID do app no catalogo (veja secao CATALOGO DE APPS DISPONIVEIS do system prompt)." }, message: { type: "STRING", description: "Texto opcional que acompanha a imagem (ex: 'Olha esse app, e o melhor pra TV')." } }, required: ["app_id"] } }),
@@ -4971,9 +4971,16 @@ app.post(['/webhook', '/api/webhooks/evolution/:event?'],
             const r = await uploadToR2('receipts', mediaData.data, mediaData.mimeType);
             imageStored = r.ok ? r.url : `data:${mediaData.mimeType};base64,${mediaData.data}`;
           }
-          await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored, altJid);
-          // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
-          // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
+          const ok = await handleRegisterPixReceipt(remoteJid, pushName, call.args.payer_name, call.args.amount, call.args.paid_at, imageStored, altJid, call.args.e2e_id);
+          if (ok) {
+            // register_pix_receipt nao envia mensagem ao cliente sozinho — IA deve mandar texto junto.
+            // Se chegou aqui sem texto da IA, conta como nao-enviado pra acionar o fallback.
+          } else {
+            // e2e_id invalido ou erro
+            const evo = await getEvolutionService();
+            await evo.sendMessage(remoteJid, '❌ Poxa, não consegui validar o código do seu comprovante no nosso sistema bancário. Verifique se a transferência foi concluída com sucesso ou envie a imagem completa do comprovante, por favor!');
+            toolsThatSent++;
+          }
         } else if (call.name === 'adjust_expiration_date') {
           const ok = await handleAdjustExpirationDate(remoteJid, pushName, call.args.username, call.args.new_date, call.args.reason);
           if (ok) toolsThatSent++;
@@ -5262,9 +5269,23 @@ async function handleRegisterPixReceipt(
   amount: number,
   paidAt: string,
   imageDataUri: string | null,
-  altJid?: string | null
-) {
+  altJid?: string | null,
+  e2eId?: string
+): Promise<boolean> {
   try {
+    if (e2eId) {
+      const cleanE2e = e2eId.replace(/[^a-zA-Z0-9]/g, '');
+      if (cleanE2e.length > 20) {
+        try {
+          const gn = getEfibankClient();
+          const pixDetail = await gn.pixDetail({ e2eId: cleanE2e });
+          console.log(`[Receipt] Pix ${cleanE2e} validado com sucesso na Efí: R$${pixDetail?.valor || '?'}`);
+        } catch (err: any) {
+          console.error(`[Receipt] Falha ao validar Pix ${cleanE2e} na Efí:`, err?.message || err);
+          return false; // Pix falso ou inválido
+        }
+      }
+    }
     // Reusa findCustomerByJid que ja faz match com remoteJidAlt (@lid)
     let customerId: number | null = null;
     let customerUsername: string | null = null;
@@ -5328,8 +5349,10 @@ async function handleRegisterPixReceipt(
     } else {
       console.warn(`[Receipt] sem cliente vinculado a ${remoteJid}${altJid ? ' (alt ' + altJid + ')' : ''} — renovacao manual necessaria`);
     }
+    return true;
   } catch (e: any) {
     console.error('[Receipt] erro:', e?.message || e);
+    return false;
   }
 }
 
