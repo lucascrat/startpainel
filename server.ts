@@ -7832,6 +7832,72 @@ function requirePortalAuth(req: express.Request, res: express.Response, next: ex
   }
 }
 
+app.get('/api/portal/public-catalog', async (req, res) => {
+  try {
+    const appsRes = await pool.query('SELECT * FROM app_catalog WHERE is_active = true ORDER BY name');
+    res.json(appsRes.rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/portal/register', async (req, res) => {
+  const { name, whatsapp, appToTest } = req.body;
+  if (!name || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios' });
+
+  try {
+    // Generate unique username based on first name
+    const firstName = name.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanNumber = whatsapp.replace(/\D/g, '');
+    const rand = Math.floor(100 + Math.random() * 900);
+    const username = `${firstName}appbr${rand}`;
+
+    // Cadastra o cliente no banco
+    const custRes = await pool.query(
+      `INSERT INTO customers (username, full_name, whatsapp, status, renewal_price, max_connections, created_at, updated_at)
+       VALUES ($1, $2, $3, 'teste', 25.00, 1, NOW(), NOW()) RETURNING *`,
+      [username, name, cleanNumber]
+    );
+    const customer = custRes.rows[0];
+
+    // Gera o token
+    const token = jwt.sign({ role: 'portal_customer', customerId: customer.id, username: customer.username }, ADMIN_JWT_SECRET, { expiresIn: '7d' });
+
+    let testResult = null;
+    
+    // Se o cliente já escolheu um app para testar
+    if (appToTest) {
+      if (appToTest.provider === 'wareztv') {
+        const line = await warezApi.generateTest(`Portal Registro - ${username}`);
+        await upsertWarezCustomer({ ...line, is_trial: 1 });
+        testResult = { username: line.username, password: line.password, exp_date: line.exp_date };
+        
+        // Dispara mensagem de boas-vindas com a senha
+        try {
+          const evo = await getEvolutionService();
+          await evo.sendMessage(`${cleanNumber}@s.whatsapp.net`, `📺 Olá ${firstName}, bem-vindo ao MinhaTV!\nSeu teste do ${appToTest.app} está pronto:\n\n👤 Usuário: *${line.username}*\n🔑 Senha: *${line.password}*\n\nBom teste!`);
+        } catch (e) {}
+
+      } else if (appToTest.provider === 'mac' && appToTest.mac) {
+        const isSmartOne = appToTest.app.toLowerCase() === 'smartone';
+        if (isSmartOne) {
+          await enqueueJob('activate_smartone', { username, mac: appToTest.mac });
+        } else {
+          await enqueueJob('activate_ativeapp_trial', { appName: appToTest.app, mac: appToTest.mac });
+        }
+        testResult = { message: 'Processo de ativação iniciado na nuvem!' };
+        
+        try {
+          const evo = await getEvolutionService();
+          await evo.sendMessage(`${cleanNumber}@s.whatsapp.net`, `📺 Olá ${firstName}, bem-vindo ao MinhaTV!\nSeu teste do ${appToTest.app} foi enviado para a nuvem. Reinicie seu app na TV em 30 segundos!`);
+        } catch (e) {}
+      }
+    }
+
+    res.json({ token, customer, testResult });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/portal/login', async (req, res) => {
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: 'Usuário é obrigatório' });

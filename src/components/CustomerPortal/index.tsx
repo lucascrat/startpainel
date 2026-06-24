@@ -5,6 +5,7 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 import AppStore from './AppStore';
 import Payments from './Payments';
+import PublicStore from './PublicStore';
 import { apiFetch } from '../../lib/auth'; // Using existing fetch wrapper or raw fetch
 
 export default function CustomerPortal() {
@@ -13,6 +14,9 @@ export default function CustomerPortal() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'store' | 'payments'>('dashboard');
   const [loading, setLoading] = useState(true);
   const [portalData, setPortalData] = useState<any>(null);
+  
+  // Auth state
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -50,11 +54,39 @@ export default function CustomerPortal() {
   if (loading) return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">Carregando...</div>;
 
   if (!token || !customer) {
-    return <Login onLogin={(t, c) => {
-      localStorage.setItem('portal_token', t);
-      setToken(t);
-      setCustomer(c);
-    }} />;
+    if (showLogin) {
+      return (
+        <div className="relative">
+          <Login onLogin={(t, c) => {
+            localStorage.setItem('portal_token', t);
+            setToken(t);
+            setCustomer(c);
+          }} />
+          <button 
+            onClick={() => setShowLogin(false)}
+            className="absolute top-4 left-4 text-gray-400 hover:text-white bg-gray-900 px-4 py-2 rounded-lg"
+          >
+            ← Voltar para a Loja
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <PublicStore 
+        onLoginSelect={() => setShowLogin(true)} 
+        onRegisterSuccess={(t, c, testRes) => {
+          localStorage.setItem('portal_token', t);
+          setToken(t);
+          setCustomer(c);
+          if (testRes) {
+            // Em vez de só carregar, podemos jogar o resultado do teste na tela de loja e mudar a aba
+            setActiveTab('store');
+            // Como passamos testResult? Vamos injetar no estado global se necessário ou deixar a aba Store buscar
+          }
+        }} 
+      />
+    );
   }
 
   return (
