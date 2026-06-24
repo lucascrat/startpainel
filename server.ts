@@ -1871,7 +1871,7 @@ MULTIMODAL
   2. IDENTIFIQUE O APP: leia o nome do app que aparece na tela (ex: "Kplay", "Ultra Player", "IBO Pro", "Quick Player", etc.). Se o nome estiver visível na imagem, você já sabe qual app é — NÃO pergunte.
   3. CONFIRMAÇÃO OBRIGATÓRIA DO MAC: após extrair o MAC da imagem, SEMPRE peça confirmação antes de ativar qualquer coisa. Use: "Vi aqui o MAC *[XX:XX:XX:XX:XX:XX]* no [nome do app]. Está correto?" — aguarde o cliente confirmar. Só após o "sim", "correto", "isso", "pode ativar" ou qualquer confirmação → aí chame a ferramenta de ativação.
   4. SE NÃO CONSEGUIR LER: se a imagem estiver borrada, cortada ou o MAC não aparecer claramente → peça: "Não consegui ler bem o MAC na foto. Pode me digitar?"
-  5. COMPROVANTE PIX: se a imagem for comprovante de pagamento → use register_pix_receipt com os dados visíveis (nome, valor, data). Após chamar a tool, SEMPRE responda ao cliente informando que o pagamento foi recebido e o acesso dele está LIBERADO.
+  5. COMPROVANTE PIX: se a imagem for comprovante de pagamento → verifique os dados visíveis (nome do pagador, valor, data, e PRINCIPALMENTE se há um código único/ID de transação PIX para confirmar que o pagamento foi realmente feito). Se os dados estiverem na imagem, use register_pix_receipt. Após chamar a tool, SEMPRE responda ao cliente informando que o pagamento foi recebido e o acesso dele está LIBERADO. O admin fará a conferência detalhada depois.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 USE OS DADOS DO CLIENTE
@@ -2017,7 +2017,7 @@ CADASTRO E PAGAMENTO (CLIENTE NOVO E RENOVAÇÃO)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGRAS IMPORTANTES SOBRE PAGAMENTO VIA PIX:
 1. SEMPRE considere que o cliente quer comprar/renovar apenas 1 tela (R$ 25), a não ser que ele peça mais telas.
-2. Quando o cliente pedir para fazer o pagamento (ou se for o momento de pagar), use a ferramenta *generate_pix*. Ela enviará a nossa chave Pix (pagamentos@gmail.com) para o cliente.
+2. Quando o cliente pedir para fazer o pagamento (ou se for o momento de pagar), use a ferramenta *generate_pix*. Ela enviará a nossa chave Pix principal (pagamentos@appbr.pro / Maria F P Pinho / EfI Bank) para o cliente.
 3. Não precisa perguntar quantas telas ele quer se ele não mencionar nada. Assuma 1 tela.
 4. Assim que ele mandar a foto do comprovante, use a tool *register_pix_receipt* com os dados visíveis no comprovante.
 5. Após chamar *register_pix_receipt*, o sistema automaticamente libera o sinal e envia o pagamento para a conferência do admin no painel. Você DEVE confirmar para o cliente: "Recebi seu comprovante! Já liberei o seu sinal, pode continuar assistindo 😊"
@@ -2538,7 +2538,7 @@ Esta pessoa é da equipe. Ela pode te mandar dados de clientes pra você CADASTR
     });
 
     const oaiTools: any[] = [
-      toOAITool({ name: "generate_pix", description: "Envia a chave Pix (pagamentos@gmail.com) para o cliente realizar o pagamento. Não gera mais QR Code, apenas envia a chave de e-mail e o valor.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
+      toOAITool({ name: "generate_pix", description: "Envia a chave Pix (pagamentos@appbr.pro / EfI Bank / Maria F P Pinho) para o cliente realizar o pagamento. Não gera mais QR Code, apenas envia a chave de e-mail e o valor.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" }, amount: { type: "NUMBER" } }, required: ["username", "amount"] } }),
       toOAITool({ name: "get_customer_info", description: "Consulta dados do cliente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING" } }, required: ["username"] } }),
       toOAITool({ name: "register_and_activate_app", description: "Registra (ou atualiza) o app de um cliente no sistema E ativa/atualiza a lista dele. Use quando o cliente informa o MAC e/ou Device Key e diz qual app usa (IBO, IBO Pro, VU Pro, SmartOne, X-Cloud, Fun Play, etc.) — mesmo que o app ainda não esteja cadastrado. A tool salva no banco e já aciona a ativação automaticamente.", parameters: { type: "OBJECT", properties: { username: { type: "STRING", description: "Username do cliente no painel." }, app_name: { type: "STRING", description: "Nome do app (ex: 'IBO Player', 'IBO Pro', 'VU Player Pro', 'SmartOne', 'X-Cloud', 'Fun Play')." }, mac: { type: "STRING", description: "Endereço MAC do dispositivo (ex: '64:1c:b0:58:02:f5')." }, device_key: { type: "STRING", description: "Device Key ou senha do app, se informada pelo cliente." } }, required: ["username", "app_name", "mac"] } }),
       toOAITool({ name: "register_pix_receipt", description: "Registra um comprovante de Pix recebido em imagem. Use APENAS quando o cliente envia uma foto/print de comprovante de pagamento Pix. Após chamar, o sistema renova automaticamente o plano do cliente.", parameters: { type: "OBJECT", properties: { payer_name: { type: "STRING", description: "Nome de quem pagou (aparece como 'Pagador' ou 'Origem' no comprovante)." }, amount: { type: "NUMBER", description: "Valor pago em reais (apenas o número, ex: 49.90)." }, paid_at: { type: "STRING", description: "Data e hora do pagamento no formato ISO 8601 YYYY-MM-DDTHH:mm:ss." } }, required: ["payer_name", "amount", "paid_at"] } }),
@@ -5338,7 +5338,7 @@ async function handlePixGenerationTool(remoteJid: string, pushName: string, user
     const settings = await pool.query('SELECT key, value FROM settings WHERE key LIKE $1', ['evolution_%']);
     const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
     const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
-    const pixMessage = `*PAGAMENTO PIX*\n\nChave Pix (E-mail):\n*pagamentos@gmail.com*\n\nValor: R$ ${parseFloat(amount as any).toFixed(2)}\n\nAssim que realizar o pagamento, por favor, me envie a foto ou print do comprovante aqui para eu liberar seu sinal imediatamente!`;
+    const pixMessage = `*PAGAMENTO PIX*\n\nChave Pix (E-mail):\n*pagamentos@appbr.pro*\n\nBanco: *EfI Bank*\nDestinatário: *Maria F P Pinho*\n\nValor: R$ ${parseFloat(amount as any).toFixed(2)}\n\nAssim que realizar o pagamento, por favor, me envie a foto ou print do comprovante aqui para eu conferir e liberar seu sinal imediatamente!`;
     await evo.sendText(remoteJid, pixMessage);
   } catch (e) {}
 }
