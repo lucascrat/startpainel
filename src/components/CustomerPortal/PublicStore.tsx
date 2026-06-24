@@ -97,17 +97,19 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
     // Fallback images if DB doesn't have them
     const imageUrl = app.app_image_url || app.icon_url || (isWarez ? 'https://via.placeholder.com/150/4f46e5/ffffff?text=App' : 'https://via.placeholder.com/150/1e1b4b/ffffff?text=App');
 
+    const price = isWarez || isStart ? 25 : 30;
+
     return (
-      <div className="relative group overflow-hidden bg-[#0a0a1a] border border-white/5 rounded-3xl p-1 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_40px_-10px_rgba(99,102,241,0.3)]">
+      <div className="relative group overflow-hidden bg-[#0a0a1a] border border-white/5 rounded-3xl p-1 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_40px_-10px_rgba(99,102,241,0.3)] flex flex-col h-full">
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 via-transparent to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
         
-        <div className="relative bg-[#05050f]/80 backdrop-blur-xl h-full rounded-[22px] p-5 flex flex-col z-10">
+        <div className="relative bg-[#05050f]/80 backdrop-blur-xl h-full rounded-[22px] p-5 flex flex-col z-10 flex-1">
           <div className="flex items-center gap-4 mb-4">
             <div className="relative shrink-0">
               <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
               <img src={imageUrl} alt={app.name} className="relative w-16 h-16 rounded-2xl object-cover bg-[#0a0a1a] shadow-xl ring-1 ring-white/10" />
             </div>
-            <div>
+            <div className="flex-1">
               <h4 className="text-white font-bold text-lg leading-tight tracking-tight">{app.name}</h4>
               <span className="inline-flex items-center gap-1 mt-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-white/5 text-gray-300 ring-1 ring-white/10">
                 {isWarez ? <KeyRound className="w-3 h-3" /> : <Tv className="w-3 h-3" />}
@@ -116,19 +118,20 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
             </div>
           </div>
           
-          <p className="text-sm text-gray-400/80 mb-6 flex-1 line-clamp-2">
-            {app.description || `O melhor aplicativo para assistir tudo com a máxima qualidade na sua ${isWarez ? 'TV Box / Celular' : 'Smart TV'}.`}
-          </p>
+          <div className="flex items-center justify-between mt-auto mb-4 bg-white/5 rounded-xl p-3 border border-white/5">
+            <div className="text-xs text-gray-400 font-medium">Plano Mensal</div>
+            <div className="text-lg font-bold text-emerald-400">R$ {price},00</div>
+          </div>
           
           <button
             onClick={() => handleTestClick(type, app.name)}
-            className={`w-full py-3.5 rounded-xl text-sm font-bold transition-all duration-300 flex justify-center items-center gap-2 group-hover:shadow-lg
+            className={`w-full py-3.5 mt-auto rounded-xl text-sm font-bold transition-all duration-300 flex justify-center items-center gap-2 group-hover:shadow-lg
               ${isWarez 
                 ? 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/25' 
                 : 'bg-white/5 hover:bg-white/10 text-white border border-white/10'}`}
           >
             <Sparkles className="w-4 h-4" /> 
-            {isWarez ? 'Testar Agora' : 'Ativar Teste na TV'}
+            {isWarez ? 'Testar Agora' : 'Testar na TV Agora'}
           </button>
         </div>
       </div>
@@ -252,9 +255,12 @@ export default function PublicStore({ onLoginSelect, onRegisterSuccess }: { onLo
                   {(selectedApp?.type === 'start' || selectedApp?.type === 'ative') ? <Tv className="w-7 h-7 text-indigo-400" /> : <Smartphone className="w-7 h-7 text-indigo-400" />}
                 </div>
                 <h3 className="text-2xl font-bold text-white mb-2">Falta muito pouco!</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">
+                <p className="text-gray-400 text-sm leading-relaxed mb-4">
                   Para liberarmos o teste do <strong className="text-white">{selectedApp?.app}</strong>, precisamos apenas do seu nome e WhatsApp.
                 </p>
+                <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-emerald-400 text-xs font-bold uppercase tracking-wider">
+                  Valor pós-teste: R$ {selectedApp?.type === 'ative' ? '30' : '25'},00/mês
+                </div>
               </div>
 
               <form onSubmit={handleRegister} className="space-y-5">

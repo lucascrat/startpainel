@@ -7850,11 +7850,17 @@ app.post('/api/portal/register', async (req, res) => {
     const rand = Math.floor(100 + Math.random() * 900);
     const username = `${firstName}appbr${rand}`;
 
+    // Define o preço com base no app selecionado
+    let initialPrice = 25.00;
+    if (appToTest && appToTest.type === 'ative') {
+      initialPrice = 30.00;
+    }
+
     // Cadastra o cliente no banco
     const custRes = await pool.query(
       `INSERT INTO customers (username, full_name, whatsapp, status, renewal_price, max_connections, created_at, updated_at)
-       VALUES ($1, $2, $3, 'teste', 25.00, 1, NOW(), NOW()) RETURNING *`,
-      [username, name, cleanNumber]
+       VALUES ($1, $2, $3, 'teste', $4, 1, NOW(), NOW()) RETURNING *`,
+      [username, name, cleanNumber, initialPrice]
     );
     const customer = custRes.rows[0];
 
