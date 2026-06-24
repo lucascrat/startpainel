@@ -375,8 +375,8 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 // Modelo OpenAI usado no chat da IA. Configurável via env OPENAI_MODEL.
-// Default: 'gpt-4.1' — modelo mais recente e capaz da OpenAI.
-const OPENAI_CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+// Default: 'gpt-4o-mini' — boa qualidade com custo ~94% menor que gpt-4o.
+const OPENAI_CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 // --- ADMIN AUTH ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
