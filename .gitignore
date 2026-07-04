@@ -61,3 +61,13 @@ t.txt
 
 # Chave Gemini local (NUNCA versionar)
 .gemini_key_internal
+
+# Dados de perfis do Chrome/Puppeteer — contém cookies, sessões, certificados
+puppeteer_data/
+puppeteer_data-*/
+PuppeteerProfile*/
+
+# pgAdmin / Postgres local extraído (não pertence ao projeto)
+pg/
+*.dump
+*.zip

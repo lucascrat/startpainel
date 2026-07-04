@@ -136,9 +136,6 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
       '--disable-site-isolation-trials',
       '--disable-web-security',
       '--password-store=basic',
-      // Proxy foi removido/comentado temporariamente pois o Google bloqueia logins através de proxies de datacenter
-      // '--proxy-server=http://200.234.150.125:50100',
-      // '--proxy-bypass-list=localhost,127.0.0.1,<local>',
       '--lang=pt-BR,pt,en-US,en',
       '--accept-lang=pt-BR',
       '--disable-background-timer-throttling',
@@ -160,9 +157,6 @@ export async function launchBrowser(headless = true, profileNum = 0): Promise<Br
   browser.newPage = async function() {
     const p = await originalNewPage();
     pagesOpened.push(p);
-
-    // Proxy auth foi comentado junto com o proxy
-    // await p.authenticate({ username: 'lrlucasrafael11', password: 'F29LMZCpic' });
 
     // Patch adicional para garantir que o webdriver seja ocultado perfeitamente no momento 0
     await p.evaluateOnNewDocument(() => {

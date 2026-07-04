@@ -2,8 +2,8 @@ import { launchBrowser } from './startpainel-puppeteer.js';
 
 const SMARTONE_LOGIN_URL    = 'https://smartone-iptv.com/client/login';
 const SMARTONE_PLAYLIST_URL = 'https://smartone-iptv.com/plugin/smart_one/client_main/add_playlist/';
-const SMARTONE_USER         = 'lrsousadesenvolvedor@gmail.com';
-const SMARTONE_PASS         = '01Deus02@';
+const SMARTONE_USER         = process.env.SMARTONE_USER || '';
+const SMARTONE_PASS         = process.env.SMARTONE_PASS || '';
 
 // Perfil dedicado para SmartOne (não compartilhado com os 5 perfis paralelos)
 const SMARTONE_PROFILE_NUM  = 99;
