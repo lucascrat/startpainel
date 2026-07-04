@@ -6,7 +6,6 @@ import Dashboard from './Dashboard';
 import AppStore from './AppStore';
 import Payments from './Payments';
 import PublicStore from './PublicStore';
-import { apiFetch } from '../../lib/auth'; // Using existing fetch wrapper or raw fetch
 
 export default function CustomerPortal() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('portal_token'));

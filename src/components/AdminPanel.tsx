@@ -596,7 +596,7 @@ export default function AdminPanel() {
   // New App Form
   const [appName, setAppName] = useState('');
   const [appModel, setAppModel] = useState('IBO PLAYER');
-  const [accessType, setAccessType] = useState<'mac_key' | 'user_pass' | 'xtream'>('mac_key');
+  const [accessType, setAccessType] = useState<'mac_key' | 'user_pass' | 'xtream' | 'xtream_full'>('mac_key');
   const [macAddress, setMacAddress] = useState('');
   const [deviceKey, setDeviceKey] = useState('');
   const [appUsername, setAppUsername] = useState('');

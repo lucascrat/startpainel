@@ -15,7 +15,6 @@ const { Pool } = pkg;
 import OpenAI from "openai";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 // Puppeteer foi movido pro worker.ts (roda no PC local). server.ts so enfileira jobs agora.
-import { registerEvolutionWebhooksIfMissing } from './src/services/evolution-service.js';
 import { startInternalWorker } from './src/services/internal-worker.js';
 import { EvolutionService } from './src/services/evolution-api.js';
 import { EdgeTTS } from '@andresaya/edge-tts';
@@ -454,6 +453,15 @@ function rateLimit(opts: { windowMs: number; max: number; key: (req: express.Req
     next();
   };
 }
+function rateLimitCheck(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const arr = (rateLimitBuckets.get(key) || []).filter(t => now - t < windowMs);
+  if (arr.length >= max) return false;
+  arr.push(now);
+  rateLimitBuckets.set(key, arr);
+  return true;
+}
+
 function clientIp(req: express.Request): string {
   return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
 }
@@ -466,6 +474,9 @@ const _rlCleanupTimer: any = setInterval(() => {
   }
 }, 10 * 60 * 1000);
 _rlCleanupTimer?.unref?.();
+function unrefTimer(t: any) {
+  t?.unref?.();
+}
 
 // --- AUTOMATION WORKER (PC local executa Puppeteer com Chrome visivel) ---
 // Producao (Coolify) so enfileira jobs; o worker no PC faz polling, executa e devolve resultado.
@@ -604,7 +615,7 @@ async function reapOrphanJobs() {
     console.error('[Watchdog] erro:', e?.message);
   }
 }
-setInterval(reapOrphanJobs, 2 * 60 * 1000).unref?.();
+unrefTimer(setInterval(reapOrphanJobs, 2 * 60 * 1000));
 // Roda uma vez no boot pra cobrir jobs que ficaram presos antes do restart.
 setTimeout(reapOrphanJobs, 10_000);
 
@@ -629,7 +640,7 @@ async function cleanupOldRecords() {
   }
 }
 // Roda 1x por dia. Primeiro run 30min apos o boot (evita peak no startup).
-setInterval(cleanupOldRecords, 24 * 60 * 60 * 1000).unref?.();
+unrefTimer(setInterval(cleanupOldRecords, 24 * 60 * 60 * 1000));
 setTimeout(cleanupOldRecords, 30 * 60 * 1000);
 
 // ─── SYNC DIÁRIO DOS CLIENTES DO PAINEL (00:00 todo dia) ────────────────────
@@ -741,13 +752,13 @@ function scheduleMidnightSync() {
   const msUntilMidnight = next.getTime() - now.getTime();
   console.log(`[DailySync] Próximo sync diário em ${(msUntilMidnight / 1000 / 60).toFixed(1)} minutos (${next.toISOString()})`);
 
-  setTimeout(() => {
+  unrefTimer(setTimeout(() => {
     dailyPanelSync().finally(() => {
       // Depois do primeiro run, repete a cada 24h
-      setInterval(() => dailyPanelSync().catch(e => console.error('[DailySync] err:', e?.message)),
-        24 * 60 * 60 * 1000).unref?.();
+      unrefTimer(setInterval(() => dailyPanelSync().catch(e => console.error('[DailySync] err:', e?.message)),
+        24 * 60 * 60 * 1000));
     });
-  }, msUntilMidnight).unref?.();
+  }, msUntilMidnight));
 }
 
 // Inicia o agendamento 1 min após o boot (dá tempo do worker registrar)
@@ -1048,13 +1059,14 @@ async function generateAudio(text: string): Promise<{ base64: string; mimeType: 
     try {
       const result = await uploadToR2('tts-cache', audio.base64, audio.mimeType);
       if (result.ok === true) {
+        const r2Url = (result as { ok: true; url: string }).url;
         // Limita tamanho do cache em memoria (FIFO grosso)
         if (ttsUrlCache.size >= TTS_CACHE_MAX) {
           const firstKey = ttsUrlCache.keys().next().value;
           if (firstKey) ttsUrlCache.delete(firstKey);
         }
-        ttsUrlCache.set(hash, result.url);
-        console.log(`[TTS Cache] MISS -> cached ${hash} ${result.url}`);
+        ttsUrlCache.set(hash, r2Url);
+        console.log(`[TTS Cache] MISS -> cached ${hash} ${r2Url}`);
       }
     } catch (e: any) {
       console.warn('[TTS Cache] falha ao cachear:', e?.message);
@@ -1412,8 +1424,8 @@ PASSO 6 — APOS O TESTE OU SE QUISER COMPRAR DIRETO:
 - Quando ele confirmar que gostou do teste OU quiser virar cliente fixo:
   * Peca o nome completo dele.
   * Use a tool *register_new_customer* com full_name, desired_username, app_id, mac.
-  * Em seguida use *generate_pix* com o valor TOTAL — consulte a seção VALORES deste prompt para os preços atualizados (planos por tela + taxa de ativação por app pago: IBO Player, IBO Pro, VU Player, BOB Player).
-    - Apps grátis (Ultra, Fun, Lazer/FocoX, X-Cloud, See, Quick Player/QPlay/Big Player) e celular NÃO somam taxa alguma.
+  * Em seguida use *generate_pix* com o valor TOTAL — consulte a seção VALORES deste prompt para os preços atualizados.
+    - Lembre-se: apps premium (IBO Player, IBO Pro, VU Player, BOB Player, etc.) não cobram taxa de ativação, mas a mensalidade do sinal passa a ser R$ 35,00/mês por tela.
 - Avise: "Assim que confirmar o pagamento, ja transformo seu teste em conta definitiva. 🎬"
 
 REGRAS:
@@ -1712,81 +1724,46 @@ async function getSalePrices(): Promise<typeof _salePricesCache> {
 
 /** Monta o bloco de preços que é injetado dinamicamente no prompt da IA. */
 async function buildPricingContext(): Promise<string> {
-  const { p1, p2, p3, feeIbo, feeIboPro, feeVuPlayer, feeBobPlayer } = await getSalePrices();
-
-  // Apps pagos com taxa de ativação configurada
-  const paidApps = [
-    { name: 'IBO Player',  fee: feeIbo },
-    { name: 'IBO Pro',     fee: feeIboPro },
-    { name: 'VU Player',   fee: feeVuPlayer },
-    { name: 'BOB Player',  fee: feeBobPlayer },
-  ];
-  const paidAppsList = paidApps.map(a => `   - ${a.name}: R$ ${a.fee} de taxa de ativação por aparelho (válida por 1 ANO).`).join('\n');
-  const paidAppsNames = paidApps.map(a => a.name).join(', ');
-
-  // Exemplos de cálculo com app pago (usa IBO como referência por ser o mais comum)
-  const ex1 = p1 + feeIbo;
-  const ex2 = p2 + feeIbo;
-  const ex2x2 = p2 + feeIbo * 2;
-  const ex3x3 = p3 + feeIbo * 3;
+  const { p1, p2, p3 } = await getSalePrices();
 
   return `VALORES:
 
-1) SINAL / LISTA — preço escalonado por número de telas simultâneas:
+1) SINAL / LISTA (Apps Grátis) — preço escalonado por número de telas simultâneas:
    - 1 tela  → R$ ${p1}/mês
    - 2 telas → R$ ${p2}/mês
    - 3 telas → R$ ${p3}/mês (limite máximo do site de ativação)
    - É OBRIGATÓRIO. Todo cliente paga o sinal pra ter canais.
-   - Mesmo valor pra cliente novo E renovação mensal.
    - App de celular NÃO conta como tela — é grátis, ilimitado, sempre incluso.
 
-2) APPS PAGOS — ${paidAppsNames}:
-   Cada um cobra uma TAXA DE ATIVAÇÃO por aparelho, SOMADA ao valor da lista (não substitui):
-${paidAppsList}
-   - Depois de 1 ano, paga a taxa de novo pra renovar a ativação daquele aparelho.
-   - Cada aparelho diferente (TV da sala, TV do quarto, TV box) = 1 taxa cada.
-   - IMPORTANTE: a taxa do app pago é COBRADA UMA VEZ na ativação/renovação anual. A mensalidade continua sendo só o valor da lista.
+2) APPS PREMIUM (AtiveApp - ex: IBO Player, IBO Pro, VU Player, BOB Player, SmartOne, CapPlayer, etc):
+   - A ATIVAÇÃO É 100% GRÁTIS! Não cobramos NENHUMA taxa de ativação anual.
+   - Porém, a MENSALIDADE do sinal para quem usa qualquer um desses apps premium passa a ser R$ 35,00/mês.
+   - Não há cobrança anual, o cliente simplesmente paga R$ 35,00 mensais para ter o sinal e o app premium liberado (referente a 1 tela premium. Cada tela premium adicional também custa R$ 35).
 
-3) APPS GRÁTIS — todos os outros do nosso catálogo (Ultra Player, Fun Play, Lazer Play / FocoX Play, X-Cloud, See Play, Quick Player / Quick Player PRO / QPlay / Big Player, etc):
-   - Ativação 100% GRÁTIS — você ativa pra ele sem cobrar nada.
-   - Cliente só paga o valor da lista (R$ ${p1} / R$ ${p2} / R$ ${p3} conforme nº de telas).
+3) APPS GRÁTIS — nosso catálogo padrão (Ultra Player, Fun Play, Lazer Play, X-Cloud, See Play, Quick Player, etc):
+   - Ativação 100% GRÁTIS.
+   - Cliente só paga o valor da lista normal (R$ ${p1} / R$ ${p2} / R$ ${p3}).
 
-EXEMPLOS COMPLETOS (use estes pra calcular o Pix do primeiro mês):
+EXEMPLOS COMPLETOS (use estes pra calcular o Pix):
 
-🟢 Apenas apps grátis ou só celular:
-- 1 tela → R$ ${p1}
-- 2 telas → R$ ${p2}
-- 3 telas → R$ ${p3}
+🟢 Com Apps Grátis ou Só Celular:
+- 1 tela → R$ ${p1}/mês
+- 2 telas → R$ ${p2}/mês
+- 3 telas → R$ ${p3}/mês
 
-🔵 Com IBO Player (R$ ${feeIbo} de taxa por aparelho):
-- 1 tela + 1 IBO → R$ ${p1} + R$ ${feeIbo} = R$ ${ex1}
-- 2 telas + 1 IBO → R$ ${p2} + R$ ${feeIbo} = R$ ${ex2}
-- 2 telas + 2 IBOs → R$ ${p2} + R$ ${feeIbo * 2} = R$ ${ex2x2}
-- 3 telas + 3 IBOs → R$ ${p3} + R$ ${feeIbo * 3} = R$ ${ex3x3}
-
-🔵 Com IBO Pro (R$ ${feeIboPro} de taxa por aparelho):
-- 1 tela + 1 IBO Pro → R$ ${p1} + R$ ${feeIboPro} = R$ ${p1 + feeIboPro}
-- 2 telas + 1 IBO Pro → R$ ${p2} + R$ ${feeIboPro} = R$ ${p2 + feeIboPro}
-
-🔵 Com VU Player (R$ ${feeVuPlayer} de taxa por aparelho):
-- 1 tela + 1 VU Player → R$ ${p1} + R$ ${feeVuPlayer} = R$ ${p1 + feeVuPlayer}
-- 2 telas + 1 VU Player → R$ ${p2} + R$ ${feeVuPlayer} = R$ ${p2 + feeVuPlayer}
-
-🔵 Com BOB Player (R$ ${feeBobPlayer} de taxa por aparelho):
-- 1 tela + 1 BOB Player → R$ ${p1} + R$ ${feeBobPlayer} = R$ ${p1 + feeBobPlayer}
-- 2 telas + 1 BOB Player → R$ ${p2} + R$ ${feeBobPlayer} = R$ ${p2 + feeBobPlayer}
+🔵 Com Apps Premium (IBO Player, IBO Pro, VU Player, BOB Player, SmartOne, CapPlayer, etc):
+- 1 tela com app Premium → R$ 35,00/mês
+- 2 telas com app Premium → R$ 70,00/mês (35 * 2)
 
 RENOVAÇÕES (mês a mês):
-- Só o valor da lista (R$ ${p1} / R$ ${p2} / R$ ${p3}).
-- A taxa dos apps pagos é ANUAL — só volta a cobrar quando completar 1 ano da ativação.
+- Apps Grátis: Valor da lista (R$ ${p1} / R$ ${p2} / R$ ${p3}).
+- Apps Premium: R$ 35,00 mensais por tela premium.
 
 REGRAS DE OURO:
 - Quando o cliente perguntar "quanto custa?", SEMPRE clarifique: quantas telas ele quer + qual app vai usar.
 - Se ele só quer celular → R$ ${p1} e pronto.
-- Se ele quer na TV usando app grátis → só o sinal pelo nº de telas.
-- Se ele quer app pago (IBO, VU, BOB) → soma a taxa correspondente em cima do valor da lista.
-- NUNCA cobre taxa de ativação por apps que NÃO são pagos. Os outros são todos grátis.
-- Se o cliente misturar apps (ex: 1 IBO + 1 VU Player em 2 TVs) → some as taxas individualmente.
+- Se ele quer app premium (IBO, VU, BOB, SmartOne, CapPlayer, etc) → a mensalidade é R$ 35,00 por tela. NUNCA cobre taxa de ativação à parte, a ativação já está inclusa grátis!
+- NUNCA cobre taxa de ativação de nenhum app, para todos os apps a ativação é grátis.
 
 Quando gerar Pix com generate_pix, calcule o valor total certinho com base no que o cliente pediu. Se ficar em dúvida, pergunte antes de gerar.`;
 }
@@ -2040,7 +2017,7 @@ Custo por ativação: ~R$ 10,80 (0,9 créditos × R$ 12/crédito). Validade: 1 a
 REGRAS DO TESTE VIA ATIVEAPP:
 - O APP dá 7 dias de teste gratuito por MAC (período da plataforma).
 - Nosso SINAL fica ativo por 6 horas no teste. Dentro dos 7 dias, o cliente pode pedir mais sinal — chame create_test_account de novo com o mesmo MAC.
-- Após os 7 dias: o app bloqueia o MAC. Para continuar, o cliente paga a taxa anual do app (Ex: IBO Pro R$ 10/ano) + o plano mensal do sinal.
+- Após os 7 dias: o app bloqueia o MAC. Para continuar, o cliente assina o plano de mensalidade Premium (R$ 35/mês) e a ativação do app será totalmente grátis.
 - Se o teste do app já venceu (passou 7 dias desde a primeira ativação), NÃO ative de novo — explique que agora é cobrado.
 
 QUANDO USAR activate_ativeapp_trial:
@@ -2057,7 +2034,7 @@ FLUXO DE TESTE COM APP PAGO:
 4. Chame *activate_ativeapp_trial* com app_name e mac
 5. O sistema ativa em ~1-2 min e avisa o cliente automaticamente
 6. Dentro dos 7 dias: se o cliente quiser mais sinal (após as 6h), chame create_test_account com o mesmo MAC e app
-7. Após gostar: gere Pix com o valor do plano + taxa do app (confira seção VALORES)
+7. Após gostar: gere Pix com o valor da mensalidade (confira seção VALORES - plano Premium R$ 35)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FLUXO — DIAGNÓSTICO DE PROBLEMA TÉCNICO
@@ -5362,7 +5339,7 @@ async function handlePixGenerationTool(remoteJid: string, pushName: string, user
     const config: any = {}; settings.rows.forEach(r => config[r.key] = r.value);
     const evo = new EvolutionService({ apiUrl: config.evolution_api_url, token: config.evolution_token, instance: config.evolution_instance });
     const pixMessage = `*PAGAMENTO PIX*\n\nChave Pix (E-mail):\n*pagamentos@appbr.pro*\n\nBanco: *EfI Bank*\nDestinatário: *Maria F P Pinho*\n\nValor: R$ ${parseFloat(amount as any).toFixed(2)}\n\nAssim que realizar o pagamento, por favor, me envie a foto ou print do comprovante aqui para eu conferir e liberar seu sinal imediatamente!`;
-    await evo.sendText(remoteJid, pixMessage);
+    await evo.sendMessage(remoteJid, pixMessage);
   } catch (e) {}
 }
 
@@ -7134,7 +7111,7 @@ app.get('/api/app/config', async (req, res) => {
 // body: { username, password, device_id?, device_name?, force? }
 app.post('/api/app/login', async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
-  if (!rateLimit(`app_login:${ip}`, 10, 60_000)) {
+  if (!rateLimitCheck(`app_login:${ip}`, 10, 60_000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 minuto.' });
   }
 

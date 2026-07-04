@@ -23,5 +23,17 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "extends": "expo/tsconfig.base"
+  "extends": "expo/tsconfig.base",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    ".expo",
+    "pg",
+    "puppeteer_data",
+    "puppeteer_data-*",
+    "scratch",
+    "BOT"
+  ]
 }

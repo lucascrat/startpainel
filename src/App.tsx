@@ -15,7 +15,7 @@ import { login, getToken, logout } from './lib/auth';
 import { Toaster } from 'sonner';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts' | 'apps' | 'agenda' | 'ativeapps'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts' | 'apps' | 'agenda' | 'ativeapps' | 'browser'>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getToken());
   const [showLogin, setShowLogin] = useState(false);
   const [pwInput, setPwInput] = useState('');

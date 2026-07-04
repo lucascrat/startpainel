@@ -27,10 +27,12 @@ export interface Customer {
   cost_per_credit?: number;
   lines_count?: number;
   amount_paid?: number;
-  status: 'active' | 'expired';
+  status: 'active' | 'expired' | 'teste';
   expiration_date?: string;
   last_renewal?: string;
   playlist_url?: string;
+  password?: string;
+  dns?: string;
   provider?: string; // 'startpainel' | 'wareztv' | 'outro'
   created_at?: any; // For Postgres compat
   createdAt?: any;
