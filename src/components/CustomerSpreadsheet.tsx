@@ -12,7 +12,7 @@ import {
 import { format, isAfter, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-type SortKey = 'name' | 'username' | 'whatsapp' | 'renewal_price' | 'cost_per_credit' | 'lines_count' | 'cost_total' | 'profit' | 'amount_paid' | 'expiration_date' | 'status' | 'provider' | 'apps_count';
+type SortKey = 'name' | 'username' | 'whatsapp' | 'renewal_price' | 'cost_per_credit' | 'lines_count' | 'cost_total' | 'profit' | 'amount_paid' | 'expiration_date' | 'last_renewal' | 'created_at' | 'password' | 'status' | 'provider' | 'apps_count';
 type SortDir = 'asc' | 'desc';
 
 interface CellEdit {
@@ -23,13 +23,15 @@ interface CellEdit {
 
 const STATUS_OPTIONS = ['active', 'expired', 'teste'] as const;
 const PROVIDER_OPTIONS = ['startpainel', 'wareztv', 'outro'] as const;
-const EDITABLE_FIELDS = ['name', 'username', 'whatsapp', 'renewal_price', 'cost_per_credit', 'lines_count', 'amount_paid', 'expiration_date', 'status', 'provider'];
+const EDITABLE_FIELDS = ['name', 'username', 'whatsapp', 'renewal_price', 'cost_per_credit', 'lines_count', 'amount_paid', 'expiration_date', 'last_renewal', 'password', 'status', 'provider'];
 const NUMBER_FIELDS = ['renewal_price', 'cost_per_credit', 'lines_count', 'amount_paid'];
+const DATE_FIELDS = ['expiration_date', 'last_renewal'];
 const COLUMN_LABELS: Record<string, string> = {
   name: 'Nome', username: 'Usuário', whatsapp: 'WhatsApp',
   renewal_price: 'R$ Mensal', cost_per_credit: 'Custo/Linha', lines_count: 'Linhas',
   cost_total: 'R$ Custo', profit: 'R$ Lucro', amount_paid: 'Total Pago',
-  expiration_date: 'Vencimento', status: 'Status', provider: 'Provedor', apps_count: 'Apps',
+  expiration_date: 'Vencimento', last_renewal: 'Últ. Pagto', created_at: 'Cadastro',
+  password: 'Senha Lista', status: 'Status', provider: 'Provedor', apps_count: 'Apps',
 };
 
 const fmtBRL = (n: any) => `R$ ${Number(n || 0).toFixed(2)}`;
@@ -168,6 +170,79 @@ export default function CustomerSpreadsheet() {
     setExpandedRows(prev => { const n = new Set(prev); n.has(customerId) ? n.delete(customerId) : n.add(customerId); return n; });
   };
 
+  // --- App (dispositivo) editing ---
+  const [editingAppId, setEditingAppId] = useState<number | null>(null);
+  const [appDraft, setAppDraft] = useState<CustomerApp | null>(null);
+  const [savingApp, setSavingApp] = useState(false);
+  const [addingAppFor, setAddingAppFor] = useState<string | number | null>(null);
+
+  const startEditApp = (app: CustomerApp) => { setEditingAppId(app.id!); setAppDraft({ ...app }); };
+  const cancelEditApp = () => { setEditingAppId(null); setAppDraft(null); };
+
+  const updateAppField = (field: keyof CustomerApp, value: any) => {
+    if (!appDraft) return;
+    setAppDraft({ ...appDraft, [field]: value });
+  };
+
+  const saveApp = async () => {
+    if (!appDraft || !editingAppId) return;
+    setSavingApp(true);
+    try {
+      const res = await authFetch(`/api/apps/${editingAppId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_name: appDraft.app_name, app_model: appDraft.app_model, access_type: appDraft.access_type,
+          mac_address: appDraft.mac_address, device_key: appDraft.device_key,
+          username: appDraft.username, password: appDraft.password,
+          provider_url: appDraft.provider_url, host: appDraft.host,
+          android_link: appDraft.android_link, ios_link: appDraft.ios_link, is_tv: appDraft.is_tv,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+      const updated = await res.json();
+      setCustomers(prev => prev.map(c => {
+        if (c.id !== appDraft.customer_id) return c;
+        return { ...c, apps: (c.apps || []).map(a => a.id === updated.id ? updated : a) };
+      }));
+      toast.success('Dispositivo salvo');
+      cancelEditApp();
+    } catch (e: any) { toast.error(`Erro: ${e.message}`); }
+    finally { setSavingApp(false); }
+  };
+
+  const deleteApp = async (appId: number, customerId: string | number) => {
+    if (!confirm('Excluir este dispositivo?')) return;
+    try {
+      const res = await authFetch(`/api/apps/${appId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCustomers(prev => prev.map(c => c.id !== customerId ? c : { ...c, apps: (c.apps || []).filter(a => a.id !== appId) }));
+      toast.success('Dispositivo excluído');
+    } catch (e: any) { toast.error(`Erro: ${e.message}`); }
+  };
+
+  const addApp = async (customerId: string | number) => {
+    const draft = appDraft || { customer_id: Number(customerId), app_name: '', app_model: '', access_type: 'mac_key' as const, mac_address: '', device_key: '', is_tv: true };
+    if (!draft.app_name?.trim()) { toast.error('Nome do app é obrigatório'); return; }
+    setSavingApp(true);
+    try {
+      const res = await authFetch(`/api/customers/${customerId}/apps`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_name: draft.app_name, app_model: draft.app_model || null, access_type: draft.access_type,
+          mac_address: draft.mac_address || null, device_key: draft.device_key || null,
+          username: draft.username || null, password: draft.password || null,
+          host: draft.host || null, is_tv: draft.is_tv,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+      const created = await res.json();
+      setCustomers(prev => prev.map(c => c.id !== customerId ? c : { ...c, apps: [created, ...(c.apps || [])] }));
+      toast.success('Dispositivo adicionado');
+      setAddingAppFor(null); setAppDraft(null);
+    } catch (e: any) { toast.error(`Erro: ${e.message}`); }
+    finally { setSavingApp(false); }
+  };
+
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
@@ -187,7 +262,7 @@ export default function CustomerSpreadsheet() {
       else if (sortKey === 'cost_total') { av = getCostTotal(a); bv = getCostTotal(b); }
       else if (sortKey === 'profit') { av = getProfit(a); bv = getProfit(b); }
       else { av = (a as any)[sortKey] ?? ''; bv = (b as any)[sortKey] ?? ''; }
-      if (sortKey === 'expiration_date') { av = av ? new Date(av).getTime() : 0; bv = bv ? new Date(bv).getTime() : 0; }
+      if (sortKey === 'expiration_date' || sortKey === 'last_renewal' || sortKey === 'created_at') { av = av ? new Date(av).getTime() : 0; bv = bv ? new Date(bv).getTime() : 0; }
       else if (NUMBER_FIELDS.includes(sortKey) || sortKey === 'cost_total' || sortKey === 'profit' || sortKey === 'apps_count') { av = Number(av) || 0; bv = Number(bv) || 0; }
       else { av = String(av).toLowerCase(); bv = String(bv).toLowerCase(); }
       if (av < bv) return sortDir === 'asc' ? -1 : 1;
@@ -214,12 +289,16 @@ export default function CustomerSpreadsheet() {
   const paged = sortedFiltered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
   const exportCSV = () => {
-    const headers = ['Nome', 'Usuario', 'WhatsApp', 'R$ Mensal', 'Linhas', 'Custo/Linha', 'R$ Custo Total', 'R$ Lucro', 'Total Pago', 'Vencimento', 'Status', 'Provedor', 'Apps'];
+    const headers = ['Nome', 'Usuario', 'WhatsApp', 'R$ Mensal', 'Linhas', 'Custo/Linha', 'R$ Custo Total', 'R$ Lucro', 'Total Pago', 'Vencimento', 'Últ. Pagto', 'Senha Lista', 'Cadastro', 'Status', 'Provedor', 'Apps'];
     const rows = sortedFiltered.map(c => [
       `"${(c.name || '').replace(/"/g, '""')}"`, `"${(c.username || '').replace(/"/g, '""')}"`, `"${(c.whatsapp || '').replace(/"/g, '""')}"`,
       Number(c.renewal_price || 0).toFixed(2), c.lines_count || 1, Number(c.cost_per_credit || 0).toFixed(2),
       getCostTotal(c).toFixed(2), getProfit(c).toFixed(2), Number(c.amount_paid || 0).toFixed(2),
-      c.expiration_date ? format(parseISO(c.expiration_date), 'dd/MM/yyyy') : '', c.status || '', c.provider || '',
+      c.expiration_date ? format(parseISO(c.expiration_date), 'dd/MM/yyyy') : '',
+      c.last_renewal ? format(parseISO(c.last_renewal), 'dd/MM/yyyy') : '',
+      `"${(c.password || '').replace(/"/g, '""')}"`,
+      c.created_at ? format(parseISO(c.created_at), 'dd/MM/yyyy') : '',
+      c.status || '', c.provider || '',
       (c as any).apps?.length || 0,
     ]);
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -258,7 +337,7 @@ export default function CustomerSpreadsheet() {
         );
       }
       const isNumber = NUMBER_FIELDS.includes(field);
-      const isDate = field === 'expiration_date';
+      const isDate = DATE_FIELDS.includes(field);
       return (
         <td className={`px-1 py-1 ${widthClass}`}>
           <input ref={ref => { inputRef.current = ref; }}
@@ -277,6 +356,15 @@ export default function CustomerSpreadsheet() {
     if (field === 'expiration_date' && value) {
       const expired = !isAfter(parseISO(value), new Date());
       display = <span className={expired ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>{format(parseISO(value), 'dd/MM/yy')}</span>;
+    }
+    if (field === 'created_at' && value) {
+      display = <span className="text-slate-500">{format(parseISO(value), 'dd/MM/yy')}</span>;
+    }
+    if (field === 'last_renewal' && value) {
+      display = <span className="text-slate-600">{format(parseISO(value), 'dd/MM/yy')}</span>;
+    }
+    if (field === 'password' && value) {
+      display = <span className="font-mono text-slate-500">{value}</span>;
     }
     if (NUMBER_FIELDS.includes(field) && value !== undefined && value !== '' && value !== null) {
       display = <span className="font-mono">{Number(value).toFixed(field === 'lines_count' ? 0 : 2)}</span>;
@@ -300,46 +388,178 @@ export default function CustomerSpreadsheet() {
     );
   };
 
+  const APP_FIELDS: { key: keyof CustomerApp; label: string; mono?: boolean; showFor?: string[] }[] = [
+    { key: 'app_name', label: 'App' },
+    { key: 'app_model', label: 'Modelo' },
+    { key: 'mac_address', label: 'MAC', mono: true, showFor: ['mac_key'] },
+    { key: 'device_key', label: 'Key', mono: true, showFor: ['mac_key'] },
+    { key: 'host', label: 'Host', mono: true, showFor: ['xtream', 'xtream_full'] },
+    { key: 'username', label: 'Usuário', showFor: ['xtream', 'xtream_full', 'user_pass'] },
+    { key: 'password', label: 'Senha', showFor: ['xtream', 'xtream_full', 'user_pass'] },
+    { key: 'android_link', label: 'Android' },
+    { key: 'ios_link', label: 'iOS' },
+  ];
+
+  const renderAppField = (app: CustomerApp, field: typeof APP_FIELDS[0]) => {
+    const value = (app as any)[field.key] || '';
+    if (field.showFor && !field.showFor.includes(app.access_type)) return null;
+    return (
+      <div key={field.key} className="flex items-center gap-1">
+        <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">{field.label}</span>
+        <span className={`font-bold text-slate-700 truncate ${field.mono ? 'font-mono' : ''}`} title={value}>{value || '—'}</span>
+      </div>
+    );
+  };
+
+  const renderEditableAppField = (field: typeof APP_FIELDS[0]) => {
+    if (!appDraft) return null;
+    if (field.showFor && !field.showFor.includes(appDraft.access_type)) return null;
+    const value = (appDraft as any)[field.key] || '';
+    return (
+      <div key={field.key} className="flex items-center gap-1">
+        <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">{field.label}</span>
+        <input
+          value={value}
+          onChange={e => updateAppField(field.key, e.target.value)}
+          className={`flex-1 px-1.5 py-1 bg-slate-50 border border-indigo-300 rounded text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 ${field.mono ? 'font-mono' : ''}`}
+        />
+      </div>
+    );
+  };
+
   const renderExpandedApps = (customer: Customer) => {
     const apps: CustomerApp[] = (customer as any).apps || [];
-    if (apps.length === 0) {
-      return <div className="px-4 py-3 text-[10px] text-slate-400 font-bold uppercase tracking-widest">Nenhum app/dispositivo cadastrado</div>;
-    }
+    const isAdding = addingAppFor === customer.id;
     return (
-      <div className="px-4 py-2 bg-slate-50/50">
+      <div className="px-4 py-3 bg-slate-50/50">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Dispositivos ({apps.length})</span>
+          {!isAdding && editingAppId === null && (
+            <button onClick={() => { setAddingAppFor(customer.id!); setAppDraft({ customer_id: Number(customer.id), app_name: '', app_model: '', access_type: 'mac_key', mac_address: '', device_key: '', is_tv: true }); }}
+              className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-100">
+              <Plus size={11} /> Adicionar
+            </button>
+          )}
+        </div>
+
+        {apps.length === 0 && !isAdding && (
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest py-2">Nenhum dispositivo cadastrado</p>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-          {apps.map(app => (
-            <div key={app.id} className="bg-white rounded-lg border border-slate-200 p-2.5 text-[10px] space-y-1">
+          {apps.map(app => {
+            const isEditing = editingAppId === app.id;
+            return (
+              <div key={app.id} className={`bg-white rounded-lg border p-2.5 text-[10px] space-y-1.5 ${isEditing ? 'border-indigo-400 ring-1 ring-indigo-200' : 'border-slate-200'}`}>
+                <div className="flex items-center justify-between">
+                  {isEditing ? (
+                    <select value={appDraft?.access_type} onChange={e => updateAppField('access_type', e.target.value as any)}
+                      className="px-1.5 py-1 bg-slate-50 border border-indigo-300 rounded text-[9px] font-bold outline-none">
+                      <option value="mac_key">MAC + Key</option>
+                      <option value="xtream">Xtream</option>
+                      <option value="xtream_full">Xtream Full</option>
+                      <option value="user_pass">Usuário + Senha</option>
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      {app.is_tv ? <Tv size={11} className="text-slate-400" /> : <Smartphone size={11} className="text-slate-400" />}
+                      <span className="font-black text-slate-800">{app.app_name || '—'}</span>
+                      {app.app_model && <span className="text-[8px] text-slate-400 font-bold uppercase">{app.app_model}</span>}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    {isEditing ? (
+                      <>
+                        <button onClick={saveApp} disabled={savingApp} className="p-1 hover:bg-emerald-100 text-emerald-600 rounded" title="Salvar">
+                          {savingApp ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        </button>
+                        <button onClick={cancelEditApp} className="p-1 hover:bg-slate-200 text-slate-500 rounded" title="Cancelar">
+                          <X size={12} />
+                        </button>
+                      </>
+                    ) : editingAppId === null && !isAdding ? (
+                      <>
+                        <button onClick={() => startEditApp(app)} className="p-1 hover:bg-indigo-100 text-indigo-600 rounded" title="Editar">
+                          <Pencil size={11} />
+                        </button>
+                        <button onClick={() => deleteApp(app.id!, customer.id!)} className="p-1 hover:bg-rose-100 text-rose-500 rounded" title="Excluir">
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                {isEditing ? (
+                  <>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">App</span>
+                      <input value={appDraft?.app_name || ''} onChange={e => updateAppField('app_name', e.target.value)}
+                        className="flex-1 px-1.5 py-1 bg-slate-50 border border-indigo-300 rounded text-[10px] font-bold outline-none focus:ring-1 focus:ring-indigo-500" />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">Modelo</span>
+                      <input value={appDraft?.app_model || ''} onChange={e => updateAppField('app_model', e.target.value)}
+                        className="flex-1 px-1.5 py-1 bg-slate-50 border border-indigo-300 rounded text-[10px] outline-none focus:ring-1 focus:ring-indigo-500" />
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={appDraft?.is_tv ?? true} onChange={e => updateAppField('is_tv', e.target.checked)} className="w-3 h-3" />
+                      <span className="text-[8px] font-bold uppercase text-slate-500">É TV</span>
+                    </label>
+                    {APP_FIELDS.filter(f => f.key !== 'app_name' && f.key !== 'app_model').map(f => renderEditableAppField(f))}
+                    {(appDraft?.android_link || appDraft?.ios_link) && null}
+                  </>
+                ) : (
+                  <>
+                    {APP_FIELDS.filter(f => f.key !== 'app_name' && f.key !== 'app_model').map(f => renderAppField(app, f))}
+                    {(app.android_link || app.ios_link) && (
+                      <div className="flex gap-2 pt-1">
+                        {app.android_link && <a href={app.android_link} target="_blank" rel="noreferrer" className="text-emerald-600 font-bold text-[9px]">Android ↗</a>}
+                        {app.ios_link && <a href={app.ios_link} target="_blank" rel="noreferrer" className="text-blue-600 font-bold text-[9px]">iOS ↗</a>}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Add new app form */}
+          {isAdding && appDraft && (
+            <div className="bg-indigo-50/50 rounded-lg border border-indigo-300 p-2.5 text-[10px] space-y-1.5 ring-1 ring-indigo-200">
               <div className="flex items-center justify-between">
-                <span className="font-black text-slate-800">{app.app_name || '—'}</span>
+                <select value={appDraft.access_type} onChange={e => updateAppField('access_type', e.target.value as any)}
+                  className="px-1.5 py-1 bg-white border border-indigo-300 rounded text-[9px] font-bold outline-none">
+                  <option value="mac_key">MAC + Key</option>
+                  <option value="xtream">Xtream</option>
+                  <option value="xtream_full">Xtream Full</option>
+                  <option value="user_pass">Usuário + Senha</option>
+                </select>
                 <div className="flex items-center gap-1">
-                  {app.is_tv ? <Tv size={11} className="text-slate-400" /> : <Smartphone size={11} className="text-slate-400" />}
-                  {app.app_model && <span className="text-[8px] text-slate-400 font-bold uppercase">{app.app_model}</span>}
+                  <button onClick={() => addApp(customer.id!)} disabled={savingApp} className="p-1 hover:bg-emerald-100 text-emerald-600 rounded" title="Salvar">
+                    {savingApp ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  </button>
+                  <button onClick={() => { setAddingAppFor(null); setAppDraft(null); }} className="p-1 hover:bg-slate-200 text-slate-500 rounded" title="Cancelar">
+                    <X size={12} />
+                  </button>
                 </div>
               </div>
-              {app.access_type === 'mac_key' && (
-                <div className="font-mono text-slate-600 space-y-0.5">
-                  <div><span className="text-slate-400">MAC:</span> {app.mac_address || '—'}</div>
-                  {app.device_key && <div><span className="text-slate-400">Key:</span> {app.device_key}</div>}
-                </div>
-              )}
-              {app.access_type === 'xtream' && (
-                <div className="font-mono text-slate-600 space-y-0.5">
-                  <div><span className="text-slate-400">Host:</span> {app.host || app.provider_url || '—'}</div>
-                  <div><span className="text-slate-400">User:</span> {app.username || '—'}</div>
-                </div>
-              )}
-              {app.access_type === 'user_pass' && (
-                <div className="font-mono text-slate-600"><span className="text-slate-400">Login:</span> {app.username || '—'}</div>
-              )}
-              {(app.android_link || app.ios_link) && (
-                <div className="flex gap-2 pt-1">
-                  {app.android_link && <a href={app.android_link} target="_blank" rel="noreferrer" className="text-emerald-600 font-bold text-[9px]">Android ↗</a>}
-                  {app.ios_link && <a href={app.ios_link} target="_blank" rel="noreferrer" className="text-blue-600 font-bold text-[9px]">iOS ↗</a>}
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">App</span>
+                <input value={appDraft.app_name} onChange={e => updateAppField('app_name', e.target.value)} placeholder="IBO Player..."
+                  className="flex-1 px-1.5 py-1 bg-white border border-indigo-300 rounded text-[10px] font-bold outline-none focus:ring-1 focus:ring-indigo-500" />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400 w-12 shrink-0 text-[8px] font-bold uppercase">Modelo</span>
+                <input value={appDraft.app_model || ''} onChange={e => updateAppField('app_model', e.target.value)} placeholder="IBO PLAYER"
+                  className="flex-1 px-1.5 py-1 bg-white border border-indigo-300 rounded text-[10px] outline-none focus:ring-1 focus:ring-indigo-500" />
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={appDraft.is_tv} onChange={e => updateAppField('is_tv', e.target.checked)} className="w-3 h-3" />
+                <span className="text-[8px] font-bold uppercase text-slate-500">É TV</span>
+              </label>
+              {APP_FIELDS.filter(f => f.key !== 'app_name' && f.key !== 'app_model').map(f => renderEditableAppField(f))}
             </div>
-          ))}
+          )}
         </div>
       </div>
     );
@@ -425,6 +645,9 @@ export default function CustomerSpreadsheet() {
                 {sortableHeader('profit', COLUMN_LABELS.profit, 'text-right')}
                 {sortableHeader('amount_paid', COLUMN_LABELS.amount_paid, 'text-right')}
                 {sortableHeader('expiration_date', COLUMN_LABELS.expiration_date)}
+                {sortableHeader('last_renewal', COLUMN_LABELS.last_renewal)}
+                {sortableHeader('password', COLUMN_LABELS.password)}
+                {sortableHeader('created_at', COLUMN_LABELS.created_at)}
                 {sortableHeader('status', COLUMN_LABELS.status)}
                 {sortableHeader('provider', COLUMN_LABELS.provider)}
                 {sortableHeader('apps_count', COLUMN_LABELS.apps_count, 'text-center')}
@@ -460,6 +683,9 @@ export default function CustomerSpreadsheet() {
                       <td className={`px-2 py-1.5 text-[10px] text-right font-mono font-bold whitespace-nowrap ${profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtBRL(profit)}</td>
                       {renderCell(customer, 'amount_paid', 'text-right')}
                       {renderCell(customer, 'expiration_date')}
+                      {renderCell(customer, 'last_renewal')}
+                      {renderCell(customer, 'password')}
+                      {renderCell(customer, 'created_at')}
                       {renderCell(customer, 'status')}
                       {renderCell(customer, 'provider')}
                       {renderCell(customer, 'apps_count', 'text-center')}
@@ -487,11 +713,11 @@ export default function CustomerSpreadsheet() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded && (
-                      <tr className="bg-slate-50/30">
-                        <td colSpan={16}>{renderExpandedApps(customer)}</td>
-                      </tr>
-                    )}
+                      {isExpanded && (
+                        <tr className="bg-slate-50/30">
+                          <td colSpan={20}>{renderExpandedApps(customer)}</td>
+                        </tr>
+                      )}
                   </React.Fragment>
                 );
               })}
@@ -506,7 +732,7 @@ export default function CustomerSpreadsheet() {
                   <td className="px-2 py-2 text-right text-[10px] font-mono text-rose-400">{fmtBRL(totals.monthlyCost)}</td>
                   <td className={`px-2 py-2 text-right text-[10px] font-mono font-bold ${monthlyProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtBRL(monthlyProfit)}</td>
                   <td className="px-2 py-2 text-right text-[10px] font-mono">{fmtBRL(totals.totalPaid)}</td>
-                  <td colSpan={4} className="px-2 py-2"></td>
+                  <td colSpan={7} className="px-2 py-2"></td>
                 </tr>
               </tfoot>
             )}
