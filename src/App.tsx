@@ -3,6 +3,7 @@ import ChatInterface from './components/ChatInterface';
 import AdminPanel from './components/AdminPanel';
 import ActivationTester from './components/ActivationTester';
 import CustomerMenu from './components/CustomerMenu';
+import CustomerSpreadsheet from './components/CustomerSpreadsheet';
 import PublicChat from './components/PublicChat';
 import PaymentReceipts from './components/PaymentReceipts';
 import AppCatalog from './components/AppCatalog';
@@ -15,7 +16,7 @@ import { login, getToken, logout } from './lib/auth';
 import { Toaster } from 'sonner';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts' | 'apps' | 'agenda' | 'ativeapps' | 'browser'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'admin' | 'tester' | 'customers' | 'receipts' | 'apps' | 'agenda' | 'ativeapps' | 'browser' | 'spreadsheet'>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getToken());
   const [showLogin, setShowLogin] = useState(false);
   const [pwInput, setPwInput] = useState('');
@@ -160,6 +161,15 @@ export default function App() {
             Clientes
           </button>
           <button
+            onClick={() => setActiveTab('spreadsheet')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
+              activeTab === 'spreadsheet' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Users size={12} className="sm:w-3.5 sm:h-3.5" />
+            Planilha
+          </button>
+          <button
             onClick={() => setActiveTab('receipts')}
             className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition whitespace-nowrap ${
               activeTab === 'receipts' ? 'bg-white text-whatsapp-teal shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -242,6 +252,11 @@ export default function App() {
         {activeTab === 'customers' && (
           <div className="flex-1 overflow-hidden bg-slate-50">
             <CustomerMenu />
+          </div>
+        )}
+        {activeTab === 'spreadsheet' && (
+          <div className="flex-1 overflow-hidden flex flex-col bg-slate-50">
+            <CustomerSpreadsheet />
           </div>
         )}
         {activeTab === 'receipts' && (
